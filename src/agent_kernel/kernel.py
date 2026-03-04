@@ -275,7 +275,7 @@ class Kernel:
             token_id=token.token_id,
             invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
             args=args,
-            response_mode=response_mode,
+            response_mode=frame.response_mode,
             driver_id=used_driver_id,
             handle_id=handle.handle_id if handle else None,
         )
