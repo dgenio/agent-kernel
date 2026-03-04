@@ -147,9 +147,7 @@ class Kernel:
         :meth:`grant_capability`; see its docstring for parameter and
         exception details.
         """
-        return self.grant_capability(
-            request, principal, justification=justification
-        ).token
+        return self.grant_capability(request, principal, justification=justification).token
 
     async def invoke(
         self,
