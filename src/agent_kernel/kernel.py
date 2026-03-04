@@ -42,7 +42,7 @@ class Kernel:
 
         requests = kernel.request_capabilities("list invoices")
         grant = kernel.grant_capability(requests[0], principal, justification="...")
-        frame = await kernel.invoke(grant.token, args={"operation": "list_invoices"})
+        frame = await kernel.invoke(grant.token, principal=principal, args={"operation": "list_invoices"})
     """
 
     def __init__(
