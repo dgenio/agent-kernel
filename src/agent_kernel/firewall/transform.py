@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import datetime
 import json
 from typing import Any
@@ -188,17 +187,3 @@ def _cap_facts(facts: list[str], max_chars: int) -> list[str]:
             break
         result.append(fact)
     return result
-
-
-def _deep_copy_truncated(data: Any, *, max_depth: int, depth: int = 0) -> Any:
-    """Deep-copy data, stopping recursion at *max_depth*."""
-    if depth >= max_depth:
-        return repr(data)[:100]
-    if isinstance(data, dict):
-        return {
-            k: _deep_copy_truncated(v, max_depth=max_depth, depth=depth + 1)
-            for k, v in data.items()
-        }
-    if isinstance(data, list):
-        return [_deep_copy_truncated(v, max_depth=max_depth, depth=depth + 1) for v in data]
-    return copy.copy(data) if not isinstance(data, (int, float, str, bool, type(None))) else data
