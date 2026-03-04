@@ -101,12 +101,17 @@ class Firewall:
                 warnings.append("raw mode requires admin role; falling back to summary.")
                 response_mode = "summary"
             else:
-                raw_str = _truncate_str(json.dumps(data, default=str), self._budgets.max_chars)
+                raw_size = len(json.dumps(data, default=str))
+                if raw_size > self._budgets.max_chars:
+                    warnings.append(
+                        f"raw output ({raw_size} chars) exceeds budget "
+                        f"({self._budgets.max_chars} chars); data returned untruncated."
+                    )
                 return Frame(
                     action_id=action_id,
                     capability_id=raw.capability_id,
                     response_mode="raw",
-                    raw_data=json.loads(raw_str) if raw_str else data,
+                    raw_data=data,
                     handle=handle,
                     warnings=warnings,
                     provenance=provenance,
