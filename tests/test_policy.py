@@ -192,3 +192,24 @@ def test_max_rows_enforcement() -> None:
         _req("cap.r", max_rows=200), _cap("cap.r", SafetyClass.READ), p, justification=""
     )
     assert dec.constraints["max_rows"] == 50
+
+
+def test_max_rows_invalid_raises_policy_denied() -> None:
+    """Non-numeric max_rows raises PolicyDenied, not bare ValueError."""
+    p = Principal(principal_id="u1")
+    with pytest.raises(PolicyDenied, match="Invalid 'max_rows'"):
+        engine.evaluate(
+            _req("cap.r", max_rows="abc"),
+            _cap("cap.r", SafetyClass.READ),
+            p,
+            justification="",
+        )
+
+
+def test_max_rows_negative_clamped_to_zero() -> None:
+    """Negative max_rows is clamped to 0."""
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(
+        _req("cap.r", max_rows=-10), _cap("cap.r", SafetyClass.READ), p, justification=""
+    )
+    assert dec.constraints["max_rows"] == 0

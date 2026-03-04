@@ -124,7 +124,14 @@ class DefaultPolicyEngine:
         max_rows = _MAX_ROWS_SERVICE if "service" in roles else _MAX_ROWS_USER
         # Respect any tighter constraint from the request itself.
         if "max_rows" in constraints:
-            constraints["max_rows"] = min(int(constraints["max_rows"]), max_rows)
+            try:
+                requested = int(constraints["max_rows"])
+            except (TypeError, ValueError) as exc:
+                raise PolicyDenied(
+                    f"Invalid 'max_rows' constraint: {constraints['max_rows']!r} "
+                    "is not a valid integer."
+                ) from exc
+            constraints["max_rows"] = min(max(requested, 0), max_rows)
         else:
             constraints["max_rows"] = max_rows
 
