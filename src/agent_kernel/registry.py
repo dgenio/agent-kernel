@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .errors import CapabilityNotFound
+from .errors import CapabilityAlreadyRegistered, CapabilityNotFound
 from .models import Capability, CapabilityRequest
 
 
@@ -27,10 +27,10 @@ class CapabilityRegistry:
             capability: The :class:`Capability` to register.
 
         Raises:
-            ValueError: If a capability with the same ID is already registered.
+            CapabilityAlreadyRegistered: If a capability with the same ID is already registered.
         """
         if capability.capability_id in self._store:
-            raise ValueError(
+            raise CapabilityAlreadyRegistered(
                 f"Capability '{capability.capability_id}' is already registered. "
                 "Use a unique capability_id."
             )

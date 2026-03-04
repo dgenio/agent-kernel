@@ -44,6 +44,10 @@ class FirewallError(AgentKernelError):
 # ── Registry / lookup errors ──────────────────────────────────────────────────
 
 
+class CapabilityAlreadyRegistered(AgentKernelError):
+    """Raised when a capability with the same ID is already registered."""
+
+
 class CapabilityNotFound(AgentKernelError):
     """Raised when a capability ID is not found in the registry."""
 

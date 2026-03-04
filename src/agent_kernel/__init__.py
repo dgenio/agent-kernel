@@ -41,6 +41,7 @@ from .drivers.memory import InMemoryDriver, make_billing_driver
 from .enums import SafetyClass, SensitivityTag
 from .errors import (
     AgentKernelError,
+    CapabilityAlreadyRegistered,
     CapabilityNotFound,
     DriverError,
     FirewallError,
@@ -105,6 +106,7 @@ __all__ = [
     "SensitivityTag",
     # errors
     "AgentKernelError",
+    "CapabilityAlreadyRegistered",
     "CapabilityNotFound",
     "DriverError",
     "FirewallError",

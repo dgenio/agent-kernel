@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kernel import Capability, CapabilityNotFound, CapabilityRegistry, SafetyClass
+from agent_kernel import (
+    Capability,
+    CapabilityAlreadyRegistered,
+    CapabilityNotFound,
+    CapabilityRegistry,
+    SafetyClass,
+)
 
 
 def _make_cap(cap_id: str, **kwargs: object) -> Capability:
@@ -27,7 +33,7 @@ def test_register_and_get() -> None:
 def test_register_duplicate_raises() -> None:
     reg = CapabilityRegistry()
     reg.register(_make_cap("test.dup"))
-    with pytest.raises(ValueError, match="already registered"):
+    with pytest.raises(CapabilityAlreadyRegistered, match="already registered"):
         reg.register(_make_cap("test.dup"))
 
 
