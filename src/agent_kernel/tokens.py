@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -18,21 +19,27 @@ from .errors import TokenExpired, TokenInvalid, TokenScopeError
 logger = logging.getLogger(__name__)
 
 _DEV_SECRET: str | None = None
+_DEV_SECRET_LOCK = threading.Lock()
 
 
 def _get_secret() -> str:
-    """Return the HMAC secret from the environment or generate a dev fallback."""
+    """Return the HMAC secret from the environment or generate a dev fallback.
+
+    Thread-safe: a :data:`threading.Lock` ensures only one thread generates
+    the fallback secret.
+    """
     global _DEV_SECRET
     secret = os.environ.get("AGENT_KERNEL_SECRET")
     if secret:
         return secret
-    if _DEV_SECRET is None:
-        _DEV_SECRET = secrets.token_hex(32)
-        logger.warning(
-            "AGENT_KERNEL_SECRET is not set. "
-            "Using a random development secret — tokens will not survive restarts. "
-            "Set AGENT_KERNEL_SECRET in production."
-        )
+    with _DEV_SECRET_LOCK:
+        if _DEV_SECRET is None:
+            _DEV_SECRET = secrets.token_hex(32)
+            logger.warning(
+                "AGENT_KERNEL_SECRET is not set. "
+                "Using a random development secret — tokens will not survive restarts. "
+                "Set AGENT_KERNEL_SECRET in production."
+            )
     return _DEV_SECRET
 
 

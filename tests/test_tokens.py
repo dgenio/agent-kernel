@@ -94,12 +94,16 @@ def test_dev_secret_warning(caplog: pytest.LogCaptureFixture) -> None:
     """A provider with no secret should generate a warning."""
     import logging
 
-    # Reset dev secret to force warning
     import agent_kernel.tokens as tok_mod
 
-    tok_mod._DEV_SECRET = None
-    provider_no_secret = HMACTokenProvider(secret=None)
-    with caplog.at_level(logging.WARNING, logger="agent_kernel.tokens"):
-        token = provider_no_secret.issue("cap.x", "user-1")
-    assert "AGENT_KERNEL_SECRET" in caplog.text
-    assert token.signature != ""
+    # Save and restore _DEV_SECRET to avoid leaking state to other tests
+    original = tok_mod._DEV_SECRET
+    try:
+        tok_mod._DEV_SECRET = None
+        provider_no_secret = HMACTokenProvider(secret=None)
+        with caplog.at_level(logging.WARNING, logger="agent_kernel.tokens"):
+            token = provider_no_secret.issue("cap.x", "user-1")
+        assert "AGENT_KERNEL_SECRET" in caplog.text
+        assert token.signature != ""
+    finally:
+        tok_mod._DEV_SECRET = original
