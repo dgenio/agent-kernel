@@ -122,6 +122,17 @@ def test_write_allowed_admin_role() -> None:
 # ── DESTRUCTIVE ────────────────────────────────────────────────────────────────
 
 
+def test_destructive_denied_short_justification() -> None:
+    p = Principal(principal_id="u1", roles=["admin"])
+    with pytest.raises(PolicyDenied, match="DESTRUCTIVE capabilities require a justification"):
+        engine.evaluate(
+            _req("cap.d"),
+            _cap("cap.d", SafetyClass.DESTRUCTIVE),
+            p,
+            justification="short",
+        )
+
+
 def test_destructive_denied_no_admin() -> None:
     p = Principal(principal_id="u1", roles=["writer"])
     with pytest.raises(PolicyDenied, match="admin"):

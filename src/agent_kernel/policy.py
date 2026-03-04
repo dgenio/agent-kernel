@@ -100,6 +100,12 @@ class DefaultPolicyEngine:
                 )
 
         elif capability.safety_class == SafetyClass.DESTRUCTIVE:
+            if len(justification) < _MIN_JUSTIFICATION:
+                raise PolicyDenied(
+                    f"DESTRUCTIVE capabilities require a justification of at least "
+                    f"{_MIN_JUSTIFICATION} characters. "
+                    f"Got {len(justification)} characters."
+                )
             if "admin" not in roles:
                 raise PolicyDenied(
                     f"DESTRUCTIVE capabilities require the 'admin' role. "
