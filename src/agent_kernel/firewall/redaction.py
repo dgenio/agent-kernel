@@ -22,7 +22,21 @@ _SENSITIVE_FIELDS: frozenset[str] = frozenset(
 )
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-_PHONE_RE = re.compile(r"\+?[\d\s\-().]{7,}")
+_PHONE_RE = re.compile(
+    r"""
+    (?<!\d)(?<![./])               # not preceded by digit, dot, or slash
+    (?:\+\d{1,3}[\s.\-])?         # optional intl prefix  (+1, +44 20)
+    (?:                            # area / city code
+      \(\d{2,4}\)[\s.\-]?         #   (555)  or  (020)
+    | \d{2,4}[\s.\-]              #   555-   or  020.
+    )
+    \d{3,4}                        # subscriber part 1
+    [\s.\-]?                       # optional separator
+    \d{3,5}                        # subscriber part 2
+    (?!\d)(?![./])                 # not followed by digit, dot, or slash
+    """,
+    re.VERBOSE,
+)
 _CARD_RE = re.compile(r"\b(?:\d[ -]?){13,16}\b")
 _SSN_RE = re.compile(r"\b\d{3}[- ]\d{2}[- ]\d{4}\b")
 
