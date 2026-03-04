@@ -154,15 +154,18 @@ class HandleStore:
                 for r in rows
             ]
 
+        if not rows:
+            table_preview: list[Any] = []
+        elif isinstance(rows[0], dict):
+            table_preview = rows
+        else:
+            table_preview = [{"value": r} for r in rows]
+
         return Frame(
             action_id=action_id,
             capability_id=handle.capability_id,
             response_mode=response_mode,
-            table_preview=rows
-            if isinstance(rows[0], dict)
-            else [{"value": r} for r in rows]
-            if rows
-            else [],
+            table_preview=table_preview,
             handle=handle,
             provenance=Provenance(
                 capability_id=handle.capability_id,
