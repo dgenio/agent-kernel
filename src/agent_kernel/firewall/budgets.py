@@ -1,7 +1,7 @@
 """Budgets dataclass for the context firewall.
 
-Re-exported from :mod:`agent_kernel.models` for convenience; also available
-directly as ``agent_kernel.firewall.Budgets``.
+Canonical definition of :class:`Budgets`.  Re-exported via
+``agent_kernel.firewall`` and the top-level ``agent_kernel`` package.
 """
 
 from __future__ import annotations

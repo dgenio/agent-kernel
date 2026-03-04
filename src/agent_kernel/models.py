@@ -174,16 +174,6 @@ class Provenance:
 
 
 @dataclass(slots=True)
-class Budgets:
-    """Budget constraints for the context firewall."""
-
-    max_rows: int = 50
-    max_fields: int = 20
-    max_chars: int = 4000
-    max_depth: int = 3
-
-
-@dataclass(slots=True)
 class FieldSpec:
     """Describes a single field in a structured result."""
 

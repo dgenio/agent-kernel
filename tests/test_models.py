@@ -5,9 +5,9 @@ from __future__ import annotations
 import datetime
 
 from agent_kernel.enums import SafetyClass, SensitivityTag
+from agent_kernel.firewall.budgets import Budgets
 from agent_kernel.models import (
     ActionTrace,
-    Budgets,
     Capability,
     CapabilityRequest,
     Frame,

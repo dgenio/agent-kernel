@@ -7,20 +7,15 @@ import json
 from typing import Any
 
 from ..models import (
-    Budgets,
     Frame,
     Handle,
     Provenance,
     RawResult,
     ResponseMode,
 )
-from .budgets import Budgets as FirewallBudgets
+from .budgets import Budgets
 from .redaction import redact
 from .summarize import summarize
-
-# Use the models.Budgets for the Frame; the firewall.Budgets is re-exported for
-# back-compat but they are structurally identical.
-_Budgets = Budgets
 
 
 class Firewall:
@@ -32,9 +27,9 @@ class Firewall:
     - Four response modes: ``summary``, ``table``, ``handle_only``, ``raw``.
     """
 
-    def __init__(self, budgets: _Budgets | FirewallBudgets | None = None) -> None:
+    def __init__(self, budgets: Budgets | None = None) -> None:
         if budgets is None:
-            self._budgets: _Budgets | FirewallBudgets = _Budgets()
+            self._budgets = Budgets()
         else:
             self._budgets = budgets
 
