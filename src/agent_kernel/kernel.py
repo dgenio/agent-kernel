@@ -142,31 +142,14 @@ class Kernel:
     ) -> CapabilityToken:
         """Like :meth:`grant_capability` but returns the token directly.
 
-        This is a convenience method for use in :meth:`invoke`.
-
-        Args:
-            request: The capability request.
-            principal: The requesting principal.
-            justification: Free-text justification.
-
-        Returns:
-            A signed :class:`CapabilityToken`.
-
-        Raises:
-            PolicyDenied: If the policy engine rejects the request.
-            CapabilityNotFound: If the capability is not registered.
+        Convenience wrapper for callers that don't need the full
+        :class:`CapabilityGrant`.  Delegates entirely to
+        :meth:`grant_capability`; see its docstring for parameter and
+        exception details.
         """
-        capability = self._registry.get(request.capability_id)
-        decision = self._policy.evaluate(
-            request, capability, principal, justification=justification
-        )
-        audit_id = str(uuid.uuid4())
-        return self._token_provider.issue(
-            capability.capability_id,
-            principal.principal_id,
-            constraints=decision.constraints,
-            audit_id=audit_id,
-        )
+        return self.grant_capability(
+            request, principal, justification=justification
+        ).token
 
     async def invoke(
         self,
