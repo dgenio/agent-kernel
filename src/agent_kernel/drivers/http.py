@@ -19,7 +19,8 @@ class HTTPEndpoint:
     url: str
     method: str = "GET"
     headers: dict[str, str] = field(default_factory=dict)
-    timeout: float = 30.0
+    timeout: float | None = None
+    """Per-endpoint timeout in seconds. Falls back to the driver's ``default_timeout``."""
 
 
 class HTTPDriver:
@@ -87,8 +88,12 @@ class HTTPDriver:
         else:
             json_body = {k: v for k, v in ctx.args.items() if k != "operation"}
 
+        effective_timeout = (
+            endpoint.timeout if endpoint.timeout is not None else self._default_timeout
+        )
+
         try:
-            async with httpx.AsyncClient(headers=headers, timeout=endpoint.timeout) as client:
+            async with httpx.AsyncClient(headers=headers, timeout=effective_timeout) as client:
                 if endpoint.method.upper() == "GET":
                     response = await client.get(endpoint.url, params=params)
                 elif endpoint.method.upper() == "POST":
