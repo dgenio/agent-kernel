@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .enums import SafetyClass, SensitivityTag
+
+if TYPE_CHECKING:
+    from .tokens import CapabilityToken
 
 ResponseMode = Literal["summary", "table", "handle_only", "raw"]
 
@@ -116,8 +119,11 @@ class CapabilityGrant:
     decision: PolicyDecision
     """The policy decision that led to this grant."""
 
-    token_id: str
-    """The token's unique identifier."""
+    token: CapabilityToken
+    """The signed capability token issued for this grant."""
+
+    audit_id: str
+    """Unique audit identifier embedded in the token for traceability."""
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────

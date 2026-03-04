@@ -129,7 +129,8 @@ class Kernel:
             request=request,
             principal=principal,
             decision=decision,
-            token_id=token.token_id,
+            token=token,
+            audit_id=audit_id,
         )
 
     def get_token(
