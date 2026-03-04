@@ -13,11 +13,23 @@ from .models import Frame, Handle, Provenance, ResponseMode
 class HandleStore:
     """Stores full capability results by handle ID with TTL-based expiry.
 
-    Entries are evicted lazily (on access) or explicitly via :meth:`evict_expired`.
+    Entries are evicted lazily (on access), periodically during :meth:`store`,
+    or explicitly via :meth:`evict_expired`.  A *max_entries* cap prevents
+    unbounded memory growth in long-lived processes — when the cap is exceeded
+    the oldest entries are dropped after expired ones are cleared.
     """
 
-    def __init__(self, default_ttl_seconds: int = 3600) -> None:
+    _EVICT_INTERVAL: int = 128  # run evict_expired() every N store() calls
+
+    def __init__(
+        self,
+        default_ttl_seconds: int = 3600,
+        *,
+        max_entries: int = 10_000,
+    ) -> None:
         self._default_ttl = default_ttl_seconds
+        self._max_entries = max_entries
+        self._store_count = 0
         self._data: dict[str, Any] = {}
         self._meta: dict[str, Handle] = {}
 
@@ -51,6 +63,22 @@ class HandleStore:
         )
         self._data[handle.handle_id] = data
         self._meta[handle.handle_id] = handle
+
+        # Periodic eviction of expired entries
+        self._store_count += 1
+        if self._store_count % self._EVICT_INTERVAL == 0:
+            self.evict_expired()
+
+        # Cap enforcement: evict oldest entries when over the limit
+        if len(self._meta) > self._max_entries:
+            self.evict_expired()  # clear expired first
+            overflow = len(self._meta) - self._max_entries
+            if overflow > 0:
+                oldest = sorted(self._meta, key=lambda hid: self._meta[hid].created_at)
+                for hid in oldest[:overflow]:
+                    self._data.pop(hid, None)
+                    self._meta.pop(hid, None)
+
         return handle
 
     # ── Retrieval ─────────────────────────────────────────────────────────────

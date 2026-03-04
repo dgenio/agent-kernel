@@ -106,3 +106,42 @@ def test_expand_handle_not_found(store: HandleStore) -> None:
     )
     with pytest.raises(HandleNotFound):
         store.expand(fake_handle, query={})
+
+
+# ── Bounded store ──────────────────────────────────────────────────────────────
+
+
+def test_max_entries_evicts_oldest() -> None:
+    s = HandleStore(default_ttl_seconds=3600, max_entries=5)
+    handles = [s.store("cap.x", [i]) for i in range(7)]
+    # Only 5 should remain; the 2 oldest were evicted
+    assert len(s._meta) == 5
+    # Oldest handles should be gone
+    with pytest.raises(HandleNotFound):
+        s.get(handles[0].handle_id)
+    with pytest.raises(HandleNotFound):
+        s.get(handles[1].handle_id)
+    # Newest should still be accessible
+    assert s.get(handles[6].handle_id) == [6]
+
+
+def test_max_entries_prefers_expired_over_live() -> None:
+    s = HandleStore(default_ttl_seconds=3600, max_entries=3)
+    # Store 2 already-expired + 1 live
+    s.store("cap.x", ["expired1"], ttl_seconds=-1)
+    s.store("cap.x", ["expired2"], ttl_seconds=-1)
+    live = s.store("cap.x", ["live"], ttl_seconds=3600)
+    # Now add a 4th — should evict the 2 expired first, then no overflow
+    new = s.store("cap.x", ["new"], ttl_seconds=3600)
+    assert len(s._meta) == 2
+    assert s.get(live.handle_id) == ["live"]
+    assert s.get(new.handle_id) == ["new"]
+
+
+def test_periodic_eviction_on_store() -> None:
+    s = HandleStore(default_ttl_seconds=3600, max_entries=10_000)
+    # Fill with expired entries below the cap
+    for i in range(HandleStore._EVICT_INTERVAL):
+        s.store("cap.x", [i], ttl_seconds=-1)
+    # All expired entries should have been evicted at the interval boundary
+    assert len(s._meta) == 0
