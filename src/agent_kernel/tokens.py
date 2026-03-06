@@ -173,7 +173,8 @@ class TokenProvider(Protocol):
             principal_id: The principal whose tokens should be revoked.
 
         Returns:
-            The number of tokens revoked.
+            The number of tokens newly revoked by this call (excluding tokens
+            that were already revoked).
         """
         ...
 
@@ -255,7 +256,8 @@ class HMACTokenProvider:
             principal_id: The principal whose tokens should be revoked.
 
         Returns:
-            The number of tokens revoked.
+            The number of tokens newly revoked by this call (excluding tokens
+            that were already revoked).
         """
         with self._revocation_lock:
             token_ids = self._principal_tokens.get(principal_id, set())
