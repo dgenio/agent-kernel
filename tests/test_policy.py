@@ -210,6 +210,14 @@ def test_secrets_denied_short_justification() -> None:
         engine.evaluate(_req("cap.sec"), cap, p, justification="too short")
 
 
+def test_secrets_denied_whitespace_justification() -> None:
+    """Whitespace-only justification must not bypass the length requirement."""
+    p = Principal(principal_id="u1", roles=["secrets_reader"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    with pytest.raises(PolicyDenied, match="justification"):
+        engine.evaluate(_req("cap.sec"), cap, p, justification="               ")
+
+
 def test_secrets_allowed_secrets_reader_role() -> None:
     p = Principal(principal_id="u1", roles=["secrets_reader"])
     cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)

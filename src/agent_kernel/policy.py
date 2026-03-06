@@ -89,7 +89,7 @@ class DefaultPolicyEngine:
         # ── Safety class checks ───────────────────────────────────────────────
 
         if capability.safety_class == SafetyClass.WRITE:
-            if len(justification) < _MIN_JUSTIFICATION:
+            if len(justification.strip()) < _MIN_JUSTIFICATION:
                 raise PolicyDenied(
                     f"WRITE capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
@@ -102,7 +102,7 @@ class DefaultPolicyEngine:
                 )
 
         elif capability.safety_class == SafetyClass.DESTRUCTIVE:
-            if len(justification) < _MIN_JUSTIFICATION:
+            if len(justification.strip()) < _MIN_JUSTIFICATION:
                 raise PolicyDenied(
                     f"DESTRUCTIVE capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
@@ -128,7 +128,7 @@ class DefaultPolicyEngine:
                 constraints["allowed_fields"] = capability.allowed_fields
 
         if capability.sensitivity == SensitivityTag.SECRETS:
-            if len(justification) < _MIN_JUSTIFICATION:
+            if len(justification.strip()) < _MIN_JUSTIFICATION:
                 raise PolicyDenied(
                     f"SECRETS capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
