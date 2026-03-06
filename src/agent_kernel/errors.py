@@ -20,6 +20,10 @@ class TokenScopeError(AgentKernelError):
     """Raised when a token is used by the wrong principal or for the wrong capability."""
 
 
+class TokenRevoked(AgentKernelError):
+    """Raised when a revoked token is presented for verification."""
+
+
 # ── Policy errors ─────────────────────────────────────────────────────────────
 
 

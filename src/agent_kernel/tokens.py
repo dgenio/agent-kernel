@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .errors import TokenExpired, TokenInvalid, TokenScopeError
+from .errors import TokenExpired, TokenInvalid, TokenRevoked, TokenScopeError
 
 logger = logging.getLogger(__name__)
 
@@ -151,9 +151,29 @@ class TokenProvider(Protocol):
             expected_capability_id: The capability this token should authorize.
 
         Raises:
+            TokenRevoked: If the token has been revoked.
             TokenExpired: If the token has expired.
             TokenInvalid: If the signature does not verify.
             TokenScopeError: If the principal or capability do not match.
+        """
+        ...
+
+    def revoke(self, token_id: str) -> None:
+        """Revoke a single token by ID.
+
+        Args:
+            token_id: The ID of the token to revoke.
+        """
+        ...
+
+    def revoke_all(self, principal_id: str) -> int:
+        """Revoke all tokens issued to a principal.
+
+        Args:
+            principal_id: The principal whose tokens should be revoked.
+
+        Returns:
+            The number of tokens revoked.
         """
         ...
 
@@ -171,6 +191,9 @@ class HMACTokenProvider:
 
     def __init__(self, secret: str | None = None) -> None:
         self._secret = secret  # None → use env / dev fallback at call time
+        self._revoked: set[str] = set()
+        self._principal_tokens: dict[str, set[str]] = {}
+        self._revocation_lock = threading.Lock()
 
     def _secret_bytes(self) -> bytes:
         return (self._secret or _get_secret()).encode()
@@ -210,7 +233,35 @@ class HMACTokenProvider:
             audit_id=audit_id,
         )
         token.signature = self._sign(token._signable_payload())
+        with self._revocation_lock:
+            self._principal_tokens.setdefault(principal_id, set()).add(token.token_id)
         return token
+
+    def revoke(self, token_id: str) -> None:
+        """Revoke a single token by ID.
+
+        Idempotent — revoking an already-revoked or unknown token is a no-op.
+
+        Args:
+            token_id: The ID of the token to revoke.
+        """
+        with self._revocation_lock:
+            self._revoked.add(token_id)
+
+    def revoke_all(self, principal_id: str) -> int:
+        """Revoke all tokens issued to a principal.
+
+        Args:
+            principal_id: The principal whose tokens should be revoked.
+
+        Returns:
+            The number of tokens revoked.
+        """
+        with self._revocation_lock:
+            token_ids = self._principal_tokens.get(principal_id, set())
+            newly_revoked = token_ids - self._revoked
+            self._revoked |= newly_revoked
+            return len(newly_revoked)
 
     def verify(
         self,
@@ -227,10 +278,17 @@ class HMACTokenProvider:
             expected_capability_id: The capability this token should authorize.
 
         Raises:
+            TokenRevoked: If the token has been revoked.
             TokenExpired: If ``token.expires_at`` is in the past.
             TokenInvalid: If the HMAC signature does not verify.
             TokenScopeError: If principal or capability do not match.
         """
+        # 0. Revocation (fast set lookup before any crypto)
+        with self._revocation_lock:
+            is_revoked = token.token_id in self._revoked
+        if is_revoked:
+            raise TokenRevoked(f"Token '{token.token_id}' has been revoked.")
+
         # 1. Expiry
         now = datetime.datetime.now(tz=datetime.timezone.utc)
         if token.expires_at <= now:
