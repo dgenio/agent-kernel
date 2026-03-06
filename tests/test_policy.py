@@ -97,6 +97,15 @@ def test_write_denied_short_justification() -> None:
         )
 
 
+def test_write_denied_whitespace_justification() -> None:
+    """Whitespace-only justification must not bypass the length requirement."""
+    p = Principal(principal_id="u1", roles=["writer"])
+    with pytest.raises(PolicyDenied, match="justification"):
+        engine.evaluate(
+            _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="               "
+        )
+
+
 def test_write_allowed_writer_role() -> None:
     p = Principal(principal_id="u1", roles=["writer"])
     dec = engine.evaluate(
@@ -130,6 +139,18 @@ def test_destructive_denied_short_justification() -> None:
             _cap("cap.d", SafetyClass.DESTRUCTIVE),
             p,
             justification="short",
+        )
+
+
+def test_destructive_denied_whitespace_justification() -> None:
+    """Whitespace-only justification must not bypass the length requirement."""
+    p = Principal(principal_id="u1", roles=["admin"])
+    with pytest.raises(PolicyDenied, match="justification"):
+        engine.evaluate(
+            _req("cap.d"),
+            _cap("cap.d", SafetyClass.DESTRUCTIVE),
+            p,
+            justification="               ",
         )
 
 
