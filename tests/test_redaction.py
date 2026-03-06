@@ -5,8 +5,12 @@ from __future__ import annotations
 import pytest
 
 from agent_kernel.firewall.redaction import (
+    _API_KEY_RE,
+    _BEARER_RE,
     _CARD_RE,
+    _CONN_STR_RE,
     _EMAIL_RE,
+    _JWT_RE,
     _PHONE_RE,
     _SSN_RE,
     redact,
@@ -186,3 +190,155 @@ class TestRedactFunction:
         result, warnings = redact(data)
         assert "123-45-6789" not in result
         assert "[REDACTED]" in result
+
+
+# ── _BEARER_RE ────────────────────────────────────────────────────────────────
+
+
+class TestBearerRegex:
+    """True-positive and true-negative tests for _BEARER_RE."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Bearer abc123XYZ",
+            "bearer eyJhbGciOiJIUzI1NiJ9",
+            "Authorization: Bearer my-token+value/here==",
+        ],
+    )
+    def test_matches_bearer_tokens(self, text: str) -> None:
+        assert _BEARER_RE.search(text), f"Expected match for: {text}"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Basic dXNlcjpwYXNz",
+            "no token here",
+        ],
+    )
+    def test_rejects_non_bearer(self, text: str) -> None:
+        assert not _BEARER_RE.search(text), f"Unexpected match for: {text}"
+
+
+# ── _JWT_RE ───────────────────────────────────────────────────────────────────
+
+
+class TestJWTRegex:
+    """True-positive and true-negative tests for _JWT_RE."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # minimal realistic JWT (header.payload.signature)
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV",
+        ],
+    )
+    def test_matches_jwt(self, text: str) -> None:
+        assert _JWT_RE.search(text), f"Expected match for: {text}"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "eyJhbGciOiJIUzI1NiJ9",  # only one segment (no dots)
+            "notajwt.notajwt.notajwt",  # doesn't start with eyJ
+            "aaa.bbb.ccc",  # valid Base64url but no eyJ prefix
+        ],
+    )
+    def test_rejects_non_jwt(self, text: str) -> None:
+        assert not _JWT_RE.search(text), f"Unexpected match for: {text}"
+
+
+# ── _API_KEY_RE ───────────────────────────────────────────────────────────────
+
+
+class TestAPIKeyRegex:
+    """True-positive and true-negative tests for _API_KEY_RE."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "api_key=ABCDEFGH12345678",
+            "apikey: sk-proj-abc123defgh456",
+            "API_KEY = MySecretKeyValue1",
+            "access_key ABCD1234EFGH5678",
+            "api-token=someRandomToken99",
+        ],
+    )
+    def test_matches_api_keys(self, text: str) -> None:
+        assert _API_KEY_RE.search(text), f"Expected match for: {text}"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "api_key=short",  # value too short (< 8 chars)
+            "no key here",
+        ],
+    )
+    def test_rejects_non_api_keys(self, text: str) -> None:
+        assert not _API_KEY_RE.search(text), f"Unexpected match for: {text}"
+
+
+# ── _CONN_STR_RE ──────────────────────────────────────────────────────────────
+
+
+class TestConnStrRegex:
+    """True-positive and true-negative tests for _CONN_STR_RE."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "postgresql://admin:s3cret@db.example.com/mydb",
+            "mysql://user:password@localhost:3306/schema",
+            "redis://default:hunter2@cache.example.com:6379",
+            "amqp://guest:guest@rabbitmq.internal/vhost",
+        ],
+    )
+    def test_matches_connection_strings(self, text: str) -> None:
+        assert _CONN_STR_RE.search(text), f"Expected match for: {text}"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "https://example.com/path",  # no credentials
+            "ftp://files.example.com/pub",  # no credentials
+        ],
+    )
+    def test_rejects_non_connection_strings(self, text: str) -> None:
+        assert not _CONN_STR_RE.search(text), f"Unexpected match for: {text}"
+
+
+# ── Secret pattern redact() integration ──────────────────────────────────────
+
+
+class TestSecretRedaction:
+    """Integration tests verifying secrets are removed by redact()."""
+
+    def test_bearer_token_redacted(self) -> None:
+        data = "Authorization: Bearer supersecrettoken123"
+        result, warnings = redact(data)
+        assert "supersecrettoken123" not in result
+        assert "[REDACTED]" in result
+
+    def test_jwt_redacted(self) -> None:
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV"
+        result, warnings = redact(jwt)
+        assert jwt not in result
+        assert "[REDACTED]" in result
+
+    def test_api_key_redacted(self) -> None:
+        data = "Set api_key=ABCDEFGH12345678 in config"
+        result, warnings = redact(data)
+        assert "ABCDEFGH12345678" not in result
+        assert "[REDACTED]" in result
+
+    def test_connection_string_redacted(self) -> None:
+        data = "DB_URL=postgresql://admin:s3cret@db.example.com/mydb"
+        result, warnings = redact(data)
+        assert "s3cret" not in result
+        assert "[REDACTED]" in result
+
+    def test_no_false_positive_plain_url(self) -> None:
+        data = "Visit https://example.com/page for more info."
+        result, warnings = redact(data)
+        assert result == data
+        assert not warnings

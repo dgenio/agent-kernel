@@ -46,7 +46,7 @@ class DefaultPolicyEngine:
 
     Rules (evaluated in order):
 
-    1. **READ** — always allowed.
+    1. **READ** — allowed (subject to sensitivity and row-cap rules below).
     2. **WRITE** — requires:
        - ``justification`` of at least 15 characters.
        - Principal role ``"writer"`` **or** ``"admin"``.
@@ -54,7 +54,9 @@ class DefaultPolicyEngine:
     4. **PII / PCI sensitivity** — requires the ``tenant`` attribute on the
        principal.  Enforces ``allowed_fields`` unless the principal has the
        ``pii_reader`` role.
-    5. **max_rows** — 50 for regular users; 500 for principals with the
+    5. **SECRETS sensitivity** — requires principal role ``"admin"`` or
+       ``"secrets_reader"`` and a justification of at least 15 characters.
+    6. **max_rows** — 50 for regular users; 500 for principals with the
        ``"service"`` role.
     """
 
@@ -87,29 +89,33 @@ class DefaultPolicyEngine:
         # ── Safety class checks ───────────────────────────────────────────────
 
         if capability.safety_class == SafetyClass.WRITE:
-            if len(justification) < _MIN_JUSTIFICATION:
-                raise PolicyDenied(
-                    f"WRITE capabilities require a justification of at least "
-                    f"{_MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters."
-                )
             if not (roles & {"writer", "admin"}):
                 raise PolicyDenied(
                     f"WRITE capabilities require the 'writer' or 'admin' role. "
                     f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
                 )
+            stripped_len = len(justification.strip())
+            if stripped_len < _MIN_JUSTIFICATION:
+                raise PolicyDenied(
+                    f"WRITE capabilities require a justification of at least "
+                    f"{_MIN_JUSTIFICATION} characters. "
+                    f"Got {len(justification)} characters "
+                    f"({stripped_len} after trimming whitespace)."
+                )
 
         elif capability.safety_class == SafetyClass.DESTRUCTIVE:
-            if len(justification) < _MIN_JUSTIFICATION:
-                raise PolicyDenied(
-                    f"DESTRUCTIVE capabilities require a justification of at least "
-                    f"{_MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters."
-                )
             if "admin" not in roles:
                 raise PolicyDenied(
                     f"DESTRUCTIVE capabilities require the 'admin' role. "
                     f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
+                )
+            stripped_len = len(justification.strip())
+            if stripped_len < _MIN_JUSTIFICATION:
+                raise PolicyDenied(
+                    f"DESTRUCTIVE capabilities require a justification of at least "
+                    f"{_MIN_JUSTIFICATION} characters. "
+                    f"Got {len(justification)} characters "
+                    f"({stripped_len} after trimming whitespace)."
                 )
 
         # ── Sensitivity checks ────────────────────────────────────────────────
@@ -124,6 +130,21 @@ class DefaultPolicyEngine:
             # Enforce allowed_fields unless the principal is a pii_reader.
             if capability.allowed_fields and "pii_reader" not in roles:
                 constraints["allowed_fields"] = capability.allowed_fields
+
+        if capability.sensitivity == SensitivityTag.SECRETS:
+            if not (roles & {"admin", "secrets_reader"}):
+                raise PolicyDenied(
+                    f"SECRETS capabilities require the 'admin' or 'secrets_reader' role. "
+                    f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
+                )
+            stripped_len = len(justification.strip())
+            if stripped_len < _MIN_JUSTIFICATION:
+                raise PolicyDenied(
+                    f"SECRETS capabilities require a justification of at least "
+                    f"{_MIN_JUSTIFICATION} characters. "
+                    f"Got {len(justification)} characters "
+                    f"({stripped_len} after trimming whitespace)."
+                )
 
         # ── Row cap ───────────────────────────────────────────────────────────
 

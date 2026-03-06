@@ -97,6 +97,15 @@ def test_write_denied_short_justification() -> None:
         )
 
 
+def test_write_denied_whitespace_justification() -> None:
+    """Whitespace-only justification must not bypass the length requirement."""
+    p = Principal(principal_id="u1", roles=["writer"])
+    with pytest.raises(PolicyDenied, match="justification"):
+        engine.evaluate(
+            _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="               "
+        )
+
+
 def test_write_allowed_writer_role() -> None:
     p = Principal(principal_id="u1", roles=["writer"])
     dec = engine.evaluate(
@@ -130,6 +139,18 @@ def test_destructive_denied_short_justification() -> None:
             _cap("cap.d", SafetyClass.DESTRUCTIVE),
             p,
             justification="short",
+        )
+
+
+def test_destructive_denied_whitespace_justification() -> None:
+    """Whitespace-only justification must not bypass the length requirement."""
+    p = Principal(principal_id="u1", roles=["admin"])
+    with pytest.raises(PolicyDenied, match="justification"):
+        engine.evaluate(
+            _req("cap.d"),
+            _cap("cap.d", SafetyClass.DESTRUCTIVE),
+            p,
+            justification="               ",
         )
 
 
@@ -191,6 +212,53 @@ def test_pci_requires_tenant() -> None:
     cap = _cap("cap.pci", SafetyClass.READ, SensitivityTag.PCI)
     with pytest.raises(PolicyDenied, match="tenant"):
         engine.evaluate(_req("cap.pci"), cap, p, justification="")
+
+
+# ── SECRETS ────────────────────────────────────────────────────────────────────
+
+
+def test_secrets_denied_no_role() -> None:
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    with pytest.raises(PolicyDenied, match="secrets_reader"):
+        engine.evaluate(_req("cap.sec"), cap, p, justification="long enough justification here")
+
+
+def test_secrets_denied_short_justification() -> None:
+    p = Principal(principal_id="u1", roles=["secrets_reader"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    with pytest.raises(PolicyDenied, match="justification"):
+        engine.evaluate(_req("cap.sec"), cap, p, justification="too short")
+
+
+def test_secrets_denied_whitespace_justification() -> None:
+    """Whitespace-only justification must not bypass the length requirement."""
+    p = Principal(principal_id="u1", roles=["secrets_reader"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    with pytest.raises(PolicyDenied, match="justification"):
+        engine.evaluate(_req("cap.sec"), cap, p, justification="               ")
+
+
+def test_secrets_allowed_secrets_reader_role() -> None:
+    p = Principal(principal_id="u1", roles=["secrets_reader"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    dec = engine.evaluate(_req("cap.sec"), cap, p, justification="long enough justification here")
+    assert dec.allowed is True
+
+
+def test_secrets_allowed_admin_role() -> None:
+    p = Principal(principal_id="u1", roles=["admin"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    dec = engine.evaluate(_req("cap.sec"), cap, p, justification="long enough justification here")
+    assert dec.allowed is True
+
+
+def test_secrets_denied_writer_role() -> None:
+    """Writer role is insufficient for SECRETS capabilities."""
+    p = Principal(principal_id="u1", roles=["writer"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    with pytest.raises(PolicyDenied, match="secrets_reader"):
+        engine.evaluate(_req("cap.sec"), cap, p, justification="long enough justification here")
 
 
 # ── Confused-deputy binding (via token) ────────────────────────────────────────
