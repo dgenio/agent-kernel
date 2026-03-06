@@ -193,6 +193,7 @@ class HMACTokenProvider:
     def __init__(self, secret: str | None = None) -> None:
         self._secret = secret  # None → use env / dev fallback at call time
         self._revoked: set[str] = set()
+        # TODO: consider TTL-based cleanup to bound growth over long-lived instances
         self._principal_tokens: dict[str, set[str]] = {}
         self._revocation_lock = threading.Lock()
 
@@ -263,6 +264,7 @@ class HMACTokenProvider:
             token_ids = self._principal_tokens.get(principal_id, set())
             newly_revoked = token_ids - self._revoked
             self._revoked |= newly_revoked
+            # Drop the index entry; new tokens for this principal will start fresh
             self._principal_tokens.pop(principal_id, None)
             return len(newly_revoked)
 
