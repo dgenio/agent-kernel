@@ -50,6 +50,7 @@ from .errors import (
     PolicyDenied,
     TokenExpired,
     TokenInvalid,
+    TokenRevoked,
     TokenScopeError,
 )
 from .firewall.budgets import Budgets
@@ -115,6 +116,7 @@ __all__ = [
     "PolicyDenied",
     "TokenExpired",
     "TokenInvalid",
+    "TokenRevoked",
     "TokenScopeError",
     # policy
     "DefaultPolicyEngine",

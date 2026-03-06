@@ -170,6 +170,7 @@ class Kernel:
             A bounded :class:`Frame` (never raw driver output).
 
         Raises:
+            TokenRevoked: If the token has been revoked.
             TokenExpired: If the token has expired.
             TokenInvalid: If the token signature does not verify.
             TokenScopeError: If the token belongs to a different principal or capability.

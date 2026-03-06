@@ -8,6 +8,7 @@ from agent_kernel import (
     HMACTokenProvider,
     TokenExpired,
     TokenInvalid,
+    TokenRevoked,
     TokenScopeError,
 )
 
@@ -107,3 +108,67 @@ def test_dev_secret_warning(caplog: pytest.LogCaptureFixture) -> None:
         assert token.signature != ""
     finally:
         tok_mod._DEV_SECRET = original
+
+
+# ── Revocation ─────────────────────────────────────────────────────────────────
+
+
+def test_revoke_single_token(provider: HMACTokenProvider) -> None:
+    token = provider.issue("cap.x", "user-1")
+    provider.revoke(token.token_id)
+    with pytest.raises(TokenRevoked, match="revoked"):
+        provider.verify(token, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+def test_revoke_idempotent(provider: HMACTokenProvider) -> None:
+    token = provider.issue("cap.x", "user-1")
+    provider.revoke(token.token_id)
+    provider.revoke(token.token_id)  # should not raise
+    with pytest.raises(TokenRevoked):
+        provider.verify(token, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+def test_revoke_does_not_affect_other_tokens(provider: HMACTokenProvider) -> None:
+    token_a = provider.issue("cap.x", "user-1")
+    token_b = provider.issue("cap.y", "user-1")
+    provider.revoke(token_a.token_id)
+    # token_b should still verify
+    provider.verify(token_b, expected_principal_id="user-1", expected_capability_id="cap.y")
+
+
+def test_revoke_all_principal(provider: HMACTokenProvider) -> None:
+    t1 = provider.issue("cap.x", "user-1")
+    t2 = provider.issue("cap.y", "user-1")
+    _other = provider.issue("cap.x", "user-2")
+    count = provider.revoke_all("user-1")
+    assert count == 2
+    with pytest.raises(TokenRevoked):
+        provider.verify(t1, expected_principal_id="user-1", expected_capability_id="cap.x")
+    with pytest.raises(TokenRevoked):
+        provider.verify(t2, expected_principal_id="user-1", expected_capability_id="cap.y")
+    # user-2 token is unaffected
+    provider.verify(_other, expected_principal_id="user-2", expected_capability_id="cap.x")
+
+
+def test_revoke_all_unknown_principal(provider: HMACTokenProvider) -> None:
+    count = provider.revoke_all("nonexistent")
+    assert count == 0
+
+
+def test_revoke_all_excludes_already_revoked(provider: HMACTokenProvider) -> None:
+    t1 = provider.issue("cap.x", "user-1")
+    _t2 = provider.issue("cap.y", "user-1")
+    provider.revoke(t1.token_id)
+    count = provider.revoke_all("user-1")
+    assert count == 1  # only t2 newly revoked
+
+
+def test_revoked_checked_before_signature(provider: HMACTokenProvider) -> None:
+    """Revocation check runs before HMAC — even a tampered token raises TokenRevoked."""
+    token = provider.issue("cap.x", "user-1")
+    provider.revoke(token.token_id)
+    from dataclasses import replace
+
+    tampered = replace(token, signature="invalid-signature")
+    with pytest.raises(TokenRevoked):
+        provider.verify(tampered, expected_principal_id="user-1", expected_capability_id="cap.x")
