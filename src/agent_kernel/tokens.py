@@ -263,6 +263,7 @@ class HMACTokenProvider:
             token_ids = self._principal_tokens.get(principal_id, set())
             newly_revoked = token_ids - self._revoked
             self._revoked |= newly_revoked
+            self._principal_tokens.pop(principal_id, None)
             return len(newly_revoked)
 
     def verify(
