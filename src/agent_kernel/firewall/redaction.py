@@ -49,17 +49,18 @@ _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 """Matches JSON Web Tokens (three Base64url segments starting with ``eyJ``)."""
 
 _API_KEY_RE = re.compile(
-    r"(?i)(?:api[_\-]?key|apikey|api[_\-]?token|access[_\-]?key)"
-    r"(?:\s*[=:]\s*|\s+)"
-    r"[A-Za-z0-9\-._~+/]{8,}"
+    r"((?:api[_\-]?key|apikey|api[_\-]?token|access[_\-]?key)"
+    r"(?:\s*[=:]\s*|\s+))"
+    r"[A-Za-z0-9\-._~+/]{8,}",
+    re.IGNORECASE,
 )
 """Matches common API key assignment patterns such as ``api_key=<value>``."""
 
 _CONN_STR_RE = re.compile(
-    r"[a-zA-Z][a-zA-Z0-9+\-.]*://"  # scheme
+    r"([a-zA-Z][a-zA-Z0-9+\-.]*://)"  # scheme
     r"[^:@/\s]+"  # user
     r":[^@/\s]+"  # :password
-    r"@[^\s]+"  # @host[/path]
+    r"(@[^\s]+)"  # @host[/path]
 )
 """Matches connection strings containing embedded credentials (``scheme://user:pass@host``)."""
 
@@ -133,8 +134,8 @@ def redact(
         data = _SSN_RE.sub(_REDACTED, data)
         data = _BEARER_RE.sub(_REDACTED, data)
         data = _JWT_RE.sub(_REDACTED, data)
-        data = _API_KEY_RE.sub(_REDACTED, data)
-        data = _CONN_STR_RE.sub(_REDACTED, data)
+        data = _API_KEY_RE.sub(r"\1" + _REDACTED, data)
+        data = _CONN_STR_RE.sub(r"\1" + _REDACTED + r"\2", data)
         if data != original:
             warnings.append("String value contained sensitive patterns and was redacted.")
         return data, warnings
