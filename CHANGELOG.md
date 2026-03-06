@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-06
+
+### Added
+- Token revocation support: `revoke_token()` and `revoke_all()` on `Kernel` (#33, #57).
+- `SECRETS` sensitivity tag enforcement in policy engine and redaction (#56).
+
+### Fixed
+- Policy engine now strips whitespace from justification before length check.
+- Policy engine reports both raw and stripped length in justification errors.
+- Policy engine checks role before justification in all safety/sensitivity blocks.
+- Redaction preserves field-name context in API key and connection string patterns.
+- `revoke_all()` drops `_principal_tokens` entry after revoking.
+
 ## [0.1.0] - 2024-01-01
 
 ### Added
