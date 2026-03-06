@@ -46,7 +46,7 @@ class DefaultPolicyEngine:
 
     Rules (evaluated in order):
 
-    1. **READ** — always allowed.
+    1. **READ** — allowed (subject to sensitivity and row-cap rules below).
     2. **WRITE** — requires:
        - ``justification`` of at least 15 characters.
        - Principal role ``"writer"`` **or** ``"admin"``.
