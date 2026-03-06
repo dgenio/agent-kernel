@@ -89,6 +89,11 @@ class DefaultPolicyEngine:
         # ── Safety class checks ───────────────────────────────────────────────
 
         if capability.safety_class == SafetyClass.WRITE:
+            if not (roles & {"writer", "admin"}):
+                raise PolicyDenied(
+                    f"WRITE capabilities require the 'writer' or 'admin' role. "
+                    f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
+                )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
                 raise PolicyDenied(
@@ -97,13 +102,13 @@ class DefaultPolicyEngine:
                     f"Got {len(justification)} characters "
                     f"({stripped_len} after trimming whitespace)."
                 )
-            if not (roles & {"writer", "admin"}):
-                raise PolicyDenied(
-                    f"WRITE capabilities require the 'writer' or 'admin' role. "
-                    f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
-                )
 
         elif capability.safety_class == SafetyClass.DESTRUCTIVE:
+            if "admin" not in roles:
+                raise PolicyDenied(
+                    f"DESTRUCTIVE capabilities require the 'admin' role. "
+                    f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
+                )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
                 raise PolicyDenied(
@@ -111,11 +116,6 @@ class DefaultPolicyEngine:
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
                     f"({stripped_len} after trimming whitespace)."
-                )
-            if "admin" not in roles:
-                raise PolicyDenied(
-                    f"DESTRUCTIVE capabilities require the 'admin' role. "
-                    f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
                 )
 
         # ── Sensitivity checks ────────────────────────────────────────────────
@@ -132,6 +132,11 @@ class DefaultPolicyEngine:
                 constraints["allowed_fields"] = capability.allowed_fields
 
         if capability.sensitivity == SensitivityTag.SECRETS:
+            if not (roles & {"admin", "secrets_reader"}):
+                raise PolicyDenied(
+                    f"SECRETS capabilities require the 'admin' or 'secrets_reader' role. "
+                    f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
+                )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
                 raise PolicyDenied(
@@ -139,11 +144,6 @@ class DefaultPolicyEngine:
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
                     f"({stripped_len} after trimming whitespace)."
-                )
-            if not (roles & {"admin", "secrets_reader"}):
-                raise PolicyDenied(
-                    f"SECRETS capabilities require the 'admin' or 'secrets_reader' role. "
-                    f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
                 )
 
         # ── Row cap ───────────────────────────────────────────────────────────
