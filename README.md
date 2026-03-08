@@ -38,7 +38,7 @@ graph LR
 ## Quickstart
 
 ```bash
-pip install agent-kernel
+pip install weaver-kernel
 ```
 
 ```python
