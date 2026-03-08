@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol
 
 from .enums import SafetyClass, SensitivityTag
 from .errors import PolicyDenied
 from .models import Capability, CapabilityRequest, PolicyDecision, Principal
+
+logger = logging.getLogger(__name__)
 
 # Minimum justification length for WRITE operations.
 _MIN_JUSTIFICATION = 15
@@ -86,17 +89,28 @@ class DefaultPolicyEngine:
         roles = set(principal.roles)
         constraints: dict[str, Any] = dict(request.constraints)
 
+        def _deny(reason: str) -> PolicyDenied:
+            logger.warning(
+                "policy_denied",
+                extra={
+                    "principal_id": principal.principal_id,
+                    "capability_id": capability.capability_id,
+                    "reason": reason,
+                },
+            )
+            return PolicyDenied(reason)
+
         # ── Safety class checks ───────────────────────────────────────────────
 
         if capability.safety_class == SafetyClass.WRITE:
             if not (roles & {"writer", "admin"}):
-                raise PolicyDenied(
+                raise _deny(
                     f"WRITE capabilities require the 'writer' or 'admin' role. "
                     f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
                 )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
-                raise PolicyDenied(
+                raise _deny(
                     f"WRITE capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
@@ -105,13 +119,13 @@ class DefaultPolicyEngine:
 
         elif capability.safety_class == SafetyClass.DESTRUCTIVE:
             if "admin" not in roles:
-                raise PolicyDenied(
+                raise _deny(
                     f"DESTRUCTIVE capabilities require the 'admin' role. "
                     f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
                 )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
-                raise PolicyDenied(
+                raise _deny(
                     f"DESTRUCTIVE capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
@@ -122,7 +136,7 @@ class DefaultPolicyEngine:
 
         if capability.sensitivity in (SensitivityTag.PII, SensitivityTag.PCI):
             if "tenant" not in principal.attributes:
-                raise PolicyDenied(
+                raise _deny(
                     f"Capability '{capability.capability_id}' has "
                     f"{capability.sensitivity.value} sensitivity and requires "
                     "the principal to have a 'tenant' attribute."
@@ -133,13 +147,13 @@ class DefaultPolicyEngine:
 
         if capability.sensitivity == SensitivityTag.SECRETS:
             if not (roles & {"admin", "secrets_reader"}):
-                raise PolicyDenied(
+                raise _deny(
                     f"SECRETS capabilities require the 'admin' or 'secrets_reader' role. "
                     f"Principal '{principal.principal_id}' has roles: {sorted(roles)}."
                 )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
-                raise PolicyDenied(
+                raise _deny(
                     f"SECRETS capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
@@ -154,7 +168,7 @@ class DefaultPolicyEngine:
             try:
                 requested = int(constraints["max_rows"])
             except (TypeError, ValueError) as exc:
-                raise PolicyDenied(
+                raise _deny(
                     f"Invalid 'max_rows' constraint: {constraints['max_rows']!r} "
                     "is not a valid integer."
                 ) from exc
@@ -162,8 +176,17 @@ class DefaultPolicyEngine:
         else:
             constraints["max_rows"] = max_rows
 
+        reason = "Request approved by DefaultPolicyEngine."
+        logger.info(
+            "policy_allowed",
+            extra={
+                "principal_id": principal.principal_id,
+                "capability_id": capability.capability_id,
+                "reason": reason,
+            },
+        )
         return PolicyDecision(
             allowed=True,
-            reason="Request approved by DefaultPolicyEngine.",
+            reason=reason,
             constraints=constraints,
         )

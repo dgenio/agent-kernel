@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
 from .models import RoutePlan
+
+logger = logging.getLogger(__name__)
 
 
 class Router(Protocol):
@@ -62,4 +65,12 @@ class StaticRouter:
             The explicit route if defined, otherwise the fallback route.
         """
         driver_ids = self._routes.get(capability_id, self._fallback)
-        return RoutePlan(capability_id=capability_id, driver_ids=list(driver_ids))
+        plan = RoutePlan(capability_id=capability_id, driver_ids=list(driver_ids))
+        logger.debug(
+            "route_resolved",
+            extra={
+                "capability_id": capability_id,
+                "driver_ids": plan.driver_ids,
+            },
+        )
+        return plan

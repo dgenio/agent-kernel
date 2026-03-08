@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from typing import Any
 
 from ..models import (
@@ -16,6 +17,8 @@ from ..models import (
 from .budgets import Budgets
 from .redaction import redact
 from .summarize import summarize
+
+logger = logging.getLogger(__name__)
 
 
 class Firewall:
@@ -90,11 +93,32 @@ class Firewall:
             data, redact_warnings = redact(data, max_depth=self._budgets.max_depth)
             warnings.extend(redact_warnings)
 
+        logger.debug(
+            "firewall_redaction",
+            extra={
+                "action_id": action_id,
+                "capability_id": raw.capability_id,
+                "principal_id": principal_id,
+                "redaction_warnings": len(redact_warnings),
+                "needs_redaction": needs_redaction,
+            },
+        )
+
         # ── Raw mode (admin only) ──────────────────────────────────────────────
         if response_mode == "raw":
             if "admin" not in principal_roles:
                 warnings.append("raw mode requires admin role; falling back to summary.")
                 response_mode = "summary"
+                logger.debug(
+                    "firewall_mode_fallback",
+                    extra={
+                        "action_id": action_id,
+                        "capability_id": raw.capability_id,
+                        "requested_mode": "raw",
+                        "effective_mode": "summary",
+                        "reason": "principal lacks admin role",
+                    },
+                )
             else:
                 raw_size = len(json.dumps(data, default=str))
                 if raw_size > self._budgets.max_chars:
@@ -102,6 +126,16 @@ class Firewall:
                         f"raw output ({raw_size} chars) exceeds budget "
                         f"({self._budgets.max_chars} chars); data returned untruncated."
                     )
+                logger.debug(
+                    "firewall_transform",
+                    extra={
+                        "action_id": action_id,
+                        "capability_id": raw.capability_id,
+                        "response_mode": "raw",
+                        "raw_size_chars": raw_size,
+                        "budget_chars": self._budgets.max_chars,
+                    },
+                )
                 return Frame(
                     action_id=action_id,
                     capability_id=raw.capability_id,
@@ -114,6 +148,14 @@ class Firewall:
 
         # ── Handle only ───────────────────────────────────────────────────────
         if response_mode == "handle_only":
+            logger.debug(
+                "firewall_transform",
+                extra={
+                    "action_id": action_id,
+                    "capability_id": raw.capability_id,
+                    "response_mode": "handle_only",
+                },
+            )
             return Frame(
                 action_id=action_id,
                 capability_id=raw.capability_id,
@@ -126,6 +168,16 @@ class Firewall:
         # ── Table mode ────────────────────────────────────────────────────────
         if response_mode == "table":
             table_preview = self._make_table(data, max_rows=max_rows)
+            logger.debug(
+                "firewall_transform",
+                extra={
+                    "action_id": action_id,
+                    "capability_id": raw.capability_id,
+                    "response_mode": "table",
+                    "rows_returned": len(table_preview),
+                    "max_rows": max_rows,
+                },
+            )
             return Frame(
                 action_id=action_id,
                 capability_id=raw.capability_id,
@@ -140,6 +192,16 @@ class Firewall:
         facts = summarize(data, max_facts=20)
         # Enforce char budget across all facts
         facts = _cap_facts(facts, self._budgets.max_chars)
+        logger.debug(
+            "firewall_transform",
+            extra={
+                "action_id": action_id,
+                "capability_id": raw.capability_id,
+                "response_mode": "summary",
+                "facts_count": len(facts),
+                "budget_chars": self._budgets.max_chars,
+            },
+        )
         return Frame(
             action_id=action_id,
             capability_id=raw.capability_id,
