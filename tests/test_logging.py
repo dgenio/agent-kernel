@@ -101,6 +101,11 @@ def admin() -> Principal:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# Compute default LogRecord keys once at module level for efficient comparison.
+_DEFAULT_LOG_KEYS: frozenset[str] = frozenset(
+    logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys()
+)
+
 
 def _all_log_text(records: list[logging.LogRecord]) -> str:
     """Concatenate all log message text and extra fields into one searchable string."""
@@ -109,7 +114,7 @@ def _all_log_text(records: list[logging.LogRecord]) -> str:
         parts.append(rec.getMessage())
         # Include all extra attributes attached to the record
         for key, val in rec.__dict__.items():
-            if key not in logging.LogRecord("", 0, "", 0, "", (), None).__dict__:
+            if key not in _DEFAULT_LOG_KEYS:
                 parts.append(str(val))
     return " ".join(parts)
 
