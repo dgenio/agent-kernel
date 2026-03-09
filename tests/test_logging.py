@@ -395,6 +395,57 @@ async def test_firewall_transform_logged_at_debug(
     assert any("firewall_transform" in m or "firewall_redaction" in m for m in modes)
 
 
+# ── kernel.py: DESTRUCTIVE grant + invoke (exercises admin fixture) ───────────
+
+
+@pytest.mark.asyncio
+async def test_destructive_grant_invoke_logging(
+    log_kernel: Kernel,
+    admin: Principal,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Admin grants DESTRUCTIVE capability; both grant and invoke emit INFO logs."""
+    req = CapabilityRequest(capability_id="log.destroy", goal="destroy log")
+    with caplog.at_level(logging.INFO, logger="agent_kernel"):
+        grant = log_kernel.grant_capability(
+            req, admin, justification="destroying old logs for compliance cleanup"
+        )
+        await log_kernel.invoke(grant.token, principal=admin, args={})
+
+    kernel_records = [r for r in caplog.records if r.name == "agent_kernel.kernel"]
+    assert any("grant_capability" in r.getMessage() for r in kernel_records)
+    grant_rec = next(r for r in kernel_records if "grant_capability" in r.getMessage())
+    assert grant_rec.capability_id == "log.destroy"  # type: ignore[attr-defined]
+    assert grant_rec.safety_class == "DESTRUCTIVE"  # type: ignore[attr-defined]
+    assert any("invoke_success" in r.getMessage() for r in kernel_records)
+
+
+def test_destructive_denial_logging(
+    log_kernel: Kernel,
+    reader: Principal,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A reader denied DESTRUCTIVE capability emits policy_denied WARNING."""
+    from agent_kernel import PolicyDenied
+
+    req = CapabilityRequest(capability_id="log.destroy", goal="destroy log")
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_kernel.policy"),
+        pytest.raises(PolicyDenied),
+    ):
+        log_kernel.grant_capability(req, reader, justification="short")
+
+    warning_records = [
+        r
+        for r in caplog.records
+        if r.name == "agent_kernel.policy" and r.levelno == logging.WARNING
+    ]
+    assert warning_records, "Expected WARNING log for DESTRUCTIVE denial"
+    rec = warning_records[0]
+    assert rec.principal_id == reader.principal_id  # type: ignore[attr-defined]
+    assert rec.capability_id == "log.destroy"  # type: ignore[attr-defined]
+
+
 # ── No noise at INFO during normal usage ──────────────────────────────────────
 
 
