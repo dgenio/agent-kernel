@@ -197,6 +197,14 @@ class HMACTokenProvider:
         self._principal_tokens: dict[str, set[str]] = {}
         self._revocation_lock = threading.Lock()
 
+    @staticmethod
+    def _log_verify_failure(token_id: str, reason: str, **extra: Any) -> None:
+        """Log a token verification failure at WARNING."""
+        logger.warning(
+            "token_verify_failed",
+            extra={"token_id": token_id, "reason": reason, **extra},
+        )
+
     def _secret_bytes(self) -> bytes:
         return (self._secret or _get_secret()).encode()
 
@@ -302,25 +310,14 @@ class HMACTokenProvider:
         with self._revocation_lock:
             is_revoked = token.token_id in self._revoked
         if is_revoked:
-            logger.warning(
-                "token_verify_failed",
-                extra={
-                    "token_id": token.token_id,
-                    "reason": "revoked",
-                },
-            )
+            self._log_verify_failure(token.token_id, "revoked")
             raise TokenRevoked(f"Token '{token.token_id}' has been revoked.")
 
         # 1. Expiry
         now = datetime.datetime.now(tz=datetime.timezone.utc)
         if token.expires_at <= now:
-            logger.warning(
-                "token_verify_failed",
-                extra={
-                    "token_id": token.token_id,
-                    "reason": "expired",
-                    "expires_at": token.expires_at.isoformat(),
-                },
+            self._log_verify_failure(
+                token.token_id, "expired", expires_at=token.expires_at.isoformat()
             )
             raise TokenExpired(
                 f"Token '{token.token_id}' expired at {token.expires_at.isoformat()}."
@@ -329,13 +326,7 @@ class HMACTokenProvider:
         # 2. Signature
         expected_sig = self._sign(token._signable_payload())
         if not hmac.compare_digest(expected_sig, token.signature):
-            logger.warning(
-                "token_verify_failed",
-                extra={
-                    "token_id": token.token_id,
-                    "reason": "invalid_signature",
-                },
-            )
+            self._log_verify_failure(token.token_id, "invalid_signature")
             raise TokenInvalid(
                 f"Token '{token.token_id}' has an invalid signature. "
                 "The token may have been tampered with."
@@ -343,13 +334,7 @@ class HMACTokenProvider:
 
         # 3. Principal binding (confused-deputy prevention)
         if token.principal_id != expected_principal_id:
-            logger.warning(
-                "token_verify_failed",
-                extra={
-                    "token_id": token.token_id,
-                    "reason": "principal_mismatch",
-                },
-            )
+            self._log_verify_failure(token.token_id, "principal_mismatch")
             raise TokenScopeError(
                 f"Token '{token.token_id}' was issued for principal "
                 f"'{token.principal_id}', not '{expected_principal_id}'."
@@ -357,13 +342,7 @@ class HMACTokenProvider:
 
         # 4. Capability binding
         if token.capability_id != expected_capability_id:
-            logger.warning(
-                "token_verify_failed",
-                extra={
-                    "token_id": token.token_id,
-                    "reason": "capability_mismatch",
-                },
-            )
+            self._log_verify_failure(token.token_id, "capability_mismatch")
             raise TokenScopeError(
                 f"Token '{token.token_id}' was issued for capability "
                 f"'{token.capability_id}', not '{expected_capability_id}'."
