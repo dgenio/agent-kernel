@@ -7,7 +7,7 @@
 
 | Command | Purpose | When to run |
 |---------|---------|-------------|
-| `make ci` | Full pre-push gate: fmt → lint → type → test → example | Before every commit |
+| `make ci` | Full pre-push gate: fmt → lint → type → test → example | Before every push |
 | `make fmt` | Auto-format with ruff | During development |
 | `make lint` | Lint check with ruff | Isolated lint verification |
 | `make type` | mypy type check | After changing type annotations |
