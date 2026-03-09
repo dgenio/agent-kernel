@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read   # required for actions/checkout
       id-token: write  # required for Trusted Publisher (OIDC)
     steps:
       - uses: actions/checkout@v4
