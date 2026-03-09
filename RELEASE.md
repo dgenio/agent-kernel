@@ -36,6 +36,10 @@ to the new version with today's date:
 
 ### 3. Commit and tag
 
+> **Important:** Tag only on `main` after the release commit is merged.
+> The publish workflow triggers on any `v*` tag push — tagging a non-main
+> commit would publish unreleased code.
+
 ```bash
 git add pyproject.toml CHANGELOG.md
 git commit -m "release: v0.3.0"
