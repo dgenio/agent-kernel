@@ -41,6 +41,8 @@ graph LR
 pip install weaver-kernel
 ```
 
+> **Note:** The PyPI package is `weaver-kernel` (Weaver ecosystem), but the Python import remains `agent_kernel`.
+
 ```python
 import asyncio, os
 os.environ["AGENT_KERNEL_SECRET"] = "my-secret"
