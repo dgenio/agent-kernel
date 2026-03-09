@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import uuid
 from typing import Any
 
@@ -25,6 +26,8 @@ from .registry import CapabilityRegistry
 from .router import Router, StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider, TokenProvider
 from .trace import TraceStore
+
+logger = logging.getLogger(__name__)
 
 
 class Kernel:
@@ -91,7 +94,15 @@ class Kernel:
         Returns:
             An ordered list of :class:`CapabilityRequest` objects (best match first).
         """
-        return self._registry.search(goal)
+        results = self._registry.search(goal)
+        logger.debug(
+            "request_capabilities",
+            extra={
+                "goal": goal,
+                "matches": len(results),
+            },
+        )
+        return results
 
     def grant_capability(
         self,
@@ -124,6 +135,16 @@ class Kernel:
             principal.principal_id,
             constraints=decision.constraints,
             audit_id=audit_id,
+        )
+        logger.info(
+            "grant_capability",
+            extra={
+                "principal_id": principal.principal_id,
+                "capability_id": capability.capability_id,
+                "safety_class": capability.safety_class.value,
+                "audit_id": audit_id,
+                "token_id": token.token_id,
+            },
         )
         return CapabilityGrant(
             request=request,
@@ -188,6 +209,16 @@ class Kernel:
         self._registry.get(token.capability_id)  # validate capability exists
         plan: RoutePlan = self._router.route(token.capability_id)
 
+        _log_ctx = {
+            "action_id": action_id,
+            "principal_id": principal.principal_id,
+            "capability_id": token.capability_id,
+        }
+        logger.info(
+            "invoke_start",
+            extra={**_log_ctx, "token_id": token.token_id, "response_mode": response_mode},
+        )
+
         # ── Execute with fallback ─────────────────────────────────────────────
         raw_result = None
         used_driver_id = ""
@@ -207,13 +238,19 @@ class Kernel:
             try:
                 raw_result = await driver.execute(ctx)
                 used_driver_id = driver_id
+                logger.debug("driver_success", extra={**_log_ctx, "driver_id": driver_id})
                 break
             except DriverError as exc:
+                logger.warning(
+                    "driver_failure",
+                    extra={**_log_ctx, "driver_id": driver_id, "error": str(exc)},
+                )
                 last_error = exc
                 continue
 
         if raw_result is None:
             err_msg = str(last_error) if last_error else "No drivers available."
+            logger.warning("invoke_failure", extra={**_log_ctx, "error": err_msg})
             trace = ActionTrace(
                 action_id=action_id,
                 capability_id=token.capability_id,
@@ -263,6 +300,10 @@ class Kernel:
         )
         self._trace_store.record(trace)
 
+        logger.info(
+            "invoke_success",
+            extra={**_log_ctx, "response_mode": frame.response_mode, "driver_id": used_driver_id},
+        )
         return frame
 
     def expand(self, handle: Handle, *, query: dict[str, Any]) -> Frame:
@@ -279,6 +320,13 @@ class Kernel:
             HandleNotFound: If the handle is unknown.
             HandleExpired: If the handle has expired.
         """
+        logger.info(
+            "expand",
+            extra={
+                "handle_id": handle.handle_id,
+                "capability_id": handle.capability_id,
+            },
+        )
         return self._handle_store.expand(handle, query=query)
 
     def explain(self, action_id: str) -> ActionTrace:
@@ -293,4 +341,10 @@ class Kernel:
         Raises:
             AgentKernelError: If no trace exists for that action ID.
         """
+        logger.info(
+            "explain",
+            extra={
+                "action_id": action_id,
+            },
+        )
         return self._trace_store.get(action_id)
