@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-09
+
 ### Added
+- Structured logging at kernel decision points (invoke, grant, deny, revoke).
 - Agent-facing documentation system: `docs/agent-context/` (architecture, workflows, invariants, lessons-learned, review-checklist).
 - `.github/copilot-instructions.md` — review-critical projections for GitHub Copilot.
 - `.claude/CLAUDE.md` — Claude-specific operating instructions.
@@ -20,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rewrote `AGENTS.md` with full domain vocabulary, security rules, code conventions, documentation map, and weaver-spec references.
 - Renamed PyPI package from `agent-kernel` to `weaver-kernel` to align with Weaver ecosystem.
 - Added `workflow_call` trigger to CI workflow so publish workflow can reuse it as a gate.
+
+### Refactored
+- Extracted `_log_verify_failure` helper in `tokens.py`.
+- Consolidated invoke logging with shared base dict in `kernel.py`.
+- Extracted `_deny` static method in policy engine.
+
+### Fixed
+- Pinned GitHub Actions to commit SHAs in publish workflow.
+- Added `contents:read` permission to publish job.
+- Clarified PyPI vs import name in README Quickstart.
 
 ## [0.2.0] - 2026-03-06
 
