@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PyPI publish workflow (`.github/workflows/publish.yml`) with Trusted Publisher (OIDC) (#37).
+- `RELEASE.md` documenting the full release process.
+- `[project.urls]` in `pyproject.toml` (Homepage, Repository, Documentation, Changelog).
+- Optional dependency groups: `mcp` and `otel` in `pyproject.toml`.
+
+### Changed
+- Renamed PyPI package from `agent-kernel` to `weaver-kernel` to align with Weaver ecosystem.
+- Added `workflow_call` trigger to CI workflow so publish workflow can reuse it as a gate.
+
 ## [0.2.0] - 2026-03-06
 
 ### Added

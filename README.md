@@ -38,8 +38,10 @@ graph LR
 ## Quickstart
 
 ```bash
-pip install agent-kernel
+pip install weaver-kernel
 ```
+
+> **Note:** The PyPI package is `weaver-kernel` (Weaver ecosystem), but the Python import remains `agent_kernel`.
 
 ```python
 import asyncio, os
