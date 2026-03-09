@@ -209,15 +209,14 @@ class Kernel:
         self._registry.get(token.capability_id)  # validate capability exists
         plan: RoutePlan = self._router.route(token.capability_id)
 
+        _log_ctx = {
+            "action_id": action_id,
+            "principal_id": principal.principal_id,
+            "capability_id": token.capability_id,
+        }
         logger.info(
             "invoke_start",
-            extra={
-                "action_id": action_id,
-                "principal_id": principal.principal_id,
-                "capability_id": token.capability_id,
-                "token_id": token.token_id,
-                "response_mode": response_mode,
-            },
+            extra={**_log_ctx, "token_id": token.token_id, "response_mode": response_mode},
         )
 
         # ── Execute with fallback ─────────────────────────────────────────────
@@ -239,39 +238,19 @@ class Kernel:
             try:
                 raw_result = await driver.execute(ctx)
                 used_driver_id = driver_id
-                logger.debug(
-                    "driver_success",
-                    extra={
-                        "action_id": action_id,
-                        "capability_id": token.capability_id,
-                        "driver_id": driver_id,
-                    },
-                )
+                logger.debug("driver_success", extra={**_log_ctx, "driver_id": driver_id})
                 break
             except DriverError as exc:
                 logger.warning(
                     "driver_failure",
-                    extra={
-                        "action_id": action_id,
-                        "capability_id": token.capability_id,
-                        "driver_id": driver_id,
-                        "error": str(exc),
-                    },
+                    extra={**_log_ctx, "driver_id": driver_id, "error": str(exc)},
                 )
                 last_error = exc
                 continue
 
         if raw_result is None:
             err_msg = str(last_error) if last_error else "No drivers available."
-            logger.warning(
-                "invoke_failure",
-                extra={
-                    "action_id": action_id,
-                    "principal_id": principal.principal_id,
-                    "capability_id": token.capability_id,
-                    "error": err_msg,
-                },
-            )
+            logger.warning("invoke_failure", extra={**_log_ctx, "error": err_msg})
             trace = ActionTrace(
                 action_id=action_id,
                 capability_id=token.capability_id,
@@ -323,13 +302,7 @@ class Kernel:
 
         logger.info(
             "invoke_success",
-            extra={
-                "action_id": action_id,
-                "principal_id": principal.principal_id,
-                "capability_id": token.capability_id,
-                "response_mode": frame.response_mode,
-                "driver_id": used_driver_id,
-            },
+            extra={**_log_ctx, "response_mode": frame.response_mode, "driver_id": used_driver_id},
         )
         return frame
 
