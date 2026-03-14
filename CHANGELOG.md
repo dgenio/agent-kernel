@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `HTTPDriver`: DELETE requests now forward args as query params instead of silently dropping them.
+
+### Removed
+- Dead `_truncate_str` helper in `firewall/transform.py` (defined but never called).
+
 ## [0.3.0] - 2026-03-09
 
 ### Added
