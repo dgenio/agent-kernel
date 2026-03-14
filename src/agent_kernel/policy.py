@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .enums import SafetyClass, SensitivityTag
-from .errors import PolicyDenied
+from .errors import AgentKernelError, PolicyDenied
 from .models import Capability, CapabilityRequest, PolicyDecision, Principal
 
 logger = logging.getLogger(__name__)
@@ -17,6 +21,66 @@ _MIN_JUSTIFICATION = 15
 # Default max_rows caps.
 _MAX_ROWS_USER = 50
 _MAX_ROWS_SERVICE = 500
+
+# Default rate limits per safety class: (invocations, window_seconds).
+_DEFAULT_RATE_LIMITS: dict[SafetyClass, tuple[int, float]] = {
+    SafetyClass.READ: (60, 60.0),
+    SafetyClass.WRITE: (10, 60.0),
+    SafetyClass.DESTRUCTIVE: (2, 60.0),
+}
+
+# Service role multiplier for rate limits.
+_SERVICE_RATE_MULTIPLIER = 10
+
+
+@dataclass(slots=True)
+class _RateEntry:
+    """Timestamps for a single rate-limit key."""
+
+    timestamps: list[float]
+
+
+class RateLimiter:
+    """Sliding-window rate limiter using monotonic clock.
+
+    Args:
+        clock: Callable returning the current time in seconds.
+            Defaults to :func:`time.monotonic`.
+    """
+
+    def __init__(self, clock: Callable[[], float] | None = None) -> None:
+        self._clock = clock or time.monotonic
+        self._windows: dict[str, _RateEntry] = defaultdict(lambda: _RateEntry(timestamps=[]))
+
+    def check(self, key: str, limit: int, window_seconds: float) -> bool:
+        """Return ``True`` if the next invocation would be within the limit.
+
+        Prunes expired timestamps as a side-effect.
+
+        Args:
+            key: Rate-limit key (e.g. ``"principal:capability"``).
+            limit: Maximum allowed invocations per window.
+            window_seconds: Sliding window duration in seconds.
+
+        Returns:
+            ``True`` if under limit, ``False`` if limit would be exceeded.
+        """
+        now = self._clock()
+        cutoff = now - window_seconds
+        entry = self._windows[key]
+        entry.timestamps = [t for t in entry.timestamps if t > cutoff]
+        if not entry.timestamps:
+            del self._windows[key]
+            return True
+        return len(entry.timestamps) < limit
+
+    def record(self, key: str) -> None:
+        """Record an invocation for *key*.
+
+        Args:
+            key: Rate-limit key.
+        """
+        self._windows[key].timestamps.append(self._clock())
 
 
 class PolicyEngine(Protocol):
@@ -61,7 +125,39 @@ class DefaultPolicyEngine:
        ``"secrets_reader"`` and a justification of at least 15 characters.
     6. **max_rows** — 50 for regular users; 500 for principals with the
        ``"service"`` role.
+    7. **Rate limiting** — sliding-window rate limit per
+       ``(principal_id, capability_id)`` pair, with defaults by safety class.
+       Principals with the ``"service"`` role get 10× the default limits.
     """
+
+    def __init__(
+        self,
+        *,
+        rate_limits: dict[SafetyClass, tuple[int, float]] | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        """Initialise the policy engine.
+
+        Args:
+            rate_limits: Override default rate limits per safety class.
+                Each value is ``(max_invocations, window_seconds)``.
+                Partial overrides are merged into the defaults so that
+                unspecified safety classes retain their default limits.
+            clock: Monotonic clock callable for rate-limiter.
+                Defaults to :func:`time.monotonic`.
+        """
+        limits = dict(_DEFAULT_RATE_LIMITS)
+        if rate_limits is not None:
+            limits.update(rate_limits)
+        for sc, (count, window) in limits.items():
+            if count < 1 or window <= 0:
+                raise AgentKernelError(
+                    f"Invalid rate limit for {sc.value}: "
+                    f"limit must be >= 1 and window must be > 0, "
+                    f"got limit={count}, window={window}."
+                )
+        self._rate_limits = limits
+        self._limiter = RateLimiter(clock=clock)
 
     @staticmethod
     def _deny(reason: str, *, principal_id: str, capability_id: str) -> PolicyDenied:
@@ -196,6 +292,22 @@ class DefaultPolicyEngine:
             constraints["max_rows"] = min(max(requested, 0), max_rows)
         else:
             constraints["max_rows"] = max_rows
+
+        # ── Rate limiting ─────────────────────────────────────────────────
+
+        rate_key = f"{pid}:{cid}"
+        if capability.safety_class in self._rate_limits:
+            limit, window = self._rate_limits[capability.safety_class]
+            if "service" in roles:
+                limit *= _SERVICE_RATE_MULTIPLIER
+            if not self._limiter.check(rate_key, limit, window):
+                raise self._deny(
+                    f"Rate limit exceeded: {limit} {capability.safety_class.value} "
+                    f"invocations per {window}s for principal '{pid}'",
+                    principal_id=pid,
+                    capability_id=cid,
+                )
+            self._limiter.record(rate_key)
 
         reason = "Request approved by DefaultPolicyEngine."
         logger.info(
