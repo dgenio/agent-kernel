@@ -6,6 +6,7 @@ import datetime
 
 from agent_kernel import Firewall
 from agent_kernel.firewall.budgets import Budgets
+from agent_kernel.firewall.summarize import summarize
 from agent_kernel.models import Handle, RawResult
 
 
@@ -155,3 +156,132 @@ def test_max_depth_limiting() -> None:
     budgets = Budgets(max_depth=2)
     frame = _transform(deep, "summary", budgets=budgets)
     assert frame.response_mode == "summary"  # type: ignore[union-attr]
+
+
+# ── Raw mode budget warning ────────────────────────────────────────────────────
+
+
+def test_raw_mode_oversized_data_adds_warning() -> None:
+    large_data = {"payload": "x" * 10_000}
+    budgets = Budgets(max_chars=100)
+    frame = _transform(large_data, "raw", principal_roles=["admin"], budgets=budgets)
+    assert frame.response_mode == "raw"  # type: ignore[union-attr]
+    assert any("exceeds budget" in w for w in frame.warnings)  # type: ignore[union-attr]
+
+
+# ── Table mode with non-list data ──────────────────────────────────────────────
+
+
+def test_table_mode_single_dict() -> None:
+    frame = _transform({"a": 1, "b": 2}, "table")
+    assert frame.response_mode == "table"  # type: ignore[union-attr]
+    assert len(frame.table_preview) == 1  # type: ignore[union-attr]
+    assert frame.table_preview[0]["a"] == 1  # type: ignore[union-attr]
+
+
+def test_table_mode_non_dict_rows() -> None:
+    frame = _transform([1, 2, 3], "table")
+    assert frame.response_mode == "table"  # type: ignore[union-attr]
+    assert frame.table_preview[0] == {"value": 1}  # type: ignore[union-attr]
+
+
+def test_table_mode_scalar_data() -> None:
+    frame = _transform(42, "table")
+    assert frame.response_mode == "table"  # type: ignore[union-attr]
+    assert frame.table_preview == [{"value": 42}]  # type: ignore[union-attr]
+
+
+# ── _cap_facts via public interface ────────────────────────────────────────────
+
+
+def test_summary_cap_facts_stops_at_budget() -> None:
+    # "Keys: key1, key2" (16 chars) fits in max_chars=20; the next fact (46+ chars)
+    # pushes the running total over budget, triggering the break in _cap_facts.
+    data = {"key1": "v" * 40, "key2": "v" * 40}
+    budgets = Budgets(max_chars=20)
+    frame = _transform(data, "summary", budgets=budgets)
+    assert frame.response_mode == "summary"  # type: ignore[union-attr]
+    assert len(frame.facts) == 1  # type: ignore[union-attr]
+    assert "Keys" in frame.facts[0]  # type: ignore[union-attr]
+
+
+def test_cap_facts_all_fit() -> None:
+    # Both short facts fit well within a generous budget — no break triggered.
+    data = {"a": 1, "b": 2}
+    budgets = Budgets(max_chars=10_000)
+    frame = _transform(data, "summary", budgets=budgets)
+    assert frame.response_mode == "summary"  # type: ignore[union-attr]
+    assert len(frame.facts) >= 2  # type: ignore[union-attr]
+
+
+# ── summarize() edge cases ─────────────────────────────────────────────────────
+
+
+def test_summarize_plain_list() -> None:
+    facts = summarize([1, 2, 3, "hello"])
+    assert facts[0] == "List of 4 items"
+    assert "1" in facts[1]
+
+
+def test_summarize_other_type_int() -> None:
+    facts = summarize(42)
+    assert facts == ["42"]
+
+
+def test_summarize_other_type_none() -> None:
+    facts = summarize(None)
+    assert facts == ["None"]
+
+
+def test_summarize_string_truncation() -> None:
+    long_str = "a" * 600
+    facts = summarize(long_str)
+    assert len(facts) == 1
+    assert "600 chars total" in facts[0]
+    assert facts[0].startswith("a" * 500)
+
+
+def test_summarize_list_of_dicts_numeric_max_facts() -> None:
+    rows = [{"n1": i, "n2": i * 2, "n3": i * 3} for i in range(5)]
+    # max_facts=3: "Total rows" + "Top keys" = 2, then 1 numeric fact hits limit
+    facts = summarize(rows, max_facts=3)
+    assert len(facts) <= 3
+
+
+def test_summarize_list_of_dicts_categorical_distribution() -> None:
+    rows = [{"status": s} for s in ["open", "closed", "open", "pending", "closed"]]
+    facts = summarize(rows)
+    assert any("distribution" in f for f in facts)
+
+
+def test_summarize_list_of_dicts_no_string_values_in_field() -> None:
+    # List values are not strings and not numeric — categorical loop skips them
+    rows = [{"items": [1, 2]}, {"items": [3, 4]}, {"items": [5]}]
+    facts = summarize(rows)
+    assert any("Total rows" in f for f in facts)
+
+
+def test_summarize_list_of_dicts_categorical_max_facts() -> None:
+    rows = [{"status": s, "kind": k} for s, k in [("a", "x"), ("b", "y"), ("a", "z"), ("b", "x")]]
+    # max_facts=3: "Total rows" + "Top keys" + 1 categorical fact, then break
+    facts = summarize(rows, max_facts=3)
+    assert len(facts) <= 3
+
+
+def test_summarize_dict_list_value() -> None:
+    data = {"items": [1, 2, 3], "count": 3}
+    facts = summarize(data)
+    assert any("list of 3 items" in f for f in facts)
+
+
+def test_summarize_dict_other_value_type() -> None:
+    # Tuple is not int/float/str/list/dict — falls through to repr()
+    data = {"pair": (1, 2), "count": 1}
+    facts = summarize(data)
+    assert any("(1, 2)" in f for f in facts)
+
+
+def test_summarize_dict_max_facts() -> None:
+    data = {"a": 1, "b": 2, "c": 3}
+    facts = summarize(data, max_facts=2)
+    assert len(facts) <= 2

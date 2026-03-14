@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from agent_kernel import DriverError, InMemoryDriver
@@ -158,8 +159,6 @@ async def test_httpdriver_unknown_operation_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_httpdriver_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    import httpx
-
     driver = HTTPDriver()
     endpoint = HTTPEndpoint(url="http://localhost:9999/fail", method="GET")
     driver.register_endpoint("fail_op", endpoint)
@@ -182,4 +181,137 @@ async def test_httpdriver_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> 
             args={"operation": "fail_op"},
         )
         with pytest.raises(DriverError, match="HTTP 500"):
+            await driver.execute(ctx)
+
+
+@pytest.mark.asyncio
+async def test_httpdriver_execute_post() -> None:
+    driver = HTTPDriver()
+    endpoint = HTTPEndpoint(url="http://localhost:9999/items", method="POST")
+    driver.register_endpoint("create_item", endpoint)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"created": True}
+    mock_response.status_code = 201
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+        ctx = ExecutionContext(
+            capability_id="cap.x",
+            principal_id="u1",
+            args={"operation": "create_item", "name": "test"},
+        )
+        result = await driver.execute(ctx)
+    assert result.data == {"created": True}
+    mock_client.post.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_httpdriver_execute_put() -> None:
+    driver = HTTPDriver()
+    endpoint = HTTPEndpoint(url="http://localhost:9999/items/1", method="PUT")
+    driver.register_endpoint("update_item", endpoint)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"updated": True}
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.put = AsyncMock(return_value=mock_response)
+
+    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+        ctx = ExecutionContext(
+            capability_id="cap.x",
+            principal_id="u1",
+            args={"operation": "update_item", "name": "updated"},
+        )
+        result = await driver.execute(ctx)
+    assert result.data == {"updated": True}
+    mock_client.put.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_httpdriver_execute_delete() -> None:
+    driver = HTTPDriver()
+    endpoint = HTTPEndpoint(url="http://localhost:9999/items/1", method="DELETE")
+    driver.register_endpoint("delete_item", endpoint)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"deleted": True}
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.delete = AsyncMock(return_value=mock_response)
+
+    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+        ctx = ExecutionContext(
+            capability_id="cap.x",
+            principal_id="u1",
+            args={"operation": "delete_item"},
+        )
+        result = await driver.execute(ctx)
+    assert result.data == {"deleted": True}
+    mock_client.delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_httpdriver_execute_patch_uses_request() -> None:
+    driver = HTTPDriver()
+    endpoint = HTTPEndpoint(url="http://localhost:9999/items/1", method="PATCH")
+    driver.register_endpoint("patch_item", endpoint)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"patched": True}
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.request = AsyncMock(return_value=mock_response)
+
+    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+        ctx = ExecutionContext(
+            capability_id="cap.x",
+            principal_id="u1",
+            args={"operation": "patch_item", "field": "value"},
+        )
+        result = await driver.execute(ctx)
+    assert result.data == {"patched": True}
+    mock_client.request.assert_called_once_with(
+        "PATCH", "http://localhost:9999/items/1", json={"field": "value"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_httpdriver_request_error_raises() -> None:
+    driver = HTTPDriver()
+    endpoint = HTTPEndpoint(url="http://localhost:9999/unreachable", method="GET")
+    driver.register_endpoint("unreachable_op", endpoint)
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(
+        side_effect=httpx.ConnectError("Connection refused", request=MagicMock())
+    )
+
+    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+        ctx = ExecutionContext(
+            capability_id="cap.x",
+            principal_id="u1",
+            args={"operation": "unreachable_op"},
+        )
+        with pytest.raises(DriverError, match="Request to .* failed"):
             await driver.execute(ctx)

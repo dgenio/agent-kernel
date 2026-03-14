@@ -233,12 +233,6 @@ class Firewall:
         return result
 
 
-def _truncate_str(s: str, max_chars: int) -> str:
-    if len(s) <= max_chars:
-        return s
-    return s[:max_chars]
-
-
 def _cap_facts(facts: list[str], max_chars: int) -> list[str]:
     """Return as many facts as fit within *max_chars* total."""
     total = 0
