@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .enums import SafetyClass, SensitivityTag
-from .errors import PolicyDenied
+from .errors import AgentKernelError, PolicyDenied
 from .models import Capability, CapabilityRequest, PolicyDecision, Principal
 
 logger = logging.getLogger(__name__)
@@ -149,6 +149,13 @@ class DefaultPolicyEngine:
         limits = dict(_DEFAULT_RATE_LIMITS)
         if rate_limits is not None:
             limits.update(rate_limits)
+        for sc, (count, window) in limits.items():
+            if count < 1 or window <= 0:
+                raise AgentKernelError(
+                    f"Invalid rate limit for {sc.value}: "
+                    f"limit must be >= 1 and window must be > 0, "
+                    f"got limit={count}, window={window}."
+                )
         self._rate_limits = limits
         self._limiter = RateLimiter(clock=clock)
 

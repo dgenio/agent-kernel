@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent_kernel import (
+    AgentKernelError,
     Capability,
     DefaultPolicyEngine,
     PolicyDenied,
@@ -429,6 +430,18 @@ def test_partial_rate_limits_preserves_defaults() -> None:
         eng.evaluate(_req("cap.d"), cap_d, p, justification=just)
     with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
         eng.evaluate(_req("cap.d"), cap_d, p, justification=just)
+
+
+def test_rate_limit_rejects_zero_limit() -> None:
+    """Rate limit with limit < 1 raises at construction time."""
+    with pytest.raises(AgentKernelError, match="limit must be >= 1"):
+        DefaultPolicyEngine(rate_limits={SafetyClass.READ: (0, 60.0)})
+
+
+def test_rate_limit_rejects_non_positive_window() -> None:
+    """Rate limit with window <= 0 raises at construction time."""
+    with pytest.raises(AgentKernelError, match="window must be > 0"):
+        DefaultPolicyEngine(rate_limits={SafetyClass.WRITE: (10, 0.0)})
 
 
 def test_rate_limit_window_slides() -> None:
