@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-14
+
 ### Added
 - Sliding-window rate limiting in `DefaultPolicyEngine` per `(principal_id, capability_id)` pair (#39).
   Default limits by safety class: 60 READ / 10 WRITE / 2 DESTRUCTIVE per 60s window.

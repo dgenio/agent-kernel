@@ -78,7 +78,7 @@ from .router import StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider
 from .trace import TraceStore
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # version

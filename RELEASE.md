@@ -16,7 +16,7 @@ Update the `version` field in `pyproject.toml`:
 
 ```toml
 [project]
-version = "0.3.0"
+version = "0.4.0"
 ```
 
 ### 2. Update the changelog
@@ -25,7 +25,7 @@ Add a new section to `CHANGELOG.md` under `## [Unreleased]`, then rename it
 to the new version with today's date:
 
 ```markdown
-## [0.3.0] - 2026-04-01
+## [0.4.0] - 2026-03-14
 
 ### Added
 - ...
@@ -42,8 +42,8 @@ to the new version with today's date:
 
 ```bash
 git add pyproject.toml CHANGELOG.md
-git commit -m "release: v0.3.0"
-git tag v0.3.0
+git commit -m "release: v0.4.0"
+git tag v0.4.0
 git push origin main --tags
 ```
 
