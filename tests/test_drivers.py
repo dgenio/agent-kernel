@@ -258,11 +258,11 @@ async def test_httpdriver_execute_delete() -> None:
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",
-            args={"operation": "delete_item"},
+            args={"operation": "delete_item", "id": "1"},
         )
         result = await driver.execute(ctx)
     assert result.data == {"deleted": True}
-    mock_client.delete.assert_called_once()
+    mock_client.delete.assert_called_once_with("http://localhost:9999/items/1", params={"id": "1"})
 
 
 @pytest.mark.asyncio
