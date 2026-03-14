@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - GitHub Release step in publish workflow — creates a release with auto-generated notes and artifacts before publishing to PyPI.
 
+### Fixed
+- `HTTPDriver`: DELETE requests now forward args as query params instead of silently dropping them.
+
+### Removed
+- Dead `_truncate_str` helper in `firewall/transform.py` (defined but never called).
+
 ## [0.3.0] - 2026-03-09
 
 ### Added

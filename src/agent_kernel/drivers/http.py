@@ -83,7 +83,7 @@ class HTTPDriver:
         params: dict[str, Any] = {}
         json_body: dict[str, Any] | None = None
 
-        if endpoint.method.upper() == "GET":
+        if endpoint.method.upper() in ("GET", "DELETE"):
             params = {k: v for k, v in ctx.args.items() if k != "operation"}
         else:
             json_body = {k: v for k, v in ctx.args.items() if k != "operation"}
