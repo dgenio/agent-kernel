@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from agent_kernel import (
@@ -299,7 +301,7 @@ def test_max_rows_negative_clamped_to_zero() -> None:
 # ── Rate limiting ─────────────────────────────────────────────────────────────────
 
 
-def _make_clock(start: float = 0.0) -> tuple[list[float], callable]:
+def _make_clock(start: float = 0.0) -> tuple[list[float], Callable[[], float]]:
     """Return a controllable clock: (time_ref, clock_fn).
 
     Advance time by mutating ``time_ref[0]``.
