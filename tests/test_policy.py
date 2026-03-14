@@ -414,6 +414,23 @@ def test_rate_limit_configurable() -> None:
         eng.evaluate(_req("cap.r"), cap, p, justification="")
 
 
+def test_partial_rate_limits_preserves_defaults() -> None:
+    """Partial rate_limits override must not disable defaults for other classes."""
+    _, clock = _make_clock()
+    eng = DefaultPolicyEngine(
+        rate_limits={SafetyClass.READ: (3, 10.0)},
+        clock=clock,
+    )
+    p = Principal(principal_id="u1", roles=["admin"])
+    cap_d = _cap("cap.d", SafetyClass.DESTRUCTIVE)
+    just = "long enough justification"
+    # DESTRUCTIVE default is 2 per 60s — must still be enforced
+    for _ in range(2):
+        eng.evaluate(_req("cap.d"), cap_d, p, justification=just)
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.d"), cap_d, p, justification=just)
+
+
 def test_rate_limit_window_slides() -> None:
     """Old entries expire, allowing new invocations after the window slides."""
     t, clock = _make_clock(0.0)

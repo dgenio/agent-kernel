@@ -138,10 +138,15 @@ class DefaultPolicyEngine:
         Args:
             rate_limits: Override default rate limits per safety class.
                 Each value is ``(max_invocations, window_seconds)``.
+                Partial overrides are merged into the defaults so that
+                unspecified safety classes retain their default limits.
             clock: Monotonic clock callable for rate-limiter.
                 Defaults to :func:`time.monotonic`.
         """
-        self._rate_limits = rate_limits if rate_limits is not None else dict(_DEFAULT_RATE_LIMITS)
+        limits = dict(_DEFAULT_RATE_LIMITS)
+        if rate_limits is not None:
+            limits.update(rate_limits)
+        self._rate_limits = limits
         self._limiter = RateLimiter(clock=clock)
 
     @staticmethod
