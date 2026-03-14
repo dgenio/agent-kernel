@@ -69,6 +69,9 @@ class RateLimiter:
         cutoff = now - window_seconds
         entry = self._windows[key]
         entry.timestamps = [t for t in entry.timestamps if t > cutoff]
+        if not entry.timestamps:
+            del self._windows[key]
+            return True
         return len(entry.timestamps) < limit
 
     def record(self, key: str) -> None:
