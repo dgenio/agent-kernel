@@ -309,7 +309,7 @@ def _make_clock(start: float = 0.0) -> tuple[list[float], callable]:
 
 def test_rate_limiter_under_limit() -> None:
     """Requests within the limit are allowed."""
-    t, clock = _make_clock()
+    _, clock = _make_clock()
     limiter = RateLimiter(clock=clock)
     for _ in range(5):
         assert limiter.check("k", 5, 60.0) is True
@@ -334,7 +334,7 @@ def test_rate_limiter_window_expires() -> None:
 
 def test_read_rate_limit_exceeded() -> None:
     """61st READ invocation in 60s raises PolicyDenied."""
-    t, clock = _make_clock()
+    _, clock = _make_clock()
     eng = DefaultPolicyEngine(clock=clock)
     p = Principal(principal_id="u1")
     cap = _cap("cap.r", SafetyClass.READ)
@@ -346,7 +346,7 @@ def test_read_rate_limit_exceeded() -> None:
 
 def test_write_rate_limit_exceeded() -> None:
     """11th WRITE invocation in 60s raises PolicyDenied."""
-    t, clock = _make_clock()
+    _, clock = _make_clock()
     eng = DefaultPolicyEngine(clock=clock)
     p = Principal(principal_id="u1", roles=["writer"])
     cap = _cap("cap.w", SafetyClass.WRITE)
@@ -359,7 +359,7 @@ def test_write_rate_limit_exceeded() -> None:
 
 def test_destructive_rate_limit_exceeded() -> None:
     """3rd DESTRUCTIVE invocation in 60s raises PolicyDenied."""
-    t, clock = _make_clock()
+    _, clock = _make_clock()
     eng = DefaultPolicyEngine(clock=clock)
     p = Principal(principal_id="u1", roles=["admin"])
     cap = _cap("cap.d", SafetyClass.DESTRUCTIVE)
@@ -372,7 +372,7 @@ def test_destructive_rate_limit_exceeded() -> None:
 
 def test_rate_limit_per_principal_capability_pair() -> None:
     """Rate limits are scoped to (principal_id, capability_id), not global."""
-    t, clock = _make_clock()
+    _, clock = _make_clock()
     eng = DefaultPolicyEngine(clock=clock)
     p1 = Principal(principal_id="u1")
     p2 = Principal(principal_id="u2")
@@ -388,7 +388,7 @@ def test_rate_limit_per_principal_capability_pair() -> None:
 
 def test_service_role_gets_10x_limit() -> None:
     """Principals with 'service' role get 10x the default rate limits."""
-    t, clock = _make_clock()
+    _, clock = _make_clock()
     eng = DefaultPolicyEngine(clock=clock)
     p = Principal(principal_id="svc1", roles=["service"])
     cap = _cap("cap.r", SafetyClass.READ)
@@ -401,7 +401,7 @@ def test_service_role_gets_10x_limit() -> None:
 
 def test_rate_limit_configurable() -> None:
     """Rate limits are configurable via constructor."""
-    t, clock = _make_clock()
+    _, clock = _make_clock()
     eng = DefaultPolicyEngine(
         rate_limits={SafetyClass.READ: (3, 10.0)},
         clock=clock,
