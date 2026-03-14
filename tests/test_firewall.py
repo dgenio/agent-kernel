@@ -167,6 +167,7 @@ def test_raw_mode_oversized_data_adds_warning() -> None:
     frame = _transform(large_data, "raw", principal_roles=["admin"], budgets=budgets)
     assert frame.response_mode == "raw"  # type: ignore[union-attr]
     assert any("exceeds budget" in w for w in frame.warnings)  # type: ignore[union-attr]
+    assert frame.raw_data == large_data  # type: ignore[union-attr]
 
 
 # ── Table mode with non-list data ──────────────────────────────────────────────
