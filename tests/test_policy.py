@@ -13,6 +13,7 @@ from agent_kernel import (
     SensitivityTag,
 )
 from agent_kernel.models import CapabilityRequest
+from agent_kernel.policy import RateLimiter
 
 
 def _req(cap_id: str, **constraints: object) -> CapabilityRequest:
@@ -292,3 +293,143 @@ def test_max_rows_negative_clamped_to_zero() -> None:
         _req("cap.r", max_rows=-10), _cap("cap.r", SafetyClass.READ), p, justification=""
     )
     assert dec.constraints["max_rows"] == 0
+
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────────
+
+
+def _make_clock(start: float = 0.0) -> tuple[list[float], callable]:
+    """Return a controllable clock: (time_ref, clock_fn).
+
+    Advance time by mutating ``time_ref[0]``.
+    """
+    time_ref = [start]
+    return time_ref, lambda: time_ref[0]
+
+
+def test_rate_limiter_under_limit() -> None:
+    """Requests within the limit are allowed."""
+    t, clock = _make_clock()
+    limiter = RateLimiter(clock=clock)
+    for _ in range(5):
+        assert limiter.check("k", 5, 60.0) is True
+        limiter.record("k")
+    # 6th should be denied
+    assert limiter.check("k", 5, 60.0) is False
+
+
+def test_rate_limiter_window_expires() -> None:
+    """Old entries expire and free up capacity."""
+    t, clock = _make_clock(0.0)
+    limiter = RateLimiter(clock=clock)
+    # Fill window
+    for _ in range(5):
+        limiter.check("k", 5, 60.0)
+        limiter.record("k")
+    assert limiter.check("k", 5, 60.0) is False
+    # Advance past window
+    t[0] = 61.0
+    assert limiter.check("k", 5, 60.0) is True
+
+
+def test_read_rate_limit_exceeded() -> None:
+    """61st READ invocation in 60s raises PolicyDenied."""
+    t, clock = _make_clock()
+    eng = DefaultPolicyEngine(clock=clock)
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    for _ in range(60):
+        eng.evaluate(_req("cap.r"), cap, p, justification="")
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.r"), cap, p, justification="")
+
+
+def test_write_rate_limit_exceeded() -> None:
+    """11th WRITE invocation in 60s raises PolicyDenied."""
+    t, clock = _make_clock()
+    eng = DefaultPolicyEngine(clock=clock)
+    p = Principal(principal_id="u1", roles=["writer"])
+    cap = _cap("cap.w", SafetyClass.WRITE)
+    just = "this is a long enough justification string"
+    for _ in range(10):
+        eng.evaluate(_req("cap.w"), cap, p, justification=just)
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.w"), cap, p, justification=just)
+
+
+def test_destructive_rate_limit_exceeded() -> None:
+    """3rd DESTRUCTIVE invocation in 60s raises PolicyDenied."""
+    t, clock = _make_clock()
+    eng = DefaultPolicyEngine(clock=clock)
+    p = Principal(principal_id="u1", roles=["admin"])
+    cap = _cap("cap.d", SafetyClass.DESTRUCTIVE)
+    just = "long enough justification"
+    for _ in range(2):
+        eng.evaluate(_req("cap.d"), cap, p, justification=just)
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.d"), cap, p, justification=just)
+
+
+def test_rate_limit_per_principal_capability_pair() -> None:
+    """Rate limits are scoped to (principal_id, capability_id), not global."""
+    t, clock = _make_clock()
+    eng = DefaultPolicyEngine(clock=clock)
+    p1 = Principal(principal_id="u1")
+    p2 = Principal(principal_id="u2")
+    cap = _cap("cap.r", SafetyClass.READ)
+    # Exhaust u1's limit
+    for _ in range(60):
+        eng.evaluate(_req("cap.r"), cap, p1, justification="")
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.r"), cap, p1, justification="")
+    # u2 is unaffected
+    eng.evaluate(_req("cap.r"), cap, p2, justification="")
+
+
+def test_service_role_gets_10x_limit() -> None:
+    """Principals with 'service' role get 10x the default rate limits."""
+    t, clock = _make_clock()
+    eng = DefaultPolicyEngine(clock=clock)
+    p = Principal(principal_id="svc1", roles=["service"])
+    cap = _cap("cap.r", SafetyClass.READ)
+    # Default READ is 60; service gets 600
+    for _ in range(600):
+        eng.evaluate(_req("cap.r"), cap, p, justification="")
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.r"), cap, p, justification="")
+
+
+def test_rate_limit_configurable() -> None:
+    """Rate limits are configurable via constructor."""
+    t, clock = _make_clock()
+    eng = DefaultPolicyEngine(
+        rate_limits={SafetyClass.READ: (3, 10.0)},
+        clock=clock,
+    )
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    for _ in range(3):
+        eng.evaluate(_req("cap.r"), cap, p, justification="")
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.r"), cap, p, justification="")
+
+
+def test_rate_limit_window_slides() -> None:
+    """Old entries expire, allowing new invocations after the window slides."""
+    t, clock = _make_clock(0.0)
+    eng = DefaultPolicyEngine(
+        rate_limits={SafetyClass.READ: (2, 10.0)},
+        clock=clock,
+    )
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    # Use both
+    eng.evaluate(_req("cap.r"), cap, p, justification="")
+    t[0] = 5.0
+    eng.evaluate(_req("cap.r"), cap, p, justification="")
+    # Blocked
+    with pytest.raises(PolicyDenied, match="Rate limit exceeded"):
+        eng.evaluate(_req("cap.r"), cap, p, justification="")
+    # Advance past first entry's window
+    t[0] = 11.0
+    eng.evaluate(_req("cap.r"), cap, p, justification="")  # should succeed

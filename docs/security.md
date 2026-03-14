@@ -35,4 +35,8 @@ Consider an agent that obtains a token for `billing.list_invoices` then passes i
 - The `AGENT_KERNEL_SECRET` must be kept secret. Rotate it if compromised.
 - The default `InMemoryDriver` has no persistence — suitable for testing only.
 - PII redaction is heuristic (regex-based). It is not a substitute for proper data governance.
-- There is no rate limiting or quota enforcement in v0.1.
+- Rate limiting is enforced per `(principal_id, capability_id)` pair using a sliding window.
+  Default limits: 60 READ / 10 WRITE / 2 DESTRUCTIVE invocations per 60-second window.
+  Principals with the `"service"` role receive 10× the default limits. Limits are
+  configurable via `DefaultPolicyEngine(rate_limits=...)`. There is no distributed or
+  persistent rate-limit state — limits reset on process restart.
