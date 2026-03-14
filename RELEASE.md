@@ -53,7 +53,8 @@ Pushing the `v*` tag triggers `.github/workflows/publish.yml`, which:
 
 1. Runs the full CI suite (`make ci` equivalent) as a gate.
 2. Builds the sdist and wheel with `python -m build`.
-3. Publishes to PyPI using Trusted Publisher (OIDC — no API tokens stored).
+3. Creates a GitHub Release with auto-generated notes and the built artifacts attached.
+4. Publishes to PyPI using Trusted Publisher (OIDC — no API tokens stored).
 
 Monitor the workflow run at:
 <https://github.com/dgenio/agent-kernel/actions/workflows/publish.yml>
