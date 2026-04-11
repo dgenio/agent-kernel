@@ -46,8 +46,8 @@ jobs:
           python examples/billing_demo.py
           python examples/http_driver_demo.py
 
-  conformance:
-    name: "Weaver Spec Conformance (v0.1.0)"
+  conformance_stub:
+    name: "Weaver Spec Conformance Stub (v0.1.0)"
     runs-on: ubuntu-latest
     needs: test
     permissions:
@@ -67,6 +67,7 @@ jobs:
       # Placeholder: activate once dgenio/weaver-spec#4 ships the conformance suite.
       # Replace this step with:
       #   pip install weaver-contracts
+      #   # Distribution name uses a hyphen; the Python module uses an underscore.
       #   python -m weaver_contracts.conformance --target agent_kernel
       - name: weaver-spec conformance suite (stub)
         run: |

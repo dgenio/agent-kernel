@@ -117,9 +117,9 @@ The following invariants are satisfied:
 
 | Invariant | Description | How agent-kernel satisfies it |
 |-----------|-------------|-------------------------------|
-| **I-01** | LLM never sees raw tool output by default | `Context Firewall` always transforms `RawResult → Frame`; raw driver output is never returned to the caller |
+| **I-01** | LLM never sees raw tool output by default | `Context Firewall` always transforms `RawResult → Frame`; raw driver output is not returned by default, and non-admin principals cannot obtain `raw` response mode |
 | **I-02** | Every execution is authorized and auditable | `PolicyEngine` evaluates every invocation; `TraceStore` records every `ActionTrace`; `HMACTokenProvider` validates tokens before execution |
-| **I-06** | CapabilityTokens are scoped | Tokens bind `principal_id + capability_id + constraints` with an explicit TTL; `revoke_token()` / `revoke_all()` are supported |
+| **I-06** | CapabilityTokens are scoped | Tokens bind `principal_id + capability_id + constraints` with an explicit TTL; `revoke(token_id)` / `revoke_all(principal_id)` are supported |
 
 See [docs/agent-context/invariants.md](docs/agent-context/invariants.md) for the full internal invariant list and [weaver-spec INVARIANTS.md](https://github.com/dgenio/weaver-spec/blob/main/docs/INVARIANTS.md) for the specification.
 
