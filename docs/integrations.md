@@ -13,28 +13,35 @@ pip install "weaver-kernel[mcp]"
 ### Stdio transport
 
 ```python
+import asyncio
+
 from agent_kernel import CapabilityRegistry, Kernel, StaticRouter
 from agent_kernel.drivers.mcp import MCPDriver
 
-registry = CapabilityRegistry()
-router = StaticRouter(fallback=[])
-kernel = Kernel(registry=registry, router=router)
 
-# Connect to a local MCP server process.
-driver = MCPDriver.from_stdio(
-    command="python",
-    args=["-m", "my_mcp_server"],
-    server_name="local-tools",
-)
-kernel.register_driver(driver)
+async def main() -> None:
+    registry = CapabilityRegistry()
+    router = StaticRouter(fallback=[])
+    kernel = Kernel(registry=registry, router=router)
 
-# Discover tools and register them as capabilities.
-capabilities = await driver.discover(namespace="local")
-registry.register_many(capabilities)
+    # Connect to a local MCP server process.
+    driver = MCPDriver.from_stdio(
+        command="python",
+        args=["-m", "my_mcp_server"],
+        server_name="local-tools",
+    )
+    kernel.register_driver(driver)
 
-# Route each discovered capability to this MCP driver.
-for capability in capabilities:
-    router.add_route(capability.capability_id, [driver.driver_id])
+    # Discover tools and register them as capabilities.
+    capabilities = await driver.discover(namespace="local")
+    registry.register_many(capabilities)
+
+    # Route each discovered capability to this MCP driver.
+    for capability in capabilities:
+        router.add_route(capability.capability_id, [driver.driver_id])
+
+
+asyncio.run(main())
 ```
 
 ### Streamable HTTP transport

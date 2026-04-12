@@ -170,6 +170,11 @@ class MCPDriver:
             except DriverError:
                 raise
             except Exception as exc:
+                # Broad catch is intentional: exceptions at this level are
+                # session/transport failures (connection refused, EOF, timeout).
+                # MCP tool-level application errors are returned as isError=True
+                # responses and converted to DriverError before reaching this
+                # handler — they never appear as Python exceptions here.
                 last_exc = exc
 
         reason = str(last_exc) if last_exc is not None else "unknown transport failure"

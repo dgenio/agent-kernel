@@ -64,7 +64,7 @@ def normalize_call_result(result: Any, *, operation: str, driver_id: str) -> Any
         return {"structured_content": structured, "content": content}
     if structured is not None:
         return structured
-    return content if content else {}
+    return content
 
 
 def import_optional(module_name: str) -> Any:
