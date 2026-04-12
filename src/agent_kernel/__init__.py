@@ -37,6 +37,7 @@ Errors::
 
 from .drivers.base import Driver, ExecutionContext
 from .drivers.http import HTTPDriver
+from .drivers.mcp import MCPDriver
 from .drivers.memory import InMemoryDriver, make_billing_driver
 from .enums import SafetyClass, SensitivityTag
 from .errors import (
@@ -129,6 +130,7 @@ __all__ = [
     "ExecutionContext",
     "InMemoryDriver",
     "HTTPDriver",
+    "MCPDriver",
     "make_billing_driver",
     # firewall
     "Firewall",
