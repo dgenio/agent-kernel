@@ -25,8 +25,11 @@ agent-kernel is part of the **Weaver ecosystem**:
 
 This repo must conform to weaver-spec invariants. Key invariants (all equally critical):
 - **I-01**: Every tool output must pass through a context boundary before reaching the LLM.
-- **I-02**: Context boundaries must enforce budgets (size, depth, field count).
+- **I-02**: Every execution must be authorized and auditable (preceded by a policy decision, followed by a trace event).
 - **I-06**: Tokens must bind principal + capability + constraints; no reuse across principals.
+
+Note: Budget enforcement (size, depth, field count) is an agent-kernel implementation
+constraint that satisfies I-01 — it is not a separate weaver-spec invariant number.
 
 Full spec: [dgenio/weaver-spec](https://github.com/dgenio/weaver-spec)
 
