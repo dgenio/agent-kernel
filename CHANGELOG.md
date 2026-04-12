@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Declared weaver-spec v0.1.0 compatibility in README: invariants I-01 (firewall), I-02 (authorization + audit), and I-06 (scoped tokens) are satisfied.
-- Added placeholder `conformance` CI job that will activate once the weaver-spec conformance suite ships (dgenio/weaver-spec#4).
+- Added placeholder `conformance_stub` CI job that will activate once the weaver-spec conformance suite ships (dgenio/weaver-spec#4).
 
 ## [0.4.0] - 2026-03-14
 

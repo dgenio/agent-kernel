@@ -11,8 +11,11 @@ All three are equally critical — there is no priority ordering.
 | Invariant | Requirement | Where enforced |
 |-----------|-------------|----------------|
 | **I-01** | Every tool output must pass through a context boundary before reaching the LLM | `Firewall.transform()` in `firewall/transform.py` |
-| **I-02** | Context boundaries must enforce budgets (size, depth, field count) | `Budgets` in `firewall/budgets.py` |
+| **I-02** | Every execution must be authorized and auditable (CapabilityToken validated before execution; TraceEvent recorded after) | `HMACTokenProvider.verify()` + `TraceStore.record()` in `kernel.py`; `PolicyEngine.evaluate()` at grant time in `grant_capability()` |
 | **I-06** | Tokens must bind principal + capability + constraints; no reuse across principals | `HMACTokenProvider.verify()` in `tokens.py` |
+
+> **Budget enforcement** (size, depth, field count via `Budgets` in `firewall/budgets.py`) is an
+> implementation constraint that strengthens I-01. It has no separate invariant number in weaver-spec.
 
 ## Forbidden shortcuts — "never do" list
 

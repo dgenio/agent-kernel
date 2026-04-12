@@ -65,7 +65,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       # Placeholder: activate once dgenio/weaver-spec#4 ships the conformance runner.
-      # weaver-spec v0.2.0 and weaver-contracts 0.2.0 are published on PyPI.
+      # weaver-spec and weaver-contracts are published on PyPI.
       # weaver_contracts.conformance does not yet exist (dgenio/weaver-spec#4).
       # Replace this step with:
       #   pip install weaver-contracts          # PyPI dist name uses a hyphen
