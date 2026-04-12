@@ -65,11 +65,12 @@ jobs:
         run: pip install -e ".[dev]"
 
       # Placeholder: activate once dgenio/weaver-spec#4 ships the conformance runner.
-      # weaver-spec IS published (v0.2.0); weaver_contracts.conformance does not yet exist.
+      # weaver-spec v0.2.0 and weaver-contracts 0.2.0 are published on PyPI.
+      # weaver_contracts.conformance does not yet exist (dgenio/weaver-spec#4).
       # Replace this step with:
-      #   pip install git+https://github.com/dgenio/weaver-spec.git#subdirectory=contracts/python
+      #   pip install weaver-contracts          # PyPI dist name uses a hyphen
       #   python -m weaver_contracts.conformance --target agent_kernel
       - name: weaver-spec conformance suite (stub)
         run: |
-          echo "weaver-spec v0.2.0 is published; weaver_contracts.conformance runner not yet available (dgenio/weaver-spec#4)."
+          echo "weaver-contracts 0.2.0 is on PyPI; weaver_contracts.conformance runner not yet available (dgenio/weaver-spec#4)."
           echo "Stub passes. Activate when dgenio/weaver-spec#4 ships."
