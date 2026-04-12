@@ -37,13 +37,14 @@ class _FakeSession:
         self._call_error = call_error
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def list_tools(self) -> ListToolsResult:
+    async def list_tools(self, cursor: str | None = None) -> ListToolsResult:
         return ListToolsResult(tools=self._tools)
 
     async def call_tool(
         self,
         operation: str,
         arguments: dict[str, Any],
+        read_timeout_seconds: Any = None,
     ) -> CallToolResult:
         self.calls.append((operation, arguments))
         if self._call_error is not None:
@@ -292,4 +293,6 @@ async def test_real_fastmcp_in_process_discover_and_execute() -> None:
         args={"operation": "add", "a": 3, "b": 4},
     )
     result = await driver.execute(ctx)
-    assert result.data is not None
+    assert isinstance(result.data, dict)
+    assert result.data["structured_content"]["result"] == 7
+    assert result.data["content"][0]["text"] == "7"

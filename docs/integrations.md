@@ -47,13 +47,40 @@ asyncio.run(main())
 ### Streamable HTTP transport
 
 ```python
+import asyncio
+
+from agent_kernel import CapabilityRegistry, Kernel, StaticRouter
 from agent_kernel.drivers.mcp import MCPDriver
 
-http_driver = MCPDriver.from_http(
-    url="https://example.com/mcp",
-    server_name="remote-tools",
-    max_retries=1,
-)
+
+async def main() -> None:
+    registry = CapabilityRegistry()
+    router = StaticRouter(fallback=[])
+    kernel = Kernel(registry=registry, router=router)
+
+    # Connect to a remote Streamable HTTP MCP server.
+    # Note: max_retries > 0 creates at-least-once delivery semantics for
+    # tools/call — if a connection drops after the server processes the
+    # request but before the response arrives, the call will be repeated.
+    # Ensure target tools are idempotent, or set max_retries=0 for
+    # WRITE/DESTRUCTIVE capabilities.
+    driver = MCPDriver.from_http(
+        url="https://example.com/mcp",
+        server_name="remote-tools",
+        max_retries=1,
+    )
+    kernel.register_driver(driver)
+
+    # Discover tools and register them as capabilities.
+    capabilities = await driver.discover(namespace="remote")
+    registry.register_many(capabilities)
+
+    # Route each discovered capability to this MCP driver.
+    for capability in capabilities:
+        router.add_route(capability.capability_id, [driver.driver_id])
+
+
+asyncio.run(main())
 ```
 
 ### Notes

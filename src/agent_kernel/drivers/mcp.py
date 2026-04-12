@@ -11,12 +11,34 @@ from ..models import Capability, ImplementationRef, RawResult
 from .base import ExecutionContext
 from .mcp_support import (
     SessionFactory,
+    ToolSpec,
     build_http_session_factory,
     build_stdio_session_factory,
     call_tool,
     extract_tool_specs,
     normalize_call_result,
 )
+
+# Lazy import of McpError — only available when the mcp optional dep is installed.
+# If mcp is absent, factory methods raise ImportError before any session is created,
+# so _McpError will never be None on a live driver instance.
+try:
+    from mcp.shared.exceptions import McpError as _McpError
+except ImportError:  # pragma: no cover
+    _McpError = None  # type: ignore[assignment,misc]
+
+
+def _infer_safety_class(spec: ToolSpec) -> SafetyClass:
+    """Infer a SafetyClass from MCP ToolAnnotations hints.
+
+    Uses a conservative default of READ when annotations are absent.
+    The caller's safety_class_map takes precedence over the inferred value.
+    """
+    if spec.destructive_hint:
+        return SafetyClass.DESTRUCTIVE
+    if spec.read_only_hint:
+        return SafetyClass.READ
+    return SafetyClass.READ
 
 
 class MCPDriver:
@@ -92,19 +114,20 @@ class MCPDriver:
         namespace: str | None = None,
         safety_class_map: dict[str, SafetyClass] | None = None,
     ) -> list[Capability]:
-        """Discover MCP tools and convert them to capabilities."""
-        tool_list = await self._run_with_retry(
+        """Discover MCP tools across all pages and convert them to capabilities."""
+        tools = await self._run_with_retry(
             operation_name="tools/list",
-            action=lambda session: session.list_tools(),
+            action=self._fetch_all_tools,
         )
 
         capabilities: list[Capability] = []
-        for spec in extract_tool_specs(tool_list):
+        for spec in extract_tool_specs(tools):
             capability_id = f"{namespace}.{spec.name}" if namespace else spec.name
+            inferred = _infer_safety_class(spec)
             safety_class = (
-                safety_class_map.get(spec.name, SafetyClass.READ)
+                safety_class_map.get(spec.name, inferred)
                 if safety_class_map is not None
-                else SafetyClass.READ
+                else inferred
             )
             capabilities.append(
                 Capability(
@@ -121,14 +144,34 @@ class MCPDriver:
             )
         return capabilities
 
+    async def _fetch_all_tools(self, session: Any) -> list[Any]:
+        """Paginate tools/list to exhaustion and return a flat list of Tool objects."""
+        all_tools: list[Any] = []
+        cursor: str | None = None
+        while True:
+            result = await session.list_tools(cursor=cursor)
+            all_tools.extend(getattr(result, "tools", []) or [])
+            cursor = getattr(result, "nextCursor", None)
+            if not cursor:
+                break
+        return all_tools
+
     async def execute(self, ctx: ExecutionContext) -> RawResult:
         """Execute an MCP tool call for the given capability context."""
         operation = str(ctx.args.get("operation", ctx.capability_id))
         params = {k: v for k, v in ctx.args.items() if k != "operation"}
 
         # Apply policy constraints as default arguments, without overriding explicit args.
+        # read_timeout_seconds is an SDK control parameter — applied to the session call
+        # directly rather than forwarded to the tool as an argument.
+        read_timeout_seconds_raw = ctx.constraints.get("read_timeout_seconds")
         for key, value in ctx.constraints.items():
-            params.setdefault(key, value)
+            if key != "read_timeout_seconds":
+                params.setdefault(key, value)
+
+        read_timeout_seconds: float | None = (
+            float(read_timeout_seconds_raw) if read_timeout_seconds_raw is not None else None
+        )
 
         result = await self._run_with_retry(
             operation_name=f"tools/call:{operation}",
@@ -136,6 +179,7 @@ class MCPDriver:
                 session,
                 operation=operation,
                 params=params,
+                read_timeout_seconds=read_timeout_seconds,
             ),
         )
 
@@ -170,11 +214,19 @@ class MCPDriver:
             except DriverError:
                 raise
             except Exception as exc:
-                # Broad catch is intentional: exceptions at this level are
-                # session/transport failures (connection refused, EOF, timeout).
-                # MCP tool-level application errors are returned as isError=True
-                # responses and converted to DriverError before reaching this
-                # handler — they never appear as Python exceptions here.
+                # McpError is a protocol-level rejection (tool not found, auth
+                # failure, invalid params) — the server processed and rejected the
+                # request. It is not retryable; surface it immediately as DriverError.
+                if _McpError is not None and isinstance(exc, _McpError):
+                    raise DriverError(
+                        f"MCPDriver '{self._driver_id}' received a protocol error "
+                        f"during {operation_name}: {exc}"
+                    ) from exc
+                # All other exceptions are session/transport failures (connection
+                # refused, EOF, timeout) and are retryable for HTTP transport.
+                # Note: HTTP retries create at-least-once delivery semantics for
+                # tools/call. Callers using WRITE/DESTRUCTIVE capabilities over HTTP
+                # should ensure the target tool is idempotent, or set max_retries=0.
                 last_exc = exc
 
         reason = str(last_exc) if last_exc is not None else "unknown transport failure"

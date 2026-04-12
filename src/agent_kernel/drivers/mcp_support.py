@@ -6,6 +6,7 @@ import importlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from ..errors import DriverError
@@ -19,16 +20,26 @@ class ToolSpec:
 
     name: str
     description: str
+    read_only_hint: bool = False
+    destructive_hint: bool = False
+    idempotent_hint: bool = False
+    output_schema: dict[str, Any] | None = None
 
 
-async def call_tool(session: Any, *, operation: str, params: dict[str, Any]) -> Any:
+async def call_tool(
+    session: Any,
+    *,
+    operation: str,
+    params: dict[str, Any],
+    read_timeout_seconds: float | None = None,
+) -> Any:
     """Call an MCP tool via tools/call."""
-    return await session.call_tool(operation, arguments=params)
+    timeout = timedelta(seconds=read_timeout_seconds) if read_timeout_seconds is not None else None
+    return await session.call_tool(operation, arguments=params, read_timeout_seconds=timeout)
 
 
-def extract_tool_specs(tool_list_response: Any) -> list[ToolSpec]:
-    """Extract tool metadata from a tools/list response payload."""
-    tools = getattr(tool_list_response, "tools", [])
+def extract_tool_specs(tools: list[Any]) -> list[ToolSpec]:
+    """Extract tool metadata from a flat list of MCP Tool objects."""
     if not isinstance(tools, list):
         return []
     specs: list[ToolSpec] = []
@@ -36,10 +47,15 @@ def extract_tool_specs(tool_list_response: Any) -> list[ToolSpec]:
         name = getattr(tool, "name", None)
         if not isinstance(name, str) or not name:
             continue
+        ann = getattr(tool, "annotations", None)
         specs.append(
             ToolSpec(
                 name=name,
                 description=str(getattr(tool, "description", "") or ""),
+                read_only_hint=bool(getattr(ann, "readOnlyHint", False)),
+                destructive_hint=bool(getattr(ann, "destructiveHint", False)),
+                idempotent_hint=bool(getattr(ann, "idempotentHint", False)),
+                output_schema=getattr(tool, "outputSchema", None),
             )
         )
     return specs
