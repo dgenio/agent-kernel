@@ -11,7 +11,14 @@ from typing import Any, Protocol
 
 from .enums import SafetyClass, SensitivityTag
 from .errors import AgentKernelError, PolicyDenied
-from .models import Capability, CapabilityRequest, PolicyDecision, Principal
+from .models import (
+    Capability,
+    CapabilityRequest,
+    DenialExplanation,
+    FailedCondition,
+    PolicyDecision,
+    Principal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +111,31 @@ class PolicyEngine(Protocol):
 
         Returns:
             A :class:`PolicyDecision` (allowed or denied with reason).
+        """
+        ...
+
+    def explain(
+        self,
+        request: CapabilityRequest,
+        capability: Capability,
+        principal: Principal,
+        *,
+        justification: str,
+    ) -> DenialExplanation:
+        """Explain why *principal*'s *request* would be denied (or allowed).
+
+        Unlike :meth:`evaluate`, this method never raises — it collects all
+        failing conditions and returns a structured :class:`DenialExplanation`.
+
+        Args:
+            request: The capability request to explain.
+            capability: The target capability.
+            principal: The requesting principal.
+            justification: Free-text justification from the caller.
+
+        Returns:
+            A :class:`DenialExplanation` with ``denied=False`` if the request
+            would succeed.
         """
         ...
 
@@ -322,4 +354,147 @@ class DefaultPolicyEngine:
             allowed=True,
             reason=reason,
             constraints=constraints,
+        )
+
+    def explain(
+        self,
+        request: CapabilityRequest,
+        capability: Capability,
+        principal: Principal,
+        *,
+        justification: str,
+    ) -> DenialExplanation:
+        """Explain which policy conditions would deny *principal*'s *request*.
+
+        Traverses the same rule chain as :meth:`evaluate` but collects ALL
+        failing conditions instead of short-circuiting on the first failure.
+        Rate-limit state is excluded — it is transient and not remediable
+        by changing the request.
+
+        Args:
+            request: The capability request to explain.
+            capability: The target capability.
+            principal: The requesting principal.
+            justification: Free-text justification from the caller.
+
+        Returns:
+            :class:`DenialExplanation` with ``denied=False`` if allowed.
+        """
+        roles = set(principal.roles)
+        pid = principal.principal_id
+        cid = capability.capability_id
+        failed: list[FailedCondition] = []
+
+        # ── Safety class checks ───────────────────────────────────────────────
+
+        if capability.safety_class == SafetyClass.WRITE:
+            if not (roles & {"writer", "admin"}):
+                failed.append(
+                    FailedCondition(
+                        condition="roles",
+                        required=["writer", "admin"],
+                        actual=sorted(roles),
+                        suggestion=f"Add 'writer' or 'admin' role to principal '{pid}'",
+                    )
+                )
+            stripped = len(justification.strip())
+            if stripped < _MIN_JUSTIFICATION:
+                failed.append(
+                    FailedCondition(
+                        condition="min_justification",
+                        required=_MIN_JUSTIFICATION,
+                        actual=stripped,
+                        suggestion=(
+                            f"Provide justification with at least {_MIN_JUSTIFICATION} "
+                            f"characters (currently {stripped})"
+                        ),
+                    )
+                )
+
+        elif capability.safety_class == SafetyClass.DESTRUCTIVE:
+            if "admin" not in roles:
+                failed.append(
+                    FailedCondition(
+                        condition="roles",
+                        required=["admin"],
+                        actual=sorted(roles),
+                        suggestion=f"Add 'admin' role to principal '{pid}'",
+                    )
+                )
+            stripped = len(justification.strip())
+            if stripped < _MIN_JUSTIFICATION:
+                failed.append(
+                    FailedCondition(
+                        condition="min_justification",
+                        required=_MIN_JUSTIFICATION,
+                        actual=stripped,
+                        suggestion=(
+                            f"Provide justification with at least {_MIN_JUSTIFICATION} "
+                            f"characters (currently {stripped})"
+                        ),
+                    )
+                )
+
+        # ── Sensitivity checks ────────────────────────────────────────────────
+
+        if (
+            capability.sensitivity in (SensitivityTag.PII, SensitivityTag.PCI)
+            and "tenant" not in principal.attributes
+        ):
+            failed.append(
+                FailedCondition(
+                    condition="tenant_attribute",
+                    required="present",
+                    actual="absent",
+                    suggestion=f"Add 'tenant' attribute to principal '{pid}'",
+                )
+            )
+
+        if capability.sensitivity == SensitivityTag.SECRETS:
+            if not (roles & {"admin", "secrets_reader"}):
+                failed.append(
+                    FailedCondition(
+                        condition="roles",
+                        required=["admin", "secrets_reader"],
+                        actual=sorted(roles),
+                        suggestion=f"Add 'admin' or 'secrets_reader' role to principal '{pid}'",
+                    )
+                )
+            stripped = len(justification.strip())
+            if stripped < _MIN_JUSTIFICATION:
+                failed.append(
+                    FailedCondition(
+                        condition="min_justification",
+                        required=_MIN_JUSTIFICATION,
+                        actual=stripped,
+                        suggestion=(
+                            f"Provide justification with at least {_MIN_JUSTIFICATION} "
+                            f"characters (currently {stripped})"
+                        ),
+                    )
+                )
+
+        denied = bool(failed)
+        remediation = [fc.suggestion for fc in failed]
+
+        if denied:
+            first = failed[0]
+            rule_name = (
+                f"{capability.safety_class.value.lower()}-{first.condition.replace('_', '-')}"
+            )
+            narrative = (
+                f"Request for '{cid}' by '{pid}' would be denied: "
+                + "; ".join(fc.suggestion for fc in failed)
+                + "."
+            )
+        else:
+            rule_name = "allowed"
+            narrative = f"Request for '{cid}' by '{pid}' would be allowed by DefaultPolicyEngine."
+
+        return DenialExplanation(
+            denied=denied,
+            rule_name=rule_name,
+            failed_conditions=failed,
+            remediation=remediation,
+            narrative=narrative,
         )

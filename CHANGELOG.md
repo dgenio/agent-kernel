@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Declarative policy engine (`DeclarativePolicyEngine`) that loads rules from YAML or TOML files.
+  Rules are evaluated top-down with first-match-wins semantics; supports `safety_class`, `sensitivity`,
+  `roles`, `attributes`, and `min_justification` match conditions. (#42)
+- Policy denial explanation engine: `PolicyEngine.explain()` method and `DefaultPolicyEngine.explain()`
+  implementation return a structured `DenialExplanation` with a `FailedCondition` list for every failing
+  check (no short-circuit), a `remediation` list, and a human-readable `narrative`. (#48)
+- Dry-run invocation mode: `kernel.invoke(..., dry_run=True)` verifies the token and resolves the
+  execution plan without calling the driver. Returns `DryRunResult` with the resolved `driver_id`,
+  `operation`, `response_mode`, and an `estimated_cost` tier (`low`/`medium`/`high`). (#43)
+- `Kernel.explain_denial()` convenience method that calls the policy engine's `explain()` for a given
+  `CapabilityRequest` and `Principal` without requiring a token.
+- New public types exported from `agent_kernel`: `DeclarativePolicyEngine`, `PolicyMatch`, `PolicyRule`,
+  `DenialExplanation`, `FailedCondition`, `DryRunResult`, `PolicyConfigError`.
+- `policy` optional extra (`pip install weaver-kernel[policy]`) pulls in `pyyaml` and `tomli` (Python 3.10).
+- Example policy files in `examples/policies/` (YAML and TOML formats).
+
 ## [0.5.0] - 2026-04-12
 
 ### Added

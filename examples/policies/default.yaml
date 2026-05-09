@@ -1,0 +1,54 @@
+# Example declarative policy for agent-kernel
+# Load with: DeclarativePolicyEngine.from_yaml(Path("examples/policies/default.yaml"))
+#
+# Rules are evaluated top-down; the first match wins.
+# If no rule matches, the default_action applies.
+
+default_action: deny
+
+rules:
+  # Allow read-only operations for any authenticated principal
+  - name: allow-read-all
+    action: allow
+    match:
+      safety_class: [READ]
+
+  # Allow write operations for editors and admins with a justification
+  - name: allow-write-editors
+    action: allow
+    match:
+      safety_class: [WRITE]
+      roles: [editor, admin]
+      min_justification: 20
+
+  # Allow destructive operations for admins only with a strong justification
+  - name: allow-destructive-admin
+    action: allow
+    match:
+      safety_class: [DESTRUCTIVE]
+      roles: [admin]
+      min_justification: 50
+
+  # Deny access to PII data unless the principal carries a tenant attribute
+  - name: deny-pii-no-tenant
+    action: deny
+    match:
+      sensitivity: [PII]
+      attributes:
+        tenant: "*"   # "*" means: attribute must be present with any value
+    reason: "PII access requires a tenant attribute on the principal"
+
+  # Deny access to secrets for non-service principals
+  - name: deny-secrets-non-service
+    action: deny
+    match:
+      sensitivity: [SECRETS]
+    reason: "SECRETS access is restricted to service-role principals"
+
+  # Allow service principals to read secrets with a justification
+  - name: allow-secrets-service
+    action: allow
+    match:
+      sensitivity: [SECRETS]
+      roles: [service]
+      min_justification: 10

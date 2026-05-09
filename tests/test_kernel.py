@@ -215,3 +215,114 @@ async def test_confused_deputy_prevention(kernel: Kernel, reader_principal: Prin
             principal=other_principal,
             args={"operation": "billing.list_invoices"},
         )
+
+
+# ── Dry-run mode ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dry_run_returns_dry_run_result(kernel: Kernel, reader_principal: Principal) -> None:
+    """dry_run=True returns DryRunResult, not Frame."""
+    from agent_kernel.models import DryRunResult
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="test")
+    token = kernel.get_token(req, reader_principal, justification="")
+    result = await kernel.invoke(token, principal=reader_principal, args={}, dry_run=True)
+    assert isinstance(result, DryRunResult)
+    assert result.capability_id == "billing.list_invoices"
+    assert result.principal_id == reader_principal.principal_id
+    assert result.policy_decision.allowed is True
+    assert result.budget_remaining is None
+
+
+@pytest.mark.asyncio
+async def test_dry_run_driver_not_called(
+    kernel: Kernel, reader_principal: Principal, memory_driver: InMemoryDriver
+) -> None:
+    """Driver execute() must never be called in dry-run mode."""
+    from unittest.mock import AsyncMock, patch
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="test")
+    token = kernel.get_token(req, reader_principal, justification="")
+    with patch.object(memory_driver, "execute", new_callable=AsyncMock) as mock_exec:
+        await kernel.invoke(token, principal=reader_principal, args={}, dry_run=True)
+        mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_estimated_cost(kernel: Kernel, admin_principal: Principal) -> None:
+    """estimated_cost maps to safety class."""
+    from agent_kernel.models import DryRunResult
+
+    read_req = CapabilityRequest(capability_id="billing.list_invoices", goal="r")
+    read_token = kernel.get_token(read_req, admin_principal, justification="")
+    read_result = await kernel.invoke(read_token, principal=admin_principal, args={}, dry_run=True)
+    assert isinstance(read_result, DryRunResult)
+    assert read_result.estimated_cost == "low"
+
+    del_req = CapabilityRequest(capability_id="billing.delete_invoice", goal="d")
+    del_token = kernel.get_token(
+        del_req, admin_principal, justification="long enough justification here"
+    )
+    del_result = await kernel.invoke(del_token, principal=admin_principal, args={}, dry_run=True)
+    assert isinstance(del_result, DryRunResult)
+    assert del_result.estimated_cost == "high"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_expired_token_still_raises(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """Token expiry is enforced even in dry-run mode."""
+    from agent_kernel import HMACTokenProvider, TokenExpired
+
+    provider = HMACTokenProvider(secret="test-secret-do-not-use-in-prod")
+    token = provider.issue(
+        "billing.list_invoices",
+        reader_principal.principal_id,
+        constraints={},
+        audit_id="audit-expired",
+        ttl_seconds=-1,
+    )
+    with pytest.raises(TokenExpired):
+        await kernel.invoke(token, principal=reader_principal, args={}, dry_run=True)
+
+
+# ── explain_denial ─────────────────────────────────────────────────────────────
+
+
+def test_explain_denial_allowed(kernel: Kernel, reader_principal: Principal) -> None:
+    """explain_denial returns denied=False for an allowed request."""
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="test")
+    result = kernel.explain_denial(req, reader_principal, justification="")
+    assert result.denied is False
+    assert result.failed_conditions == []
+
+
+def test_explain_denial_write_no_role(kernel: Kernel, reader_principal: Principal) -> None:
+    """explain_denial reports role failure for WRITE without writer role."""
+    req = CapabilityRequest(capability_id="billing.update_invoice", goal="update")
+    result = kernel.explain_denial(
+        req, reader_principal, justification="long enough justification"
+    )
+    assert result.denied is True
+    assert any(fc.condition == "roles" for fc in result.failed_conditions)
+
+
+def test_explain_denial_write_short_justification(
+    kernel: Kernel, writer_principal: Principal
+) -> None:
+    """explain_denial reports justification failure for WRITE with short justification."""
+    req = CapabilityRequest(capability_id="billing.update_invoice", goal="update")
+    result = kernel.explain_denial(req, writer_principal, justification="short")
+    assert result.denied is True
+    assert any(fc.condition == "min_justification" for fc in result.failed_conditions)
+
+
+def test_explain_denial_capability_not_found(kernel: Kernel, reader_principal: Principal) -> None:
+    """explain_denial raises CapabilityNotFound for unknown capability."""
+    from agent_kernel import CapabilityNotFound
+
+    req = CapabilityRequest(capability_id="nonexistent.capability", goal="test")
+    with pytest.raises(CapabilityNotFound):
+        kernel.explain_denial(req, reader_principal)

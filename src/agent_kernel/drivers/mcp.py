@@ -25,7 +25,7 @@ from .mcp_support import (
 try:
     from mcp.shared.exceptions import McpError as _McpError
 except ImportError:  # pragma: no cover
-    _McpError = None  # type: ignore[assignment,misc]
+    _McpError = None
 
 
 def _infer_safety_class(spec: ToolSpec) -> SafetyClass:

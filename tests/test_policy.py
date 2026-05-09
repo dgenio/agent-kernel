@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
 from agent_kernel import (
     AgentKernelError,
     Capability,
+    DeclarativePolicyEngine,
     DefaultPolicyEngine,
+    PolicyConfigError,
     PolicyDenied,
     Principal,
     SafetyClass,
@@ -468,3 +472,363 @@ def test_rate_limit_window_slides() -> None:
     # Advance past first entry's window
     t[0] = 11.0
     eng.evaluate(_req("cap.r"), cap, p, justification="")  # should succeed
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DefaultPolicyEngine.explain()
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_explain_read_allowed(engine: DefaultPolicyEngine) -> None:
+    """READ with no special sensitivity returns denied=False."""
+    p = Principal(principal_id="u1")
+    result = engine.explain(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+    assert result.denied is False
+    assert result.failed_conditions == []
+    assert result.remediation == []
+    assert "allowed" in result.narrative
+
+
+def test_explain_write_missing_role(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["reader"])
+    result = engine.explain(
+        _req("cap.w"),
+        _cap("cap.w", SafetyClass.WRITE),
+        p,
+        justification="long enough justification here",
+    )
+    assert result.denied is True
+    assert len(result.failed_conditions) == 1
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+    assert "writer" in str(fc.required)
+    assert sorted(["reader"]) == fc.actual
+    assert result.remediation == [fc.suggestion]
+    assert "denied" in result.narrative
+
+
+def test_explain_write_short_justification(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["writer"])
+    result = engine.explain(
+        _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="short"
+    )
+    assert result.denied is True
+    assert any(fc.condition == "min_justification" for fc in result.failed_conditions)
+    fc = next(f for f in result.failed_conditions if f.condition == "min_justification")
+    assert fc.required == 15
+    assert fc.actual == len("short")
+
+
+def test_explain_write_both_failures(engine: DefaultPolicyEngine) -> None:
+    """Missing role AND short justification both appear in failed_conditions."""
+    p = Principal(principal_id="u1", roles=["reader"])
+    result = engine.explain(
+        _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="too short"
+    )
+    assert result.denied is True
+    conditions = {fc.condition for fc in result.failed_conditions}
+    assert "roles" in conditions
+    assert "min_justification" in conditions
+    assert len(result.remediation) == 2
+
+
+def test_explain_destructive_missing_admin(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["writer"])
+    result = engine.explain(
+        _req("cap.d"),
+        _cap("cap.d", SafetyClass.DESTRUCTIVE),
+        p,
+        justification="long enough justification here",
+    )
+    assert result.denied is True
+    assert result.failed_conditions[0].condition == "roles"
+    assert result.failed_conditions[0].required == ["admin"]
+
+
+def test_explain_pii_missing_tenant(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("cap.pii", SafetyClass.READ, SensitivityTag.PII)
+    result = engine.explain(_req("cap.pii"), cap, p, justification="")
+    assert result.denied is True
+    assert result.failed_conditions[0].condition == "tenant_attribute"
+    assert "tenant" in result.failed_conditions[0].suggestion
+
+
+def test_explain_secrets_missing_role(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    result = engine.explain(_req("cap.sec"), cap, p, justification="long enough justification")
+    assert result.denied is True
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+    assert "secrets_reader" in str(fc.required)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DeclarativePolicyEngine
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _dce(rules: list[dict], *, default: str = "deny") -> DeclarativePolicyEngine:
+    return DeclarativePolicyEngine.from_dict({"rules": rules, "default": default})
+
+
+# ── from_dict: basic evaluation ───────────────────────────────────────────────
+
+
+def test_declarative_allow_rule_matches() -> None:
+    engine = _dce([{"name": "r1", "match": {"safety_class": ["READ"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.allowed is True
+    assert "r1" in dec.reason
+
+
+def test_declarative_deny_rule_raises() -> None:
+    engine = _dce(
+        [
+            {"name": "block-all", "match": {}, "action": "deny", "reason": "blocked for test"},
+        ]
+    )
+    p = Principal(principal_id="u1")
+    with pytest.raises(PolicyDenied, match="blocked for test"):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+
+
+def test_declarative_default_deny_no_match() -> None:
+    engine = _dce([{"name": "r1", "match": {"safety_class": ["WRITE"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    with pytest.raises(PolicyDenied, match="Default action is deny"):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+
+
+def test_declarative_default_allow_no_match() -> None:
+    engine = _dce(
+        [{"name": "r1", "match": {"safety_class": ["WRITE"]}, "action": "allow"}],
+        default="allow",
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.allowed is True
+
+
+def test_declarative_first_match_wins() -> None:
+    engine = _dce(
+        [
+            {"name": "allow-read", "match": {"safety_class": ["READ"]}, "action": "allow"},
+            {
+                "name": "deny-read",
+                "match": {"safety_class": ["READ"]},
+                "action": "deny",
+                "reason": "x",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.allowed is True
+    assert "allow-read" in dec.reason
+
+
+def test_declarative_role_condition() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "w",
+                "match": {"safety_class": ["WRITE"], "roles": ["writer"]},
+                "action": "allow",
+            },
+        ]
+    )
+    p_writer = Principal(principal_id="u1", roles=["writer"])
+    p_reader = Principal(principal_id="u2", roles=["reader"])
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p_writer, justification="")
+    assert dec.allowed is True
+    with pytest.raises(PolicyDenied):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p_reader, justification="")
+
+
+def test_declarative_min_justification_condition() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "w",
+                "match": {"safety_class": ["WRITE"], "min_justification": 10},
+                "action": "allow",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="1234567890")
+    assert dec.allowed is True
+    with pytest.raises(PolicyDenied):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="short")
+
+
+def test_declarative_attribute_condition() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "pii",
+                "match": {"sensitivity": ["PII"], "attributes": {"tenant": "*"}},
+                "action": "allow",
+            }
+        ]
+    )
+    p_tenant = Principal(principal_id="u1", attributes={"tenant": "acme"})
+    p_no_tenant = Principal(principal_id="u2")
+    dec = engine.evaluate(
+        _req("c"), _cap("c", SafetyClass.READ, SensitivityTag.PII), p_tenant, justification=""
+    )
+    assert dec.allowed is True
+    with pytest.raises(PolicyDenied):
+        engine.evaluate(
+            _req("c"),
+            _cap("c", SafetyClass.READ, SensitivityTag.PII),
+            p_no_tenant,
+            justification="",
+        )
+
+
+def test_declarative_constraints_merged() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "r",
+                "match": {"safety_class": ["READ"]},
+                "action": "allow",
+                "constraints": {"max_rows": 10},
+            }
+        ]
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.constraints["max_rows"] == 10
+
+
+# ── config validation errors ──────────────────────────────────────────────────
+
+
+def test_declarative_invalid_default() -> None:
+    with pytest.raises(PolicyConfigError, match="default"):
+        DeclarativePolicyEngine.from_dict({"default": "maybe", "rules": []})
+
+
+def test_declarative_invalid_action() -> None:
+    with pytest.raises(PolicyConfigError, match="action"):
+        _dce([{"name": "r", "match": {}, "action": "perhaps"}])
+
+
+def test_declarative_invalid_safety_class() -> None:
+    with pytest.raises(PolicyConfigError, match="safety_class"):
+        _dce([{"name": "r", "match": {"safety_class": ["SUPER_DANGEROUS"]}, "action": "allow"}])
+
+
+# ── YAML round-trip ───────────────────────────────────────────────────────────
+
+
+def test_declarative_from_yaml_round_trip() -> None:
+    yaml_text = """\
+rules:
+  - name: read-allowed
+    match:
+      safety_class: [READ]
+    action: allow
+  - name: write-role
+    match:
+      safety_class: [WRITE]
+      roles: [writer, admin]
+      min_justification: 10
+    action: allow
+default: deny
+"""
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        f.write(yaml_text)
+        path = Path(f.name)
+    try:
+        engine = DeclarativePolicyEngine.from_yaml(path)
+        p_reader = Principal(principal_id="u1")
+        dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p_reader, justification="")
+        assert dec.allowed is True
+        p_writer = Principal(principal_id="u2", roles=["writer"])
+        dec2 = engine.evaluate(
+            _req("c"), _cap("c", SafetyClass.WRITE), p_writer, justification="1234567890"
+        )
+        assert dec2.allowed is True
+        with pytest.raises(PolicyDenied):
+            engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p_reader, justification="")
+    finally:
+        path.unlink(missing_ok=True)
+
+
+# ── TOML round-trip ───────────────────────────────────────────────────────────
+
+
+def test_declarative_from_toml_round_trip() -> None:
+    toml_text = """\
+default = "deny"
+
+[[rules]]
+name = "read-allowed"
+action = "allow"
+[rules.match]
+safety_class = ["READ"]
+
+[[rules]]
+name = "write-role"
+action = "allow"
+[rules.match]
+safety_class = ["WRITE"]
+roles = ["writer", "admin"]
+min_justification = 10
+"""
+    with tempfile.NamedTemporaryFile(suffix=".toml", mode="w", delete=False) as f:
+        f.write(toml_text)
+        path = Path(f.name)
+    try:
+        engine = DeclarativePolicyEngine.from_toml(path)
+        p = Principal(principal_id="u1")
+        dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+        assert dec.allowed is True
+        with pytest.raises(PolicyDenied):
+            engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="")
+    finally:
+        path.unlink(missing_ok=True)
+
+
+# ── explain() on DeclarativePolicyEngine ─────────────────────────────────────
+
+
+def test_declarative_explain_allowed() -> None:
+    engine = _dce([{"name": "r", "match": {"safety_class": ["READ"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    result = engine.explain(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert result.denied is False
+    assert result.failed_conditions == []
+
+
+def test_declarative_explain_missing_role() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "write-needs-writer",
+                "match": {"safety_class": ["WRITE"], "roles": ["writer"]},
+                "action": "allow",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1", roles=["reader"])
+    result = engine.explain(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="")
+    assert result.denied is True
+    assert result.rule_name == "write-needs-writer"
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+
+
+def test_declarative_explain_no_structural_match() -> None:
+    """When no rule targets the capability type, report no_matching_rule."""
+    engine = _dce([{"name": "r", "match": {"safety_class": ["WRITE"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    result = engine.explain(_req("c"), _cap("c", SafetyClass.DESTRUCTIVE), p, justification="")
+    assert result.denied is True
+    assert result.failed_conditions[0].condition == "no_matching_rule"

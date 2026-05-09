@@ -1,0 +1,58 @@
+# Example declarative policy for agent-kernel (TOML format)
+# Load with: DeclarativePolicyEngine.from_toml(Path("examples/policies/default.toml"))
+#
+# Equivalent to default.yaml — TOML and YAML formats are interchangeable.
+
+default_action = "deny"
+
+# Allow read-only operations for any authenticated principal
+[[rules]]
+name = "allow-read-all"
+action = "allow"
+[rules.match]
+safety_class = ["READ"]
+
+# Allow write operations for editors and admins with a justification
+[[rules]]
+name = "allow-write-editors"
+action = "allow"
+[rules.match]
+safety_class = ["WRITE"]
+roles = ["editor", "admin"]
+min_justification = 20
+
+# Allow destructive operations for admins only with a strong justification
+[[rules]]
+name = "allow-destructive-admin"
+action = "allow"
+[rules.match]
+safety_class = ["DESTRUCTIVE"]
+roles = ["admin"]
+min_justification = 50
+
+# Deny access to PII data unless the principal carries a tenant attribute
+[[rules]]
+name = "deny-pii-no-tenant"
+action = "deny"
+reason = "PII access requires a tenant attribute on the principal"
+[rules.match]
+sensitivity = ["PII"]
+[rules.match.attributes]
+tenant = "*"   # "*" means: attribute must be present with any value
+
+# Deny access to secrets for non-service principals
+[[rules]]
+name = "deny-secrets-non-service"
+action = "deny"
+reason = "SECRETS access is restricted to service-role principals"
+[rules.match]
+sensitivity = ["SECRETS"]
+
+# Allow service principals to read secrets with a justification
+[[rules]]
+name = "allow-secrets-service"
+action = "allow"
+[rules.match]
+sensitivity = ["SECRETS"]
+roles = ["service"]
+min_justification = 10

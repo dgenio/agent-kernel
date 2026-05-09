@@ -31,6 +31,10 @@ class PolicyDenied(AgentKernelError):
     """Raised when the policy engine rejects a capability request."""
 
 
+class PolicyConfigError(AgentKernelError):
+    """Raised when a declarative policy file is malformed or unreadable."""
+
+
 # ── Driver errors ─────────────────────────────────────────────────────────────
 
 
