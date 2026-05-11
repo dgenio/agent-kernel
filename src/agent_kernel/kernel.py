@@ -9,7 +9,7 @@ from typing import Any, Literal, overload
 
 from .drivers.base import Driver, ExecutionContext
 from .enums import SafetyClass
-from .errors import DriverError
+from .errors import AgentKernelError, DriverError
 from .firewall.transform import Firewall
 from .handles import HandleStore
 from .models import (
@@ -245,7 +245,17 @@ class Kernel:
         # ── Dry-run short-circuit ─────────────────────────────────────────────
         if dry_run:
             driver_id = plan.driver_ids[0] if plan.driver_ids else ""
-            operation = capability.impl.operation if capability.impl else ""
+            # Mirror driver operation resolution exactly (see InMemoryDriver,
+            # HTTPDriver, MCPDriver — all read ``args.get("operation", capability_id)``).
+            # Using ``capability.impl.operation`` here would diverge from what the
+            # driver actually executes at real-invoke time.
+            operation = str(args.get("operation", token.capability_id))
+            # Mirror Firewall's admin-only gate for ``raw`` mode
+            # (see firewall/transform.py:108 and docs/agent-context/invariants.md).
+            # Dry-run must not let non-admin principals probe raw-mode availability.
+            effective_response_mode: ResponseMode = response_mode
+            if response_mode == "raw" and "admin" not in principal.roles:
+                effective_response_mode = "summary"
             _cost_map: dict[SafetyClass, Literal["low", "medium", "high"]] = {
                 SafetyClass.READ: "low",
                 SafetyClass.WRITE: "medium",
@@ -262,7 +272,7 @@ class Kernel:
                 driver_id=driver_id,
                 operation=operation,
                 resolved_args=args,
-                response_mode=response_mode,
+                response_mode=effective_response_mode,
                 budget_remaining=None,
                 estimated_cost=_cost_map[capability.safety_class],
             )
@@ -419,8 +429,9 @@ class Kernel:
         """Explain why *principal*'s *request* would be denied (or allowed).
 
         Delegates to the configured policy engine's ``explain()`` method.
-        Unlike :meth:`grant_capability`, this never raises — it always returns
-        a :class:`DenialExplanation` with ``denied=True/False``.
+        Unlike :meth:`grant_capability`, this does not raise
+        :class:`PolicyDenied` when the policy fails — it returns a
+        :class:`DenialExplanation` instead.
 
         Note: Rate-limit state is not reflected here. A request denied due to
         rate limits shows as ``denied=False`` in the explanation.
@@ -436,6 +447,20 @@ class Kernel:
 
         Raises:
             CapabilityNotFound: If the capability is not registered.
+            AgentKernelError: If the configured policy engine does not
+                implement ``explain()``. Use :class:`DefaultPolicyEngine` or
+                :class:`DeclarativePolicyEngine` for structured explanations,
+                or add an ``explain()`` method to your engine.
         """
         capability = self._registry.get(request.capability_id)
-        return self._policy.explain(request, capability, principal, justification=justification)
+        explain_fn = getattr(self._policy, "explain", None)
+        if explain_fn is None:
+            raise AgentKernelError(
+                f"Policy engine {type(self._policy).__name__!r} does not implement "
+                f"explain(); structured denial explanations are unavailable. "
+                f"Use DefaultPolicyEngine or DeclarativePolicyEngine, or add an "
+                f"explain() method to your engine."
+            )
+        result = explain_fn(request, capability, principal, justification=justification)
+        assert isinstance(result, DenialExplanation)
+        return result

@@ -2,26 +2,42 @@
 # Load with: DeclarativePolicyEngine.from_toml(Path("examples/policies/default.toml"))
 #
 # Equivalent to default.yaml — TOML and YAML formats are interchangeable.
+#
+# Note: the current DSL has no negation / missing-attribute operator. Policies
+# that should deny "when an attribute is missing" must be expressed as allow
+# rules requiring the attribute, paired with `default = "deny"`.
 
-default_action = "deny"
+default = "deny"
 
-# Allow read-only operations for any authenticated principal
+# Allow read-only operations on non-sensitive data.
 [[rules]]
-name = "allow-read-all"
+name = "allow-read-nonsensitive"
 action = "allow"
 [rules.match]
 safety_class = ["READ"]
+sensitivity = ["NONE"]
 
-# Allow write operations for editors and admins with a justification
+# Allow PII access only when the principal carries a tenant attribute.
+# PII requests without a tenant fall through to default-deny.
+[[rules]]
+name = "allow-pii-with-tenant"
+action = "allow"
+[rules.match]
+sensitivity = ["PII"]
+[rules.match.attributes]
+tenant = "*"   # "*" means: attribute must be present with any value
+
+# Allow write operations for editors and admins with a justification.
 [[rules]]
 name = "allow-write-editors"
 action = "allow"
 [rules.match]
 safety_class = ["WRITE"]
+sensitivity = ["NONE"]
 roles = ["editor", "admin"]
 min_justification = 20
 
-# Allow destructive operations for admins only with a strong justification
+# Allow destructive operations for admins only with a strong justification.
 [[rules]]
 name = "allow-destructive-admin"
 action = "allow"
@@ -30,25 +46,9 @@ safety_class = ["DESTRUCTIVE"]
 roles = ["admin"]
 min_justification = 50
 
-# Deny access to PII data unless the principal carries a tenant attribute
-[[rules]]
-name = "deny-pii-no-tenant"
-action = "deny"
-reason = "PII access requires a tenant attribute on the principal"
-[rules.match]
-sensitivity = ["PII"]
-[rules.match.attributes]
-tenant = "*"   # "*" means: attribute must be present with any value
-
-# Deny access to secrets for non-service principals
-[[rules]]
-name = "deny-secrets-non-service"
-action = "deny"
-reason = "SECRETS access is restricted to service-role principals"
-[rules.match]
-sensitivity = ["SECRETS"]
-
-# Allow service principals to read secrets with a justification
+# Allow service principals to read secrets with a justification.
+# IMPORTANT: this allow rule must precede any deny-secrets rule —
+# first-match-wins means an earlier unconditional deny would shadow it.
 [[rules]]
 name = "allow-secrets-service"
 action = "allow"
@@ -56,3 +56,13 @@ action = "allow"
 sensitivity = ["SECRETS"]
 roles = ["service"]
 min_justification = 10
+
+# Any SECRETS request that wasn't already allowed is explicitly denied so
+# the caller gets a descriptive PolicyDenied reason. Functionally equivalent
+# to default-deny but provides clearer feedback.
+[[rules]]
+name = "deny-secrets-non-service"
+action = "deny"
+reason = "SECRETS access is restricted to service-role principals"
+[rules.match]
+sensitivity = ["SECRETS"]

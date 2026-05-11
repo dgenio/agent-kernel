@@ -270,6 +270,85 @@ async def test_dry_run_estimated_cost(kernel: Kernel, admin_principal: Principal
 
 
 @pytest.mark.asyncio
+async def test_dry_run_operation_uses_args_then_capability_id(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """Dry-run resolves ``operation`` the same way drivers do at real-invoke.
+
+    Drivers read ``ctx.args.get("operation", ctx.capability_id)``. Dry-run
+    must mirror that exactly so ``DryRunResult.operation`` matches what a
+    driver would actually receive.
+    """
+    from agent_kernel.models import DryRunResult
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = kernel.get_token(req, reader_principal, justification="")
+
+    # Explicit operation in args wins.
+    explicit = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.custom_op"},
+        dry_run=True,
+    )
+    assert isinstance(explicit, DryRunResult)
+    assert explicit.operation == "billing.custom_op"
+
+    # No operation in args → falls back to the capability_id (NOT impl.operation).
+    fallback = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={},
+        dry_run=True,
+    )
+    assert isinstance(fallback, DryRunResult)
+    assert fallback.operation == "billing.list_invoices"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_downgrades_raw_for_non_admin(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """Dry-run mirrors the Firewall's raw-mode admin gate.
+
+    Non-admin principals never get raw mode at real-invoke
+    (see firewall/transform.py); dry-run must downgrade too so callers
+    cannot probe/assume raw availability they will never receive.
+    """
+    from agent_kernel.models import DryRunResult
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = kernel.get_token(req, reader_principal, justification="")
+    result = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={},
+        response_mode="raw",
+        dry_run=True,
+    )
+    assert isinstance(result, DryRunResult)
+    assert result.response_mode == "summary"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_preserves_raw_for_admin(kernel: Kernel, admin_principal: Principal) -> None:
+    """Admin principals keep raw mode in dry-run (no downgrade)."""
+    from agent_kernel.models import DryRunResult
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = kernel.get_token(req, admin_principal, justification="")
+    result = await kernel.invoke(
+        token,
+        principal=admin_principal,
+        args={},
+        response_mode="raw",
+        dry_run=True,
+    )
+    assert isinstance(result, DryRunResult)
+    assert result.response_mode == "raw"
+
+
+@pytest.mark.asyncio
 async def test_dry_run_expired_token_still_raises(
     kernel: Kernel, reader_principal: Principal
 ) -> None:
@@ -326,3 +405,38 @@ def test_explain_denial_capability_not_found(kernel: Kernel, reader_principal: P
     req = CapabilityRequest(capability_id="nonexistent.capability", goal="test")
     with pytest.raises(CapabilityNotFound):
         kernel.explain_denial(req, reader_principal)
+
+
+def test_explain_denial_engine_without_explain_raises(
+    registry: CapabilityRegistry, reader_principal: Principal
+) -> None:
+    """A policy engine that only implements evaluate() surfaces a clear error.
+
+    The ``PolicyEngine`` protocol requires only ``evaluate()``; engines that
+    don't implement ``explain()`` raise ``AgentKernelError`` from
+    ``Kernel.explain_denial`` rather than producing a misleading explanation.
+    """
+    from agent_kernel import AgentKernelError, PolicyDenied
+    from agent_kernel.models import PolicyDecision
+
+    class EvaluateOnlyEngine:
+        """Minimal engine satisfying PolicyEngine but not ExplainingPolicyEngine."""
+
+        def evaluate(
+            self,
+            request: CapabilityRequest,
+            capability: Capability,
+            principal: Principal,
+            *,
+            justification: str,
+        ) -> PolicyDecision:
+            raise PolicyDenied("denied for test")
+
+    k = Kernel(
+        registry=registry,
+        policy=EvaluateOnlyEngine(),  # type: ignore[arg-type]
+        token_provider=HMACTokenProvider(secret="test-secret"),
+    )
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    with pytest.raises(AgentKernelError, match="does not implement explain"):
+        k.explain_denial(req, reader_principal)

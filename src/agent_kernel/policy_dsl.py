@@ -1,4 +1,10 @@
-"""Declarative policy engine: load access-control rules from YAML or TOML."""
+"""Declarative policy engine: load access-control rules from YAML or TOML.
+
+The YAML/TOML loaders import their parsers lazily, so ``import agent_kernel``
+works without the optional ``policy`` extra installed. Calling
+:meth:`DeclarativePolicyEngine.from_yaml` or :meth:`from_toml` without the
+required parser surfaces a :class:`PolicyConfigError` with an install hint.
+"""
 
 from __future__ import annotations
 
@@ -6,13 +12,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
-
-import yaml
 
 from .enums import SafetyClass, SensitivityTag
 from .errors import PolicyConfigError, PolicyDenied
@@ -23,6 +22,11 @@ from .models import (
     FailedCondition,
     PolicyDecision,
     Principal,
+)
+
+# Hint surfaced when the optional ``policy`` extra is missing.
+_POLICY_EXTRA_HINT = (
+    "Install the policy extra to enable file loaders: pip install 'weaver-kernel[policy]'"
 )
 
 
@@ -113,13 +117,21 @@ class DeclarativePolicyEngine:
         """Build from a YAML file.
 
         Requires ``pyyaml``: ``pip install 'weaver-kernel[policy]'``.
+        The import is deferred so that ``import agent_kernel`` works without
+        the policy extra installed.
 
         Args:
             path: Path to the YAML policy file.
 
         Raises:
-            PolicyConfigError: If the file is unreadable or malformed.
+            PolicyConfigError: If the file is unreadable or malformed, or
+                if ``pyyaml`` is not installed.
         """
+        try:
+            import yaml
+        except ImportError as exc:
+            raise PolicyConfigError(_POLICY_EXTRA_HINT) from exc
+
         try:
             text = path.read_text(encoding="utf-8")
             data: Any = yaml.safe_load(text)
@@ -136,17 +148,28 @@ class DeclarativePolicyEngine:
         """Build from a TOML file.
 
         Requires Python 3.11+ (stdlib ``tomllib``) or ``tomli`` on 3.10
-        (both included in ``pip install 'weaver-kernel[policy]'``).
+        (included in ``pip install 'weaver-kernel[policy]'``). The import is
+        deferred so that ``import agent_kernel`` works without the policy
+        extra installed.
 
         Args:
             path: Path to the TOML policy file.
 
         Raises:
-            PolicyConfigError: If the file is unreadable or malformed.
+            PolicyConfigError: If the file is unreadable or malformed, or
+                if neither ``tomllib`` nor ``tomli`` is available.
         """
         try:
+            if sys.version_info >= (3, 11):
+                import tomllib as _toml
+            else:
+                import tomli as _toml
+        except ImportError as exc:
+            raise PolicyConfigError(_POLICY_EXTRA_HINT) from exc
+
+        try:
             with path.open("rb") as fh:
-                data = tomllib.load(fh)
+                data = _toml.load(fh)
         except OSError as exc:
             raise PolicyConfigError(f"Cannot read policy file '{path}': {exc}") from exc
         except Exception as exc:  # TOMLDecodeError is not a stable import target
@@ -203,17 +226,58 @@ class DeclarativePolicyEngine:
                     f"Rule '{name}': invalid sensitivity value: {exc}"
                 ) from exc
 
+        roles: list[str] | None = None
+        if "roles" in raw_match:
+            roles_raw = raw_match["roles"]
+            if not isinstance(roles_raw, list) or not all(isinstance(r, str) for r in roles_raw):
+                raise PolicyConfigError(
+                    f"Rule '{name}': 'roles' must be a list of strings, "
+                    f"got {type(roles_raw).__name__}."
+                )
+            roles = list(roles_raw)
+
+        attributes: dict[str, str] | None = None
+        if "attributes" in raw_match:
+            attrs_raw = raw_match["attributes"]
+            if not isinstance(attrs_raw, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in attrs_raw.items()
+            ):
+                raise PolicyConfigError(
+                    f"Rule '{name}': 'attributes' must be a mapping of "
+                    f"string keys to string values."
+                )
+            attributes = dict(attrs_raw)
+
+        min_justification: int | None = None
+        if "min_justification" in raw_match:
+            mj_raw = raw_match["min_justification"]
+            # ``bool`` is a subclass of ``int`` in Python; reject it explicitly
+            # so ``min_justification: true`` does not silently pass.
+            if not isinstance(mj_raw, int) or isinstance(mj_raw, bool):
+                raise PolicyConfigError(
+                    f"Rule '{name}': 'min_justification' must be an integer, "
+                    f"got {type(mj_raw).__name__}."
+                )
+            min_justification = mj_raw
+
+        constraints_raw = raw.get("constraints", {})
+        if not isinstance(constraints_raw, dict):
+            raise PolicyConfigError(
+                f"Rule '{name}': 'constraints' must be a mapping, "
+                f"got {type(constraints_raw).__name__}."
+            )
+
         return PolicyRule(
             name=name,
             match=PolicyMatch(
                 safety_class=safety_class,
                 sensitivity=sensitivity,
-                roles=raw_match.get("roles"),
-                attributes=raw_match.get("attributes"),
-                min_justification=raw_match.get("min_justification"),
+                roles=roles,
+                attributes=attributes,
+                min_justification=min_justification,
             ),
             action=action,
-            constraints=raw.get("constraints", {}),
+            constraints=dict(constraints_raw),
             reason=raw.get("reason", ""),
         )
 
@@ -303,9 +367,12 @@ class DeclarativePolicyEngine:
         """Explain which rule conditions prevented a match.
 
         Takes the fast path first: if the request would be allowed, returns
-        ``denied=False`` immediately. Otherwise, finds the first rule that
-        structurally matches (by safety_class / sensitivity) and reports which
-        of its remaining conditions were not met.
+        ``denied=False`` immediately. Otherwise, finds the rule that explains
+        the denial — either an explicit deny rule that fully matches, or the
+        first structurally-matching allow rule whose unmet conditions are
+        reported. Partial-match deny rules are skipped (they did not cause
+        the denial, and suggesting how to satisfy them would be misleading —
+        satisfying them would only trigger the deny).
 
         Args:
             request: The capability request.
@@ -331,11 +398,9 @@ class DeclarativePolicyEngine:
         except PolicyDenied:
             pass
 
-        # Find the first rule that structurally targets this capability type
-        # and report which of its conditions blocked the match.
         roles = set(principal.roles)
         pid = principal.principal_id
-        failed: list[FailedCondition] = []
+        explanation_failures: list[FailedCondition] = []
         rule_name = "default-deny"
 
         for rule in self._rules:
@@ -344,9 +409,11 @@ class DeclarativePolicyEngine:
                 continue
             if m.sensitivity is not None and capability.sensitivity not in m.sensitivity:
                 continue
-            rule_name = rule.name
+
+            # Collect unmet conditions for this rule.
+            rule_failures: list[FailedCondition] = []
             if m.roles is not None and not (roles & set(m.roles)):
-                failed.append(
+                rule_failures.append(
                     FailedCondition(
                         condition="roles",
                         required=list(m.roles),
@@ -358,7 +425,7 @@ class DeclarativePolicyEngine:
                 for k, v in m.attributes.items():
                     attr_val = principal.attributes.get(k)
                     if attr_val is None or (v != "*" and attr_val != v):
-                        failed.append(
+                        rule_failures.append(
                             FailedCondition(
                                 condition=f"attribute:{k}",
                                 required=v,
@@ -369,7 +436,7 @@ class DeclarativePolicyEngine:
             if m.min_justification is not None:
                 stripped = len(justification.strip())
                 if stripped < m.min_justification:
-                    failed.append(
+                    rule_failures.append(
                         FailedCondition(
                             condition="min_justification",
                             required=m.min_justification,
@@ -380,10 +447,35 @@ class DeclarativePolicyEngine:
                             ),
                         )
                     )
-            break  # explain from the first structurally-matching rule only
 
-        if not failed:
-            failed.append(
+            if rule.action == "deny":
+                if not rule_failures:
+                    # Explicit deny rule fully matched — this is the cause.
+                    rule_name = rule.name
+                    explanation_failures = [
+                        FailedCondition(
+                            condition="denied_by_rule",
+                            required=f"request must NOT match deny rule '{rule.name}'",
+                            actual=f"matched deny rule '{rule.name}'",
+                            suggestion=(
+                                rule.reason
+                                or f"Remove or narrow deny rule '{rule.name}' so this "
+                                f"request does not match it"
+                            ),
+                        )
+                    ]
+                    break
+                # Partial-match deny rule: it did NOT cause the denial. Skip
+                # so we don't suggest changes that would actually trigger it.
+                continue
+
+            # Allow rule (structurally matched, conditions unmet) — report it.
+            rule_name = rule.name
+            explanation_failures = rule_failures
+            break
+
+        if not explanation_failures:
+            explanation_failures = [
                 FailedCondition(
                     condition="no_matching_rule",
                     required="an allow rule matching this capability",
@@ -393,17 +485,19 @@ class DeclarativePolicyEngine:
                         f"{capability.safety_class.value!r} in your policy file"
                     ),
                 )
-            )
+            ]
 
-        remediation = [fc.suggestion for fc in failed]
+        remediation = [fc.suggestion for fc in explanation_failures]
         narrative = (
             f"Request for '{capability.capability_id}' by '{pid}' would be denied "
-            f"(rule: '{rule_name}'): " + "; ".join(fc.suggestion for fc in failed) + "."
+            f"(rule: '{rule_name}'): "
+            + "; ".join(fc.suggestion for fc in explanation_failures)
+            + "."
         )
         return DenialExplanation(
             denied=True,
             rule_name=rule_name,
-            failed_conditions=failed,
+            failed_conditions=explanation_failures,
             remediation=remediation,
             narrative=narrative,
         )

@@ -64,6 +64,19 @@ tag is **silently ignored** — capabilities tagged with it pass policy without 
 
 **Rule:** When adding a `SensitivityTag`, always add a matching policy rule and test.
 
+### Dry-run response-mode parity
+`Kernel.invoke(dry_run=True)` reports the response mode the caller would actually
+get at real-invoke time. The Firewall downgrades `raw` to `summary` for non-admin
+principals (`firewall/transform.py:108`), so dry-run must mirror that downgrade —
+otherwise a non-admin caller can probe/assume raw-mode availability they will never
+actually receive. The same applies to `operation`: dry-run resolves it the same way
+drivers do (`args.get("operation", capability_id)`), so what the caller sees in
+`DryRunResult` matches what a driver would receive.
+
+**Rule:** Any code path that reports a response mode or driver operation back to the
+caller must apply the same admin gate / resolution rule the real-invoke path uses,
+including dry-run, mock, and test paths.
+
 ## Safe vs. unsafe changes
 
 | Safe | Unsafe |

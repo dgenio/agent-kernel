@@ -296,7 +296,8 @@ class DryRunResult:
 
     response_mode: ResponseMode
     budget_remaining: int | None
-    """Remaining cross-invocation budget, or ``None`` if no BudgetManager is configured."""
+    """Reserved for a future cross-invocation budget mechanism; always
+    ``None`` in v0.5 (no such budget is tracked today)."""
 
     estimated_cost: Literal["low", "medium", "high"]
     """Rough cost estimate based on the capability's safety class."""

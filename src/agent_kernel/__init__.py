@@ -77,7 +77,7 @@ from .models import (
     ResponseMode,
     RoutePlan,
 )
-from .policy import DefaultPolicyEngine
+from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
 from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
 from .registry import CapabilityRegistry
 from .router import StaticRouter
@@ -131,6 +131,8 @@ __all__ = [
     # policy
     "DefaultPolicyEngine",
     "DeclarativePolicyEngine",
+    "ExplainingPolicyEngine",
+    "PolicyEngine",
     "PolicyMatch",
     "PolicyRule",
     # tokens

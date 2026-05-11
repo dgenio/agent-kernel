@@ -11,18 +11,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Declarative policy engine (`DeclarativePolicyEngine`) that loads rules from YAML or TOML files.
   Rules are evaluated top-down with first-match-wins semantics; supports `safety_class`, `sensitivity`,
   `roles`, `attributes`, and `min_justification` match conditions. (#42)
-- Policy denial explanation engine: `PolicyEngine.explain()` method and `DefaultPolicyEngine.explain()`
-  implementation return a structured `DenialExplanation` with a `FailedCondition` list for every failing
-  check (no short-circuit), a `remediation` list, and a human-readable `narrative`. (#48)
+- Policy denial explanation: `ExplainingPolicyEngine` protocol plus `DefaultPolicyEngine.explain()` and
+  `DeclarativePolicyEngine.explain()` implementations return a structured `DenialExplanation` with a
+  `FailedCondition` list for every failing check (no short-circuit), a `remediation` list, and a
+  human-readable `narrative`. (#48)
 - Dry-run invocation mode: `kernel.invoke(..., dry_run=True)` verifies the token and resolves the
   execution plan without calling the driver. Returns `DryRunResult` with the resolved `driver_id`,
   `operation`, `response_mode`, and an `estimated_cost` tier (`low`/`medium`/`high`). (#43)
 - `Kernel.explain_denial()` convenience method that calls the policy engine's `explain()` for a given
-  `CapabilityRequest` and `Principal` without requiring a token.
-- New public types exported from `agent_kernel`: `DeclarativePolicyEngine`, `PolicyMatch`, `PolicyRule`,
-  `DenialExplanation`, `FailedCondition`, `DryRunResult`, `PolicyConfigError`.
+  `CapabilityRequest` and `Principal` without requiring a token. Raises `AgentKernelError` when the
+  configured engine does not implement `explain()`.
+- New public types exported from `agent_kernel`: `DeclarativePolicyEngine`, `ExplainingPolicyEngine`,
+  `PolicyEngine`, `PolicyMatch`, `PolicyRule`, `DenialExplanation`, `FailedCondition`, `DryRunResult`,
+  `PolicyConfigError`.
 - `policy` optional extra (`pip install weaver-kernel[policy]`) pulls in `pyyaml` and `tomli` (Python 3.10).
 - Example policy files in `examples/policies/` (YAML and TOML formats).
+
+### Changed
+- `PolicyEngine` protocol no longer requires `explain()`. Engines that need to support
+  `Kernel.explain_denial()` should implement the new `ExplainingPolicyEngine` protocol. Built-in
+  engines satisfy both. This avoids a breaking typing change for downstream implementers.
+- `DeclarativePolicyEngine` now defers `yaml` and `tomllib`/`tomli` imports into the corresponding
+  loaders, so `import agent_kernel` works without the `policy` extra installed. Calling
+  `from_yaml`/`from_toml` without the parser surfaces a `PolicyConfigError` with an install hint.
+- `Kernel.invoke(dry_run=True)` resolves `operation` the same way drivers do
+  (`args.get("operation", capability_id)`) so `DryRunResult.operation` matches what a driver would
+  actually receive — instead of `capability.impl.operation`, which can diverge.
+- `Kernel.invoke(dry_run=True)` mirrors the Firewall's admin-only gate for `raw` mode: non-admin
+  principals see their requested `raw` mode downgraded to `summary` in `DryRunResult`, matching
+  what they would actually get at real-invoke time. Prevents probing for raw availability.
+
+### Fixed
+- `DeclarativePolicyEngine._parse_rule()` now validates the types of `roles`, `attributes`,
+  `min_justification`, and `constraints` in policy files and raises `PolicyConfigError` with a
+  precise message instead of silently producing misbehaving rules or raising at evaluation time.
+- `DeclarativePolicyEngine.explain()` now correctly reports explicit deny rules that fully match
+  (previously fell through to the misleading `no_matching_rule` fallback and dropped the rule's
+  reason). Partial-match deny rules are now skipped so the explanation focuses on actionable allow
+  rules instead of suggesting changes that would only trigger the deny.
+- Example policy files (`examples/policies/default.{yaml,toml}`) now use the correct `default` key
+  (was `default_action`, which the parser silently ignored), express PII-with-tenant as an allow
+  rule paired with default-deny (the previous deny rule was inverted under first-match-wins), and
+  order the `allow-secrets-service` rule before the deny rule (the deny was previously unreachable).
+- `Kernel.explain_denial()` docstring no longer contradicts itself ("never raises" vs.
+  `CapabilityNotFound`).
+- `DryRunResult.budget_remaining` docstring no longer references the unimplemented `BudgetManager`;
+  the field is documented as reserved for a future cross-invocation budget mechanism.
+- `drivers/mcp.py` adds an explicit `_McpError: type[Exception] | None` annotation so mypy `--strict`
+  remains happy across the try/except import branches.
 
 ## [0.5.0] - 2026-04-12
 

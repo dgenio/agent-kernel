@@ -91,7 +91,14 @@ class RateLimiter:
 
 
 class PolicyEngine(Protocol):
-    """Interface for a policy engine."""
+    """Interface for a policy engine.
+
+    Implementations need only provide :meth:`evaluate`. To enable structured
+    denial explanations via :meth:`Kernel.explain_denial`, additionally
+    implement :meth:`ExplainingPolicyEngine.explain` — engines that satisfy
+    only this base protocol cause :meth:`Kernel.explain_denial` to raise
+    :class:`AgentKernelError`.
+    """
 
     def evaluate(
         self,
@@ -113,6 +120,19 @@ class PolicyEngine(Protocol):
             A :class:`PolicyDecision` (allowed or denied with reason).
         """
         ...
+
+
+class ExplainingPolicyEngine(PolicyEngine, Protocol):
+    """Policy engine that can produce structured denial explanations.
+
+    :meth:`Kernel.explain_denial` requires this richer contract; downstream
+    engines that only implement :class:`PolicyEngine` keep working for
+    :meth:`Kernel.grant_capability` and :meth:`Kernel.invoke` but cannot
+    answer :meth:`Kernel.explain_denial`.
+
+    Both built-in engines (:class:`DefaultPolicyEngine` and
+    :class:`agent_kernel.DeclarativePolicyEngine`) satisfy this protocol.
+    """
 
     def explain(
         self,

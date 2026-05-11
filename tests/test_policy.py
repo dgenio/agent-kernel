@@ -832,3 +832,219 @@ def test_declarative_explain_no_structural_match() -> None:
     result = engine.explain(_req("c"), _cap("c", SafetyClass.DESTRUCTIVE), p, justification="")
     assert result.denied is True
     assert result.failed_conditions[0].condition == "no_matching_rule"
+
+
+def test_declarative_explain_explicit_deny_full_match() -> None:
+    """An explicit deny rule that fully matches is reported as the cause.
+
+    Regression test for the bug where ``explain()`` fell through to the
+    ``no_matching_rule`` fallback when a deny rule with no remaining
+    conditions matched — the deny rule's ``reason`` was silently dropped.
+    """
+    engine = _dce(
+        [
+            {
+                "name": "deny-all-write",
+                "match": {"safety_class": ["WRITE"]},
+                "action": "deny",
+                "reason": "WRITE is currently blocked for maintenance",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1", roles=["writer"])
+    result = engine.explain(
+        _req("c"),
+        _cap("c", SafetyClass.WRITE),
+        p,
+        justification="long enough justification",
+    )
+    assert result.denied is True
+    assert result.rule_name == "deny-all-write"
+    assert len(result.failed_conditions) == 1
+    fc = result.failed_conditions[0]
+    assert fc.condition == "denied_by_rule"
+    assert "deny-all-write" in str(fc.actual)
+    # The rule's reason propagates into the suggestion (not the no_matching_rule fallback).
+    assert "maintenance" in fc.suggestion.lower()
+
+
+def test_declarative_explain_skips_partial_match_deny() -> None:
+    """Partial-match deny rules don't pollute the explanation.
+
+    A deny rule whose conditions are *not* fully satisfied did not cause the
+    denial; suggesting how to satisfy it would invite the caller to trigger
+    the deny. Explain should look past it to the first allow rule that
+    structurally matches.
+    """
+    engine = _dce(
+        [
+            # Deny rule that doesn't apply here (roles don't match).
+            {
+                "name": "deny-secrets-admin-only",
+                "match": {"sensitivity": ["SECRETS"], "roles": ["admin"]},
+                "action": "deny",
+                "reason": "internal: admins routed via different path",
+            },
+            # Allow rule that explains the real path forward.
+            {
+                "name": "allow-secrets-service",
+                "match": {"sensitivity": ["SECRETS"], "roles": ["service"]},
+                "action": "allow",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1", roles=["reader"])  # neither admin nor service
+    cap = _cap("c", SafetyClass.READ, SensitivityTag.SECRETS)
+    result = engine.explain(_req("c"), cap, p, justification="")
+    assert result.denied is True
+    # Explanation should come via the allow rule (missing 'service' role),
+    # NOT via the deny rule (which would suggest adding 'admin' — triggers deny).
+    assert result.rule_name == "allow-secrets-service"
+    assert len(result.failed_conditions) == 1
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+    assert "service" in str(fc.required)
+
+
+# ── _parse_rule type validation ────────────────────────────────────────────────
+
+
+def test_declarative_invalid_roles_not_list() -> None:
+    """'roles' must be a list, not a bare string."""
+    with pytest.raises(PolicyConfigError, match="roles.*list of strings"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "roles": "admin"},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_roles_element_type() -> None:
+    """'roles' list elements must be strings."""
+    with pytest.raises(PolicyConfigError, match="roles.*list of strings"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "roles": [1, 2]},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_attributes_type() -> None:
+    """'attributes' must be a mapping of string keys to string values."""
+    with pytest.raises(PolicyConfigError, match="attributes.*mapping"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "attributes": ["tenant"]},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_attributes_value_type() -> None:
+    """'attributes' values must be strings (not ints, lists, etc.)."""
+    with pytest.raises(PolicyConfigError, match="attributes.*mapping"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "attributes": {"tenant": 42}},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_min_justification_type() -> None:
+    """'min_justification' must be an integer."""
+    with pytest.raises(PolicyConfigError, match="min_justification.*integer"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "min_justification": "ten"},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_min_justification_bool_rejected() -> None:
+    """'min_justification' must not be a bool (which is an int subclass)."""
+    with pytest.raises(PolicyConfigError, match="min_justification.*integer"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "min_justification": True},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_constraints_type() -> None:
+    """'constraints' must be a mapping."""
+    with pytest.raises(PolicyConfigError, match="constraints.*mapping"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"]},
+                    "action": "allow",
+                    "constraints": ["max_rows"],
+                }
+            ]
+        )
+
+
+# ── Optional-deps install hint ────────────────────────────────────────────────
+
+
+def test_declarative_from_yaml_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When pyyaml is unavailable, ``from_yaml`` raises with the install hint."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "yaml":
+            raise ImportError("simulated: pyyaml missing")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(PolicyConfigError, match="weaver-kernel\\[policy\\]"):
+        DeclarativePolicyEngine.from_yaml(Path("does-not-matter.yaml"))
+
+
+def test_declarative_from_toml_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On 3.10 without tomli, ``from_toml`` raises with the install hint.
+
+    On 3.11+ ``tomllib`` is in stdlib and always importable, so this test
+    only exercises the install-hint path on 3.10. We assert by simulating
+    an ``ImportError`` for whichever module the loader uses on this version.
+    """
+    import builtins
+    import sys
+
+    target = "tomllib" if sys.version_info >= (3, 11) else "tomli"
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == target:
+            raise ImportError(f"simulated: {target} missing")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(PolicyConfigError, match="weaver-kernel\\[policy\\]"):
+        DeclarativePolicyEngine.from_toml(Path("does-not-matter.toml"))
