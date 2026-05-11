@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   principals see their requested `raw` mode downgraded to `summary` in `DryRunResult`, matching
   what they would actually get at real-invoke time. Prevents probing for raw availability.
 
+### Documentation
+- `docs/architecture.md` now describes `PolicyEngine` / `ExplainingPolicyEngine` protocols,
+  `DefaultPolicyEngine` and `DeclarativePolicyEngine` (with policy-DSL semantics), and dry-run
+  mode (admin gate, operation resolution rule). Closes the canonical "Components & API
+  reference" gap flagged in audit.
+- `docs/capabilities.md` adds a "Dry-run mode" section (semantics, the three parity rules,
+  no-side-effects guarantee), a "Declarative policies" section (loaders, match conditions,
+  optional-extra behaviour), and a "Denial explanations" section. Closes the affected-files
+  gap from issue #43.
+
 ### Fixed
 - `DeclarativePolicyEngine._parse_rule()` now validates the types of `roles`, `attributes`,
   `min_justification`, and `constraints` in policy files and raises `PolicyConfigError` with a
@@ -57,8 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CapabilityNotFound`).
 - `DryRunResult.budget_remaining` docstring no longer references the unimplemented `BudgetManager`;
   the field is documented as reserved for a future cross-invocation budget mechanism.
-- `drivers/mcp.py` adds an explicit `_McpError: type[Exception] | None` annotation so mypy `--strict`
-  remains happy across the try/except import branches.
+- `drivers/mcp.py` adds an explicit `_McpError: type[BaseException] | None` annotation so mypy
+  `--strict` remains happy across the try/except import branches.
+
+### Tests
+- `tests/test_policy.py` adds `test_declarative_replicates_default_policy_decisions` — a
+  comparative test asserting that `DeclarativePolicyEngine` and `DefaultPolicyEngine` produce
+  the same allow/deny outcomes across a curated scenario matrix (READ × non-sensitive / PII /
+  PCI / SECRETS, WRITE/DESTRUCTIVE with and without required roles and justification). Closes
+  issue #42's "comparative test" acceptance criterion.
 
 ## [0.5.0] - 2026-04-12
 

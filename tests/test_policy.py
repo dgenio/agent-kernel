@@ -1008,6 +1008,219 @@ def test_declarative_invalid_constraints_type() -> None:
         )
 
 
+# ── Comparative test: DeclarativePolicyEngine ≡ DefaultPolicyEngine ──────────
+
+
+def test_declarative_replicates_default_policy_decisions() -> None:
+    """DeclarativePolicyEngine can express DefaultPolicyEngine's decisions.
+
+    Validates #42's acceptance criterion: a declarative rule set can replicate
+    DefaultPolicyEngine's allow/deny behaviour for every condition the DSL is
+    able to express. Walks a curated scenario matrix through both engines and
+    asserts the same outcome.
+
+    Out of scope (DSL has no equivalent operator today, by design):
+      - Rate limiting (sliding-window per principal/capability)
+      - max_rows ceiling (hardcoded 50/500 in DefaultPolicyEngine)
+      - allowed_fields enforcement (paired with sensitivity in DefaultPolicyEngine)
+
+    The illustrative ``examples/policies/default.{yaml,toml}`` file uses the
+    same rule shape but a slightly different policy (``editor`` role with
+    longer justification thresholds) to show DSL flexibility — equivalence to
+    DefaultPolicyEngine is asserted via an inline rule set built here.
+    """
+    declarative_rules = {
+        "default": "deny",
+        "rules": [
+            # READ on non-sensitive data → allowed for anyone
+            {
+                "name": "allow-read-nonsensitive",
+                "action": "allow",
+                "match": {"safety_class": ["READ"], "sensitivity": ["NONE"]},
+            },
+            # READ on PII/PCI → require tenant attribute
+            {
+                "name": "allow-read-pii-with-tenant",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["READ"],
+                    "sensitivity": ["PII"],
+                    "attributes": {"tenant": "*"},
+                },
+            },
+            {
+                "name": "allow-read-pci-with-tenant",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["READ"],
+                    "sensitivity": ["PCI"],
+                    "attributes": {"tenant": "*"},
+                },
+            },
+            # SECRETS → admin or secrets_reader with justification
+            {
+                "name": "allow-secrets-admin",
+                "action": "allow",
+                "match": {
+                    "sensitivity": ["SECRETS"],
+                    "roles": ["admin"],
+                    "min_justification": 15,
+                },
+            },
+            {
+                "name": "allow-secrets-reader",
+                "action": "allow",
+                "match": {
+                    "sensitivity": ["SECRETS"],
+                    "roles": ["secrets_reader"],
+                    "min_justification": 15,
+                },
+            },
+            # WRITE → writer or admin with justification (≥ 15 chars)
+            {
+                "name": "allow-write-writers",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["WRITE"],
+                    "sensitivity": ["NONE"],
+                    "roles": ["writer", "admin"],
+                    "min_justification": 15,
+                },
+            },
+            # DESTRUCTIVE → admin with justification (≥ 15 chars)
+            {
+                "name": "allow-destructive-admin",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["DESTRUCTIVE"],
+                    "roles": ["admin"],
+                    "min_justification": 15,
+                },
+            },
+        ],
+    }
+    declarative = DeclarativePolicyEngine.from_dict(declarative_rules)
+
+    long_justification = "this is a long enough justification string"
+
+    scenarios: list[tuple[str, Capability, Principal, str, bool]] = [
+        # READ on non-sensitive → allowed for anyone
+        (
+            "read-nonsensitive",
+            _cap("c", SafetyClass.READ),
+            Principal(principal_id="u1"),
+            "",
+            True,
+        ),
+        # READ on PII without tenant → denied by both
+        (
+            "read-pii-no-tenant",
+            _cap("c", SafetyClass.READ, SensitivityTag.PII),
+            Principal(principal_id="u1", roles=["reader"]),
+            "",
+            False,
+        ),
+        # READ on PII with tenant → allowed by both
+        (
+            "read-pii-with-tenant",
+            _cap("c", SafetyClass.READ, SensitivityTag.PII),
+            Principal(principal_id="u1", roles=["reader"], attributes={"tenant": "acme"}),
+            "",
+            True,
+        ),
+        # READ on PCI with tenant → allowed by both
+        (
+            "read-pci-with-tenant",
+            _cap("c", SafetyClass.READ, SensitivityTag.PCI),
+            Principal(principal_id="u1", roles=["reader"], attributes={"tenant": "acme"}),
+            "",
+            True,
+        ),
+        # WRITE without writer role → denied
+        (
+            "write-no-role",
+            _cap("c", SafetyClass.WRITE),
+            Principal(principal_id="u1", roles=["reader"]),
+            long_justification,
+            False,
+        ),
+        # WRITE with writer role + long justification → allowed
+        (
+            "write-writer-allowed",
+            _cap("c", SafetyClass.WRITE),
+            Principal(principal_id="u1", roles=["writer"]),
+            long_justification,
+            True,
+        ),
+        # WRITE with writer role + short justification → denied
+        (
+            "write-writer-short-justification",
+            _cap("c", SafetyClass.WRITE),
+            Principal(principal_id="u1", roles=["writer"]),
+            "too short",
+            False,
+        ),
+        # DESTRUCTIVE without admin → denied
+        (
+            "destructive-no-admin",
+            _cap("c", SafetyClass.DESTRUCTIVE),
+            Principal(principal_id="u1", roles=["writer"]),
+            long_justification,
+            False,
+        ),
+        # DESTRUCTIVE with admin + long justification → allowed
+        (
+            "destructive-admin-allowed",
+            _cap("c", SafetyClass.DESTRUCTIVE),
+            Principal(principal_id="u1", roles=["admin"]),
+            long_justification,
+            True,
+        ),
+        # SECRETS without role → denied
+        (
+            "secrets-no-role",
+            _cap("c", SafetyClass.READ, SensitivityTag.SECRETS),
+            Principal(principal_id="u1", roles=["reader"]),
+            long_justification,
+            False,
+        ),
+        # SECRETS with secrets_reader + justification → allowed
+        (
+            "secrets-reader-allowed",
+            _cap("c", SafetyClass.READ, SensitivityTag.SECRETS),
+            Principal(principal_id="u1", roles=["secrets_reader"]),
+            long_justification,
+            True,
+        ),
+        # SECRETS with admin + justification → allowed
+        (
+            "secrets-admin-allowed",
+            _cap("c", SafetyClass.READ, SensitivityTag.SECRETS),
+            Principal(principal_id="u1", roles=["admin"]),
+            long_justification,
+            True,
+        ),
+    ]
+
+    for name, capability, principal, justification, expected_allow in scenarios:
+        # Fresh DefaultPolicyEngine per scenario to avoid rate-limit state.
+        default = DefaultPolicyEngine()
+        if expected_allow:
+            d_decision = default.evaluate(
+                _req("c"), capability, principal, justification=justification
+            )
+            r_decision = declarative.evaluate(
+                _req("c"), capability, principal, justification=justification
+            )
+            assert d_decision.allowed is True, f"{name}: DefaultPolicyEngine expected allow"
+            assert r_decision.allowed is True, f"{name}: DeclarativePolicyEngine expected allow"
+        else:
+            with pytest.raises(PolicyDenied):
+                default.evaluate(_req("c"), capability, principal, justification=justification)
+            with pytest.raises(PolicyDenied):
+                declarative.evaluate(_req("c"), capability, principal, justification=justification)
+
+
 # ── Optional-deps install hint ────────────────────────────────────────────────
 
 
