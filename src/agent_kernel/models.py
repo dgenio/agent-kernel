@@ -228,3 +228,76 @@ class ActionTrace:
     driver_id: str
     handle_id: str | None = None
     error: str | None = None
+
+
+# ── Policy explanation ────────────────────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class FailedCondition:
+    """A single policy condition that was not met."""
+
+    condition: str
+    """Name of the condition (e.g. ``"roles"``, ``"min_justification"``)."""
+
+    required: Any
+    """What the policy requires."""
+
+    actual: Any
+    """What the principal or request actually has."""
+
+    suggestion: str
+    """Actionable remediation hint."""
+
+
+@dataclass(slots=True)
+class DenialExplanation:
+    """Structured explanation of a policy evaluation result."""
+
+    denied: bool
+    """``True`` if the request would be denied."""
+
+    rule_name: str
+    """Name of the rule (or rule category) that caused the denial."""
+
+    failed_conditions: list[FailedCondition]
+    """All conditions that were not satisfied."""
+
+    remediation: list[str]
+    """Ordered list of actionable steps to satisfy the policy."""
+
+    narrative: str
+    """Human-readable single-sentence summary."""
+
+
+# ── Dry-run ───────────────────────────────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class DryRunResult:
+    """Result of a dry-run invocation — driver is never called.
+
+    Returned by :meth:`~agent_kernel.Kernel.invoke` when ``dry_run=True``.
+    """
+
+    capability_id: str
+    principal_id: str
+    policy_decision: PolicyDecision
+    """The policy decision encoded in the verified token."""
+
+    driver_id: str
+    """Driver that would handle the invocation (first in route plan)."""
+
+    operation: str
+    """Operation name that would be passed to the driver."""
+
+    resolved_args: dict[str, Any]
+    """Arguments that would be forwarded to the driver."""
+
+    response_mode: ResponseMode
+    budget_remaining: int | None
+    """Reserved for a future cross-invocation budget mechanism; always
+    ``None`` in v0.5 (no such budget is tracked today)."""
+
+    estimated_cost: Literal["low", "medium", "high"]
+    """Rough cost estimate based on the capability's safety class."""

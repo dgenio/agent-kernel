@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
 from agent_kernel import (
     AgentKernelError,
     Capability,
+    DeclarativePolicyEngine,
     DefaultPolicyEngine,
+    PolicyConfigError,
     PolicyDenied,
     Principal,
     SafetyClass,
@@ -468,3 +472,792 @@ def test_rate_limit_window_slides() -> None:
     # Advance past first entry's window
     t[0] = 11.0
     eng.evaluate(_req("cap.r"), cap, p, justification="")  # should succeed
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DefaultPolicyEngine.explain()
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_explain_read_allowed(engine: DefaultPolicyEngine) -> None:
+    """READ with no special sensitivity returns denied=False."""
+    p = Principal(principal_id="u1")
+    result = engine.explain(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+    assert result.denied is False
+    assert result.failed_conditions == []
+    assert result.remediation == []
+    assert "allowed" in result.narrative
+
+
+def test_explain_write_missing_role(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["reader"])
+    result = engine.explain(
+        _req("cap.w"),
+        _cap("cap.w", SafetyClass.WRITE),
+        p,
+        justification="long enough justification here",
+    )
+    assert result.denied is True
+    assert len(result.failed_conditions) == 1
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+    assert "writer" in str(fc.required)
+    assert sorted(["reader"]) == fc.actual
+    assert result.remediation == [fc.suggestion]
+    assert "denied" in result.narrative
+
+
+def test_explain_write_short_justification(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["writer"])
+    result = engine.explain(
+        _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="short"
+    )
+    assert result.denied is True
+    assert any(fc.condition == "min_justification" for fc in result.failed_conditions)
+    fc = next(f for f in result.failed_conditions if f.condition == "min_justification")
+    assert fc.required == 15
+    assert fc.actual == len("short")
+
+
+def test_explain_write_both_failures(engine: DefaultPolicyEngine) -> None:
+    """Missing role AND short justification both appear in failed_conditions."""
+    p = Principal(principal_id="u1", roles=["reader"])
+    result = engine.explain(
+        _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="too short"
+    )
+    assert result.denied is True
+    conditions = {fc.condition for fc in result.failed_conditions}
+    assert "roles" in conditions
+    assert "min_justification" in conditions
+    assert len(result.remediation) == 2
+
+
+def test_explain_destructive_missing_admin(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["writer"])
+    result = engine.explain(
+        _req("cap.d"),
+        _cap("cap.d", SafetyClass.DESTRUCTIVE),
+        p,
+        justification="long enough justification here",
+    )
+    assert result.denied is True
+    assert result.failed_conditions[0].condition == "roles"
+    assert result.failed_conditions[0].required == ["admin"]
+
+
+def test_explain_pii_missing_tenant(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("cap.pii", SafetyClass.READ, SensitivityTag.PII)
+    result = engine.explain(_req("cap.pii"), cap, p, justification="")
+    assert result.denied is True
+    assert result.failed_conditions[0].condition == "tenant_attribute"
+    assert "tenant" in result.failed_conditions[0].suggestion
+
+
+def test_explain_secrets_missing_role(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("cap.sec", SafetyClass.READ, SensitivityTag.SECRETS)
+    result = engine.explain(_req("cap.sec"), cap, p, justification="long enough justification")
+    assert result.denied is True
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+    assert "secrets_reader" in str(fc.required)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DeclarativePolicyEngine
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _dce(rules: list[dict], *, default: str = "deny") -> DeclarativePolicyEngine:
+    return DeclarativePolicyEngine.from_dict({"rules": rules, "default": default})
+
+
+# ── from_dict: basic evaluation ───────────────────────────────────────────────
+
+
+def test_declarative_allow_rule_matches() -> None:
+    engine = _dce([{"name": "r1", "match": {"safety_class": ["READ"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.allowed is True
+    assert "r1" in dec.reason
+
+
+def test_declarative_deny_rule_raises() -> None:
+    engine = _dce(
+        [
+            {"name": "block-all", "match": {}, "action": "deny", "reason": "blocked for test"},
+        ]
+    )
+    p = Principal(principal_id="u1")
+    with pytest.raises(PolicyDenied, match="blocked for test"):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+
+
+def test_declarative_default_deny_no_match() -> None:
+    engine = _dce([{"name": "r1", "match": {"safety_class": ["WRITE"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    with pytest.raises(PolicyDenied, match="Default action is deny"):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+
+
+def test_declarative_default_allow_no_match() -> None:
+    engine = _dce(
+        [{"name": "r1", "match": {"safety_class": ["WRITE"]}, "action": "allow"}],
+        default="allow",
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.allowed is True
+
+
+def test_declarative_first_match_wins() -> None:
+    engine = _dce(
+        [
+            {"name": "allow-read", "match": {"safety_class": ["READ"]}, "action": "allow"},
+            {
+                "name": "deny-read",
+                "match": {"safety_class": ["READ"]},
+                "action": "deny",
+                "reason": "x",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.allowed is True
+    assert "allow-read" in dec.reason
+
+
+def test_declarative_role_condition() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "w",
+                "match": {"safety_class": ["WRITE"], "roles": ["writer"]},
+                "action": "allow",
+            },
+        ]
+    )
+    p_writer = Principal(principal_id="u1", roles=["writer"])
+    p_reader = Principal(principal_id="u2", roles=["reader"])
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p_writer, justification="")
+    assert dec.allowed is True
+    with pytest.raises(PolicyDenied):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p_reader, justification="")
+
+
+def test_declarative_min_justification_condition() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "w",
+                "match": {"safety_class": ["WRITE"], "min_justification": 10},
+                "action": "allow",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="1234567890")
+    assert dec.allowed is True
+    with pytest.raises(PolicyDenied):
+        engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="short")
+
+
+def test_declarative_attribute_condition() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "pii",
+                "match": {"sensitivity": ["PII"], "attributes": {"tenant": "*"}},
+                "action": "allow",
+            }
+        ]
+    )
+    p_tenant = Principal(principal_id="u1", attributes={"tenant": "acme"})
+    p_no_tenant = Principal(principal_id="u2")
+    dec = engine.evaluate(
+        _req("c"), _cap("c", SafetyClass.READ, SensitivityTag.PII), p_tenant, justification=""
+    )
+    assert dec.allowed is True
+    with pytest.raises(PolicyDenied):
+        engine.evaluate(
+            _req("c"),
+            _cap("c", SafetyClass.READ, SensitivityTag.PII),
+            p_no_tenant,
+            justification="",
+        )
+
+
+def test_declarative_constraints_merged() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "r",
+                "match": {"safety_class": ["READ"]},
+                "action": "allow",
+                "constraints": {"max_rows": 10},
+            }
+        ]
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert dec.constraints["max_rows"] == 10
+
+
+# ── config validation errors ──────────────────────────────────────────────────
+
+
+def test_declarative_invalid_default() -> None:
+    with pytest.raises(PolicyConfigError, match="default"):
+        DeclarativePolicyEngine.from_dict({"default": "maybe", "rules": []})
+
+
+def test_declarative_invalid_action() -> None:
+    with pytest.raises(PolicyConfigError, match="action"):
+        _dce([{"name": "r", "match": {}, "action": "perhaps"}])
+
+
+def test_declarative_invalid_safety_class() -> None:
+    with pytest.raises(PolicyConfigError, match="safety_class"):
+        _dce([{"name": "r", "match": {"safety_class": ["SUPER_DANGEROUS"]}, "action": "allow"}])
+
+
+# ── YAML round-trip ───────────────────────────────────────────────────────────
+
+
+def test_declarative_from_yaml_round_trip() -> None:
+    yaml_text = """\
+rules:
+  - name: read-allowed
+    match:
+      safety_class: [READ]
+    action: allow
+  - name: write-role
+    match:
+      safety_class: [WRITE]
+      roles: [writer, admin]
+      min_justification: 10
+    action: allow
+default: deny
+"""
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        f.write(yaml_text)
+        path = Path(f.name)
+    try:
+        engine = DeclarativePolicyEngine.from_yaml(path)
+        p_reader = Principal(principal_id="u1")
+        dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p_reader, justification="")
+        assert dec.allowed is True
+        p_writer = Principal(principal_id="u2", roles=["writer"])
+        dec2 = engine.evaluate(
+            _req("c"), _cap("c", SafetyClass.WRITE), p_writer, justification="1234567890"
+        )
+        assert dec2.allowed is True
+        with pytest.raises(PolicyDenied):
+            engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p_reader, justification="")
+    finally:
+        path.unlink(missing_ok=True)
+
+
+# ── TOML round-trip ───────────────────────────────────────────────────────────
+
+
+def test_declarative_from_toml_round_trip() -> None:
+    toml_text = """\
+default = "deny"
+
+[[rules]]
+name = "read-allowed"
+action = "allow"
+[rules.match]
+safety_class = ["READ"]
+
+[[rules]]
+name = "write-role"
+action = "allow"
+[rules.match]
+safety_class = ["WRITE"]
+roles = ["writer", "admin"]
+min_justification = 10
+"""
+    with tempfile.NamedTemporaryFile(suffix=".toml", mode="w", delete=False) as f:
+        f.write(toml_text)
+        path = Path(f.name)
+    try:
+        engine = DeclarativePolicyEngine.from_toml(path)
+        p = Principal(principal_id="u1")
+        dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+        assert dec.allowed is True
+        with pytest.raises(PolicyDenied):
+            engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="")
+    finally:
+        path.unlink(missing_ok=True)
+
+
+# ── explain() on DeclarativePolicyEngine ─────────────────────────────────────
+
+
+def test_declarative_explain_allowed() -> None:
+    engine = _dce([{"name": "r", "match": {"safety_class": ["READ"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    result = engine.explain(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
+    assert result.denied is False
+    assert result.failed_conditions == []
+
+
+def test_declarative_explain_missing_role() -> None:
+    engine = _dce(
+        [
+            {
+                "name": "write-needs-writer",
+                "match": {"safety_class": ["WRITE"], "roles": ["writer"]},
+                "action": "allow",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1", roles=["reader"])
+    result = engine.explain(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="")
+    assert result.denied is True
+    assert result.rule_name == "write-needs-writer"
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+
+
+def test_declarative_explain_no_structural_match() -> None:
+    """When no rule targets the capability type, report no_matching_rule."""
+    engine = _dce([{"name": "r", "match": {"safety_class": ["WRITE"]}, "action": "allow"}])
+    p = Principal(principal_id="u1")
+    result = engine.explain(_req("c"), _cap("c", SafetyClass.DESTRUCTIVE), p, justification="")
+    assert result.denied is True
+    assert result.failed_conditions[0].condition == "no_matching_rule"
+
+
+def test_declarative_explain_explicit_deny_full_match() -> None:
+    """An explicit deny rule that fully matches is reported as the cause.
+
+    Regression test for the bug where ``explain()`` fell through to the
+    ``no_matching_rule`` fallback when a deny rule with no remaining
+    conditions matched — the deny rule's ``reason`` was silently dropped.
+    """
+    engine = _dce(
+        [
+            {
+                "name": "deny-all-write",
+                "match": {"safety_class": ["WRITE"]},
+                "action": "deny",
+                "reason": "WRITE is currently blocked for maintenance",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1", roles=["writer"])
+    result = engine.explain(
+        _req("c"),
+        _cap("c", SafetyClass.WRITE),
+        p,
+        justification="long enough justification",
+    )
+    assert result.denied is True
+    assert result.rule_name == "deny-all-write"
+    assert len(result.failed_conditions) == 1
+    fc = result.failed_conditions[0]
+    assert fc.condition == "denied_by_rule"
+    assert "deny-all-write" in str(fc.actual)
+    # The rule's reason propagates into the suggestion (not the no_matching_rule fallback).
+    assert "maintenance" in fc.suggestion.lower()
+
+
+def test_declarative_explain_skips_partial_match_deny() -> None:
+    """Partial-match deny rules don't pollute the explanation.
+
+    A deny rule whose conditions are *not* fully satisfied did not cause the
+    denial; suggesting how to satisfy it would invite the caller to trigger
+    the deny. Explain should look past it to the first allow rule that
+    structurally matches.
+    """
+    engine = _dce(
+        [
+            # Deny rule that doesn't apply here (roles don't match).
+            {
+                "name": "deny-secrets-admin-only",
+                "match": {"sensitivity": ["SECRETS"], "roles": ["admin"]},
+                "action": "deny",
+                "reason": "internal: admins routed via different path",
+            },
+            # Allow rule that explains the real path forward.
+            {
+                "name": "allow-secrets-service",
+                "match": {"sensitivity": ["SECRETS"], "roles": ["service"]},
+                "action": "allow",
+            },
+        ]
+    )
+    p = Principal(principal_id="u1", roles=["reader"])  # neither admin nor service
+    cap = _cap("c", SafetyClass.READ, SensitivityTag.SECRETS)
+    result = engine.explain(_req("c"), cap, p, justification="")
+    assert result.denied is True
+    # Explanation should come via the allow rule (missing 'service' role),
+    # NOT via the deny rule (which would suggest adding 'admin' — triggers deny).
+    assert result.rule_name == "allow-secrets-service"
+    assert len(result.failed_conditions) == 1
+    fc = result.failed_conditions[0]
+    assert fc.condition == "roles"
+    assert "service" in str(fc.required)
+
+
+# ── _parse_rule type validation ────────────────────────────────────────────────
+
+
+def test_declarative_invalid_roles_not_list() -> None:
+    """'roles' must be a list, not a bare string."""
+    with pytest.raises(PolicyConfigError, match="roles.*list of strings"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "roles": "admin"},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_roles_element_type() -> None:
+    """'roles' list elements must be strings."""
+    with pytest.raises(PolicyConfigError, match="roles.*list of strings"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "roles": [1, 2]},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_attributes_type() -> None:
+    """'attributes' must be a mapping of string keys to string values."""
+    with pytest.raises(PolicyConfigError, match="attributes.*mapping"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "attributes": ["tenant"]},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_attributes_value_type() -> None:
+    """'attributes' values must be strings (not ints, lists, etc.)."""
+    with pytest.raises(PolicyConfigError, match="attributes.*mapping"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "attributes": {"tenant": 42}},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_min_justification_type() -> None:
+    """'min_justification' must be an integer."""
+    with pytest.raises(PolicyConfigError, match="min_justification.*integer"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "min_justification": "ten"},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_min_justification_bool_rejected() -> None:
+    """'min_justification' must not be a bool (which is an int subclass)."""
+    with pytest.raises(PolicyConfigError, match="min_justification.*integer"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"], "min_justification": True},
+                    "action": "allow",
+                }
+            ]
+        )
+
+
+def test_declarative_invalid_constraints_type() -> None:
+    """'constraints' must be a mapping."""
+    with pytest.raises(PolicyConfigError, match="constraints.*mapping"):
+        _dce(
+            [
+                {
+                    "name": "r",
+                    "match": {"safety_class": ["READ"]},
+                    "action": "allow",
+                    "constraints": ["max_rows"],
+                }
+            ]
+        )
+
+
+# ── Comparative test: DeclarativePolicyEngine ≡ DefaultPolicyEngine ──────────
+
+
+def test_declarative_replicates_default_policy_decisions() -> None:
+    """DeclarativePolicyEngine can express DefaultPolicyEngine's decisions.
+
+    Validates #42's acceptance criterion: a declarative rule set can replicate
+    DefaultPolicyEngine's allow/deny behaviour for every condition the DSL is
+    able to express. Walks a curated scenario matrix through both engines and
+    asserts the same outcome.
+
+    Out of scope (DSL has no equivalent operator today, by design):
+      - Rate limiting (sliding-window per principal/capability)
+      - max_rows ceiling (hardcoded 50/500 in DefaultPolicyEngine)
+      - allowed_fields enforcement (paired with sensitivity in DefaultPolicyEngine)
+
+    The illustrative ``examples/policies/default.{yaml,toml}`` file uses the
+    same rule shape but a slightly different policy (``editor`` role with
+    longer justification thresholds) to show DSL flexibility — equivalence to
+    DefaultPolicyEngine is asserted via an inline rule set built here.
+    """
+    declarative_rules = {
+        "default": "deny",
+        "rules": [
+            # READ on non-sensitive data → allowed for anyone
+            {
+                "name": "allow-read-nonsensitive",
+                "action": "allow",
+                "match": {"safety_class": ["READ"], "sensitivity": ["NONE"]},
+            },
+            # READ on PII/PCI → require tenant attribute
+            {
+                "name": "allow-read-pii-with-tenant",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["READ"],
+                    "sensitivity": ["PII"],
+                    "attributes": {"tenant": "*"},
+                },
+            },
+            {
+                "name": "allow-read-pci-with-tenant",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["READ"],
+                    "sensitivity": ["PCI"],
+                    "attributes": {"tenant": "*"},
+                },
+            },
+            # SECRETS → admin or secrets_reader with justification
+            {
+                "name": "allow-secrets-admin",
+                "action": "allow",
+                "match": {
+                    "sensitivity": ["SECRETS"],
+                    "roles": ["admin"],
+                    "min_justification": 15,
+                },
+            },
+            {
+                "name": "allow-secrets-reader",
+                "action": "allow",
+                "match": {
+                    "sensitivity": ["SECRETS"],
+                    "roles": ["secrets_reader"],
+                    "min_justification": 15,
+                },
+            },
+            # WRITE → writer or admin with justification (≥ 15 chars)
+            {
+                "name": "allow-write-writers",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["WRITE"],
+                    "sensitivity": ["NONE"],
+                    "roles": ["writer", "admin"],
+                    "min_justification": 15,
+                },
+            },
+            # DESTRUCTIVE → admin with justification (≥ 15 chars)
+            {
+                "name": "allow-destructive-admin",
+                "action": "allow",
+                "match": {
+                    "safety_class": ["DESTRUCTIVE"],
+                    "roles": ["admin"],
+                    "min_justification": 15,
+                },
+            },
+        ],
+    }
+    declarative = DeclarativePolicyEngine.from_dict(declarative_rules)
+
+    long_justification = "this is a long enough justification string"
+
+    scenarios: list[tuple[str, Capability, Principal, str, bool]] = [
+        # READ on non-sensitive → allowed for anyone
+        (
+            "read-nonsensitive",
+            _cap("c", SafetyClass.READ),
+            Principal(principal_id="u1"),
+            "",
+            True,
+        ),
+        # READ on PII without tenant → denied by both
+        (
+            "read-pii-no-tenant",
+            _cap("c", SafetyClass.READ, SensitivityTag.PII),
+            Principal(principal_id="u1", roles=["reader"]),
+            "",
+            False,
+        ),
+        # READ on PII with tenant → allowed by both
+        (
+            "read-pii-with-tenant",
+            _cap("c", SafetyClass.READ, SensitivityTag.PII),
+            Principal(principal_id="u1", roles=["reader"], attributes={"tenant": "acme"}),
+            "",
+            True,
+        ),
+        # READ on PCI with tenant → allowed by both
+        (
+            "read-pci-with-tenant",
+            _cap("c", SafetyClass.READ, SensitivityTag.PCI),
+            Principal(principal_id="u1", roles=["reader"], attributes={"tenant": "acme"}),
+            "",
+            True,
+        ),
+        # WRITE without writer role → denied
+        (
+            "write-no-role",
+            _cap("c", SafetyClass.WRITE),
+            Principal(principal_id="u1", roles=["reader"]),
+            long_justification,
+            False,
+        ),
+        # WRITE with writer role + long justification → allowed
+        (
+            "write-writer-allowed",
+            _cap("c", SafetyClass.WRITE),
+            Principal(principal_id="u1", roles=["writer"]),
+            long_justification,
+            True,
+        ),
+        # WRITE with writer role + short justification → denied
+        (
+            "write-writer-short-justification",
+            _cap("c", SafetyClass.WRITE),
+            Principal(principal_id="u1", roles=["writer"]),
+            "too short",
+            False,
+        ),
+        # DESTRUCTIVE without admin → denied
+        (
+            "destructive-no-admin",
+            _cap("c", SafetyClass.DESTRUCTIVE),
+            Principal(principal_id="u1", roles=["writer"]),
+            long_justification,
+            False,
+        ),
+        # DESTRUCTIVE with admin + long justification → allowed
+        (
+            "destructive-admin-allowed",
+            _cap("c", SafetyClass.DESTRUCTIVE),
+            Principal(principal_id="u1", roles=["admin"]),
+            long_justification,
+            True,
+        ),
+        # SECRETS without role → denied
+        (
+            "secrets-no-role",
+            _cap("c", SafetyClass.READ, SensitivityTag.SECRETS),
+            Principal(principal_id="u1", roles=["reader"]),
+            long_justification,
+            False,
+        ),
+        # SECRETS with secrets_reader + justification → allowed
+        (
+            "secrets-reader-allowed",
+            _cap("c", SafetyClass.READ, SensitivityTag.SECRETS),
+            Principal(principal_id="u1", roles=["secrets_reader"]),
+            long_justification,
+            True,
+        ),
+        # SECRETS with admin + justification → allowed
+        (
+            "secrets-admin-allowed",
+            _cap("c", SafetyClass.READ, SensitivityTag.SECRETS),
+            Principal(principal_id="u1", roles=["admin"]),
+            long_justification,
+            True,
+        ),
+    ]
+
+    for name, capability, principal, justification, expected_allow in scenarios:
+        # Fresh DefaultPolicyEngine per scenario to avoid rate-limit state.
+        default = DefaultPolicyEngine()
+        if expected_allow:
+            d_decision = default.evaluate(
+                _req("c"), capability, principal, justification=justification
+            )
+            r_decision = declarative.evaluate(
+                _req("c"), capability, principal, justification=justification
+            )
+            assert d_decision.allowed is True, f"{name}: DefaultPolicyEngine expected allow"
+            assert r_decision.allowed is True, f"{name}: DeclarativePolicyEngine expected allow"
+        else:
+            with pytest.raises(PolicyDenied):
+                default.evaluate(_req("c"), capability, principal, justification=justification)
+            with pytest.raises(PolicyDenied):
+                declarative.evaluate(_req("c"), capability, principal, justification=justification)
+
+
+# ── Optional-deps install hint ────────────────────────────────────────────────
+
+
+def test_declarative_from_yaml_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When pyyaml is unavailable, ``from_yaml`` raises with the install hint."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "yaml":
+            raise ImportError("simulated: pyyaml missing")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(PolicyConfigError, match="weaver-kernel\\[policy\\]"):
+        DeclarativePolicyEngine.from_yaml(Path("does-not-matter.yaml"))
+
+
+def test_declarative_from_toml_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On 3.10 without tomli, ``from_toml`` raises with the install hint.
+
+    On 3.11+ ``tomllib`` is in stdlib and always importable, so this test
+    only exercises the install-hint path on 3.10. We assert by simulating
+    an ``ImportError`` for whichever module the loader uses on this version.
+    """
+    import builtins
+    import sys
+
+    target = "tomllib" if sys.version_info >= (3, 11) else "tomli"
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == target:
+            raise ImportError(f"simulated: {target} missing")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(PolicyConfigError, match="weaver-kernel\\[policy\\]"):
+        DeclarativePolicyEngine.from_toml(Path("does-not-matter.toml"))

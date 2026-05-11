@@ -15,7 +15,7 @@ Token management::
 
 Policy::
 
-    from agent_kernel import DefaultPolicyEngine
+    from agent_kernel import DefaultPolicyEngine, DeclarativePolicyEngine
 
 Firewall::
 
@@ -30,7 +30,7 @@ Errors::
     from agent_kernel import (
         AgentKernelError,
         TokenExpired, TokenInvalid, TokenScopeError,
-        PolicyDenied, DriverError, FirewallError,
+        PolicyDenied, PolicyConfigError, DriverError, FirewallError,
         CapabilityNotFound, HandleNotFound, HandleExpired,
     )
 """
@@ -48,6 +48,7 @@ from .errors import (
     FirewallError,
     HandleExpired,
     HandleNotFound,
+    PolicyConfigError,
     PolicyDenied,
     TokenExpired,
     TokenInvalid,
@@ -63,6 +64,9 @@ from .models import (
     Capability,
     CapabilityGrant,
     CapabilityRequest,
+    DenialExplanation,
+    DryRunResult,
+    FailedCondition,
     Frame,
     Handle,
     ImplementationRef,
@@ -73,13 +77,14 @@ from .models import (
     ResponseMode,
     RoutePlan,
 )
-from .policy import DefaultPolicyEngine
+from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
+from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
 from .registry import CapabilityRegistry
 from .router import StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider
 from .trace import TraceStore
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     # version
@@ -93,6 +98,9 @@ __all__ = [
     "CapabilityGrant",
     "CapabilityRequest",
     "CapabilityToken",
+    "DenialExplanation",
+    "DryRunResult",
+    "FailedCondition",
     "Frame",
     "Handle",
     "ImplementationRef",
@@ -114,6 +122,7 @@ __all__ = [
     "FirewallError",
     "HandleExpired",
     "HandleNotFound",
+    "PolicyConfigError",
     "PolicyDenied",
     "TokenExpired",
     "TokenInvalid",
@@ -121,6 +130,11 @@ __all__ = [
     "TokenScopeError",
     # policy
     "DefaultPolicyEngine",
+    "DeclarativePolicyEngine",
+    "ExplainingPolicyEngine",
+    "PolicyEngine",
+    "PolicyMatch",
+    "PolicyRule",
     # tokens
     "HMACTokenProvider",
     # router

@@ -5,18 +5,22 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
-from typing import Any
+from typing import Any, Literal, overload
 
 from .drivers.base import Driver, ExecutionContext
-from .errors import DriverError
+from .enums import SafetyClass
+from .errors import AgentKernelError, DriverError
 from .firewall.transform import Firewall
 from .handles import HandleStore
 from .models import (
     ActionTrace,
     CapabilityGrant,
     CapabilityRequest,
+    DenialExplanation,
+    DryRunResult,
     Frame,
     Handle,
+    PolicyDecision,
     Principal,
     ResponseMode,
     RoutePlan,
@@ -170,6 +174,28 @@ class Kernel:
         """
         return self.grant_capability(request, principal, justification=justification).token
 
+    @overload
+    async def invoke(
+        self,
+        token: CapabilityToken,
+        *,
+        principal: Principal,
+        args: dict[str, Any],
+        response_mode: ResponseMode = ...,
+        dry_run: Literal[True],
+    ) -> DryRunResult: ...
+
+    @overload
+    async def invoke(
+        self,
+        token: CapabilityToken,
+        *,
+        principal: Principal,
+        args: dict[str, Any],
+        response_mode: ResponseMode = ...,
+        dry_run: Literal[False] = ...,
+    ) -> Frame: ...
+
     async def invoke(
         self,
         token: CapabilityToken,
@@ -177,8 +203,13 @@ class Kernel:
         principal: Principal,
         args: dict[str, Any],
         response_mode: ResponseMode = "summary",
-    ) -> Frame:
+        dry_run: bool = False,
+    ) -> Frame | DryRunResult:
         """Execute a capability using a signed token and return a Frame.
+
+        When ``dry_run=True`` the full pipeline runs (token verification,
+        capability lookup, route resolution) but the driver is never called.
+        A :class:`DryRunResult` is returned instead of a :class:`Frame`.
 
         Args:
             token: A signed :class:`CapabilityToken` authorising the invocation.
@@ -186,9 +217,12 @@ class Kernel:
             args: Arguments passed to the driver.
             response_mode: How to present the result (``summary``, ``table``,
                 ``handle_only``, or ``raw``).
+            dry_run: When ``True``, skip driver execution and return a
+                :class:`DryRunResult` describing what would happen.
 
         Returns:
-            A bounded :class:`Frame` (never raw driver output).
+            A bounded :class:`Frame`, or :class:`DryRunResult` when
+            ``dry_run=True``.
 
         Raises:
             TokenRevoked: If the token has been revoked.
@@ -196,7 +230,7 @@ class Kernel:
             TokenInvalid: If the token signature does not verify.
             TokenScopeError: If the token belongs to a different principal or capability.
             CapabilityNotFound: If the capability is not registered.
-            DriverError: If all drivers fail.
+            DriverError: If all drivers fail (not raised in dry-run mode).
         """
         # ── Verify token ──────────────────────────────────────────────────────
         self._token_provider.verify(
@@ -205,9 +239,45 @@ class Kernel:
             expected_capability_id=token.capability_id,
         )
 
-        action_id = str(uuid.uuid4())
-        self._registry.get(token.capability_id)  # validate capability exists
+        capability = self._registry.get(token.capability_id)
         plan: RoutePlan = self._router.route(token.capability_id)
+
+        # ── Dry-run short-circuit ─────────────────────────────────────────────
+        if dry_run:
+            driver_id = plan.driver_ids[0] if plan.driver_ids else ""
+            # Mirror driver operation resolution exactly (see InMemoryDriver,
+            # HTTPDriver, MCPDriver — all read ``args.get("operation", capability_id)``).
+            # Using ``capability.impl.operation`` here would diverge from what the
+            # driver actually executes at real-invoke time.
+            operation = str(args.get("operation", token.capability_id))
+            # Mirror Firewall's admin-only gate for ``raw`` mode
+            # (see firewall/transform.py:108 and docs/agent-context/invariants.md).
+            # Dry-run must not let non-admin principals probe raw-mode availability.
+            effective_response_mode: ResponseMode = response_mode
+            if response_mode == "raw" and "admin" not in principal.roles:
+                effective_response_mode = "summary"
+            _cost_map: dict[SafetyClass, Literal["low", "medium", "high"]] = {
+                SafetyClass.READ: "low",
+                SafetyClass.WRITE: "medium",
+                SafetyClass.DESTRUCTIVE: "high",
+            }
+            return DryRunResult(
+                capability_id=token.capability_id,
+                principal_id=principal.principal_id,
+                policy_decision=PolicyDecision(
+                    allowed=True,
+                    reason="Token verified. Policy was evaluated at grant time.",
+                    constraints=dict(token.constraints),
+                ),
+                driver_id=driver_id,
+                operation=operation,
+                resolved_args=args,
+                response_mode=effective_response_mode,
+                budget_remaining=None,
+                estimated_cost=_cost_map[capability.safety_class],
+            )
+
+        action_id = str(uuid.uuid4())
 
         _log_ctx = {
             "action_id": action_id,
@@ -348,3 +418,49 @@ class Kernel:
             },
         )
         return self._trace_store.get(action_id)
+
+    def explain_denial(
+        self,
+        request: CapabilityRequest,
+        principal: Principal,
+        *,
+        justification: str = "",
+    ) -> DenialExplanation:
+        """Explain why *principal*'s *request* would be denied (or allowed).
+
+        Delegates to the configured policy engine's ``explain()`` method.
+        Unlike :meth:`grant_capability`, this does not raise
+        :class:`PolicyDenied` when the policy fails — it returns a
+        :class:`DenialExplanation` instead.
+
+        Note: Rate-limit state is not reflected here. A request denied due to
+        rate limits shows as ``denied=False`` in the explanation.
+
+        Args:
+            request: The capability request to explain.
+            principal: The principal to evaluate the request for.
+            justification: Free-text justification (used in policy checks).
+
+        Returns:
+            :class:`DenialExplanation` with ``denied=False`` if the request
+            would succeed.
+
+        Raises:
+            CapabilityNotFound: If the capability is not registered.
+            AgentKernelError: If the configured policy engine does not
+                implement ``explain()``. Use :class:`DefaultPolicyEngine` or
+                :class:`DeclarativePolicyEngine` for structured explanations,
+                or add an ``explain()`` method to your engine.
+        """
+        capability = self._registry.get(request.capability_id)
+        explain_fn = getattr(self._policy, "explain", None)
+        if explain_fn is None:
+            raise AgentKernelError(
+                f"Policy engine {type(self._policy).__name__!r} does not implement "
+                f"explain(); structured denial explanations are unavailable. "
+                f"Use DefaultPolicyEngine or DeclarativePolicyEngine, or add an "
+                f"explain() method to your engine."
+            )
+        result = explain_fn(request, capability, principal, justification=justification)
+        assert isinstance(result, DenialExplanation)
+        return result

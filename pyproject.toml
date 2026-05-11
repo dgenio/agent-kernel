@@ -39,9 +39,16 @@ dev = [
     "mypy>=1.10",
     "httpx>=0.27",
     "mcp>=1.6",
+    "pyyaml>=6.0",
+    "tomli>=2.0; python_version<'3.11'",
+    "types-PyYAML>=6.0",
 ]
 mcp = ["mcp>=1.6"]
 otel = ["opentelemetry-api>=1.20"]
+policy = [
+    "pyyaml>=6.0",
+    "tomli>=2.0; python_version<'3.11'",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_kernel"]
@@ -62,3 +69,19 @@ ignore = ["E501"]
 python_version = "3.10"
 strict = true
 files = ["src/"]
+
+[[tool.mypy.overrides]]
+module = "tomli"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "yaml"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "httpx"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mcp.*"
+ignore_missing_imports = true

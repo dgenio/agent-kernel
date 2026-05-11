@@ -21,11 +21,13 @@ from .mcp_support import (
 
 # Lazy import of McpError — only available when the mcp optional dep is installed.
 # If mcp is absent, factory methods raise ImportError before any session is created,
-# so _McpError will never be None on a live driver instance.
+# so _McpError will never be None on a live driver instance. The explicit annotation
+# keeps mypy --strict happy across the try/except branches.
+_McpError: type[BaseException] | None
 try:
     from mcp.shared.exceptions import McpError as _McpError
 except ImportError:  # pragma: no cover
-    _McpError = None  # type: ignore[assignment,misc]
+    _McpError = None
 
 
 def _infer_safety_class(spec: ToolSpec) -> SafetyClass:

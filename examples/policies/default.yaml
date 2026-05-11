@@ -1,0 +1,64 @@
+# Example declarative policy for agent-kernel
+# Load with: DeclarativePolicyEngine.from_yaml(Path("examples/policies/default.yaml"))
+#
+# Rules are evaluated top-down with first-match-wins semantics.
+# If no rule matches, the `default` action applies.
+#
+# Note: the current DSL has no negation / missing-attribute operator. Policies
+# that should deny "when an attribute is missing" must be expressed as allow
+# rules requiring the attribute, paired with `default: deny`.
+
+default: deny
+
+rules:
+  # Allow read-only operations on non-sensitive data.
+  - name: allow-read-nonsensitive
+    action: allow
+    match:
+      safety_class: [READ]
+      sensitivity: [NONE]
+
+  # Allow PII access only when the principal carries a tenant attribute.
+  # PII requests without a tenant fall through to default-deny.
+  - name: allow-pii-with-tenant
+    action: allow
+    match:
+      sensitivity: [PII]
+      attributes:
+        tenant: "*"   # "*" means: attribute must be present with any value
+
+  # Allow write operations for editors and admins with a justification.
+  - name: allow-write-editors
+    action: allow
+    match:
+      safety_class: [WRITE]
+      sensitivity: [NONE]
+      roles: [editor, admin]
+      min_justification: 20
+
+  # Allow destructive operations for admins only with a strong justification.
+  - name: allow-destructive-admin
+    action: allow
+    match:
+      safety_class: [DESTRUCTIVE]
+      roles: [admin]
+      min_justification: 50
+
+  # Allow service principals to read secrets with a justification.
+  # IMPORTANT: this allow rule must precede any deny-secrets rule —
+  # first-match-wins means an earlier unconditional deny would shadow it.
+  - name: allow-secrets-service
+    action: allow
+    match:
+      sensitivity: [SECRETS]
+      roles: [service]
+      min_justification: 10
+
+  # Any SECRETS request that wasn't already allowed is explicitly denied so
+  # the caller gets a descriptive PolicyDenied reason. Functionally equivalent
+  # to default-deny but provides clearer feedback.
+  - name: deny-secrets-non-service
+    action: deny
+    match:
+      sensitivity: [SECRETS]
+    reason: "SECRETS access is restricted to service-role principals"
