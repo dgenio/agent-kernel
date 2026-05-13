@@ -52,7 +52,7 @@ Use these terms consistently. Never substitute synonyms:
 - Error messages are part of the contract — tests must assert both exception type and message.
 - Keep modules ≤ 300 lines. Split if needed.
 - No randomness in matching, routing, or summarization. Deterministic outputs always.
-- No new dependencies without justification. The dep list is intentionally minimal (`httpx` only).
+- No new dependencies without justification. The dep list is intentionally minimal (`httpx`, `pydantic`).
 
 ## Security rules
 

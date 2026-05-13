@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from .enums import SafetyClass, SensitivityTag
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from .tokens import CapabilityToken
 
 ResponseMode = Literal["summary", "table", "handle_only", "raw"]
@@ -30,6 +32,32 @@ class ImplementationRef:
 
     operation: str
     """Operation name understood by the driver (e.g. ``"list_invoices"``)."""
+
+
+@dataclass(slots=True)
+class ToolHints:
+    """Vendor-specific tool-definition hints for LLM adapters.
+
+    Consumed by ``agent_kernel.adapters`` when emitting tool schemas.
+    Engines that don't recognise a hint silently ignore it; setting a hint
+    never changes how the kernel itself behaves.
+    """
+
+    cache_control: dict[str, Any] | None = None
+    """Anthropic prompt-cache control block (e.g. ``{"type": "ephemeral"}``).
+
+    Forwarded verbatim to the Anthropic tool definition. Ignored by other adapters.
+    """
+
+    strict: bool = False
+    """When ``True``, OpenAI tool definitions are emitted with ``strict: true``.
+
+    The capability's ``parameters_model`` (or ``parameters_schema``) must produce a
+    JSON Schema that satisfies OpenAI's strict-mode rules (every property required,
+    ``additionalProperties: false`` on all objects). The adapter normalises objects
+    where possible and falls back to non-strict with a warning if normalisation fails.
+    Ignored by other adapters.
+    """
 
 
 @dataclass(slots=True)
@@ -52,13 +80,42 @@ class Capability:
     """Optional sensitivity tag."""
 
     allowed_fields: list[str] = field(default_factory=list)
-    """If non-empty, only these fields are returned unless the caller has ``pii_reader``."""
+    """If non-empty, only these fields are returned unless the caller has ``pii_reader``.
+
+    Note: this is an **output redaction** control consumed by the firewall — it does
+    not describe the capability's input parameters. For input schemas use
+    :attr:`parameters_model` or :attr:`parameters_schema`.
+    """
 
     tags: list[str] = field(default_factory=list)
     """Arbitrary keyword tags used for capability matching."""
 
     impl: ImplementationRef | None = None
     """Optional pointer to the implementation."""
+
+    parameters_model: type[BaseModel] | None = None
+    """Optional pydantic model describing the capability's input parameters.
+
+    When present, LLM adapters generate the tool's JSON Schema from
+    ``parameters_model.model_json_schema()`` and validate incoming tool-call
+    arguments against the model before invocation. Takes precedence over
+    :attr:`parameters_schema`.
+    """
+
+    parameters_schema: dict[str, Any] | None = None
+    """Optional raw JSON Schema for the capability's input parameters.
+
+    Used by LLM adapters as a fallback schema source when no
+    :attr:`parameters_model` is supplied. Forwarded to the vendor tool definition
+    verbatim; the adapter does not validate incoming arguments against it (use
+    :attr:`parameters_model` for validation).
+    """
+
+    tool_hints: ToolHints | None = None
+    """Vendor-specific hints consumed by LLM adapters (e.g. Anthropic
+    ``cache_control``, OpenAI ``strict`` mode). Has no effect on kernel routing
+    or policy. See :class:`ToolHints`.
+    """
 
 
 # ── Request / Grant ───────────────────────────────────────────────────────────

@@ -87,3 +87,24 @@ Stores full results by opaque handle ID with TTL. `expand()` supports pagination
 
 ### TraceStore
 Records every `ActionTrace`. `explain(action_id)` returns the full audit record.
+
+### Adapters (`agent_kernel.adapters`)
+Vendor-specific tool-format adapters that translate between `Capability` objects
+and the tool shapes used by LLM provider APIs:
+
+- **`OpenAIMiddleware`** — emits OpenAI tool definitions (Responses API or Chat
+  Completions shape), parses `response.output` / `message.tool_calls`, and
+  returns `function_call_output` / tool-result messages. Dotted capability IDs
+  map to `namespace__function` (OpenAI tool names cannot contain `.`).
+- **`AnthropicMiddleware`** — emits Anthropic tool definitions with optional
+  `cache_control` blocks, parses `tool_use` content blocks, and returns
+  `tool_result` content blocks. Dotted capability IDs are preserved as-is.
+
+Both classes share `BaseToolMiddleware`, which owns hook registration
+(`intercept_tool_call`, `intercept_tool_result`), pre/post dispatch (sync or
+async), and conversion of kernel exceptions (`PolicyDenied`,
+`CapabilityNotFound`, `DriverError`) into tool-result errors the LLM can react
+to. Input arguments are validated against `Capability.parameters_model`
+(pydantic) when present. **Zero runtime dependency** on the `openai` /
+`anthropic` SDK packages. See [`docs/integrations.md`](integrations.md) for
+usage examples.
