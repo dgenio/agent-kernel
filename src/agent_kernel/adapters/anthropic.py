@@ -18,6 +18,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from ..errors import AdapterParseError
 from ..models import Capability, CapabilityRequest, ResponseMode
 from ._base import (
     BaseToolMiddleware,
@@ -112,18 +113,19 @@ def tool_use_to_request(tool_use_block: dict[str, Any]) -> CapabilityRequest:
     is needed beyond a defensive copy.
 
     Raises:
-        ValueError: If the block is missing ``name`` or ``input`` has the wrong type.
+        AdapterParseError: If the block is missing ``name`` or ``input`` has
+            the wrong type.
     """
     name = tool_use_block.get("name")
     if not isinstance(name, str) or not name:
-        raise ValueError(
+        raise AdapterParseError(
             "Anthropic tool_use block is missing a 'name' field or it is not a string."
         )
     raw_input = tool_use_block.get("input", {})
     if raw_input is None:
         raw_input = {}
     if not isinstance(raw_input, dict):
-        raise ValueError(
+        raise AdapterParseError(
             f"Anthropic tool_use 'input' must be an object (got {type(raw_input).__name__})."
         )
     return CapabilityRequest(
@@ -226,7 +228,7 @@ class AnthropicMiddleware(BaseToolMiddleware):
             tool_use_id = str(block.get("id", ""))
             try:
                 request = tool_use_to_request(block)
-            except ValueError as exc:
+            except AdapterParseError as exc:
                 results.append(
                     format_result(
                         error_to_payload(capability_id="<unknown>", error=str(exc)),

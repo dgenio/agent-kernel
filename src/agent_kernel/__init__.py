@@ -46,6 +46,7 @@ from .drivers.mcp import MCPDriver
 from .drivers.memory import InMemoryDriver, make_billing_driver
 from .enums import SafetyClass, SensitivityTag
 from .errors import (
+    AdapterParseError,
     AgentKernelError,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
@@ -122,6 +123,7 @@ __all__ = [
     "SafetyClass",
     "SensitivityTag",
     # errors
+    "AdapterParseError",
     "AgentKernelError",
     "CapabilityAlreadyRegistered",
     "CapabilityNotFound",

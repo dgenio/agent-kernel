@@ -216,6 +216,11 @@ double-underscore form on the way out and restored on the way back:
 | `billing.list_invoices` | `billing__list_invoices` |
 | `billing.invoices.list` | `billing__invoices__list` |
 
+Capability IDs that already contain `__` cannot be round-tripped unambiguously
+(`a__b` and `a.b` would both produce the OpenAI tool name `a__b`). The adapter
+rejects them at tool-emit time with an `AdapterParseError` rather than
+silently emitting colliding tools.
+
 #### Strict mode
 
 Set `Capability.tool_hints = ToolHints(strict=True)` to emit the tool

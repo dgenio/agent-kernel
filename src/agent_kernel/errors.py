@@ -49,6 +49,25 @@ class FirewallError(AgentKernelError):
     """Raised when the context firewall cannot transform a raw result."""
 
 
+# ── Adapter errors ────────────────────────────────────────────────────────────
+
+
+class AdapterParseError(AgentKernelError):
+    """Raised when an LLM tool-format adapter cannot parse vendor input.
+
+    Covers two adapter-side failure modes:
+
+    - Malformed tool-call shapes: missing fields, non-JSON ``arguments``, wrong
+      types (e.g. ``arguments`` is an int).
+    - Capability-ID validation: e.g. capability IDs that contain the OpenAI
+      namespace separator (``__``) cannot be round-tripped unambiguously and
+      are rejected at tool-emit time.
+
+    Callers can catch this to distinguish adapter parse / validation failures
+    from kernel-side errors (:class:`PolicyDenied`, :class:`DriverError`).
+    """
+
+
 # ── Registry / lookup errors ──────────────────────────────────────────────────
 
 

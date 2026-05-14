@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hatch), and `tool_hints: ToolHints | None` (vendor hints — Anthropic `cache_control`, OpenAI
   `strict` mode). All default to ``None``; existing capabilities and tests are unaffected.
 - New `ToolHints` dataclass and `OpenAIMiddleware` / `AnthropicMiddleware` top-level exports.
+- New `AdapterParseError(AgentKernelError)` exception raised by adapter parse / validation
+  helpers (`tool_call_to_request`, `tool_use_to_request`, `make_namespace_safe_name`) instead
+  of bare `ValueError`. Satisfies `AGENTS.md`'s "no bare ValueError to callers" rule and
+  gives consumers a stable adapter-specific exception type. Also catches capability IDs that
+  contain the reserved OpenAI namespace separator `__` (which would otherwise produce
+  colliding tool names).
 - `Kernel.list_capabilities()` convenience accessor returning every registered capability in
   registration order. Used by the new adapters but generally useful for tooling that needs to
   enumerate the registry without keyword search.

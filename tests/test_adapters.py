@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agent_kernel import (
+    AdapterParseError,
     AnthropicMiddleware,
     Capability,
     CapabilityRegistry,
@@ -194,6 +195,33 @@ def test_namespace_preserves_single_underscores() -> None:
     assert restore_namespace(make_namespace_safe_name(original)) == original
 
 
+def test_namespace_rejects_capability_id_with_reserved_separator() -> None:
+    """``__`` in a capability_id collides with the OpenAI namespace separator.
+
+    ``"a__b"`` and ``"a.b"`` would both map to OpenAI tool name ``"a__b"`` —
+    a silent collision. ``make_namespace_safe_name`` rejects the input rather
+    than producing a colliding tool name.
+    """
+    with pytest.raises(AdapterParseError, match="reserved namespace separator"):
+        make_namespace_safe_name("a__b")
+
+
+def test_namespace_collision_surfaces_via_capabilities_to_tools() -> None:
+    """An invalid capability_id surfaces at adapter-emit time.
+
+    The validation lives in ``make_namespace_safe_name``; callers exercising
+    the public OpenAI schema-conversion function see the same error.
+    """
+    cap = Capability(
+        capability_id="a__b",
+        name="Bad",
+        description="d",
+        safety_class=SafetyClass.READ,
+    )
+    with pytest.raises(AdapterParseError, match="reserved namespace separator"):
+        openai_mod.capabilities_to_tools([cap])
+
+
 # ── Payload helpers ───────────────────────────────────────────────────────────
 
 
@@ -295,12 +323,12 @@ def test_openai_tool_call_to_request_raises_on_invalid_json() -> None:
         "name": "billing__list_invoices",
         "arguments": "{not valid",
     }
-    with pytest.raises(ValueError, match="not valid JSON"):
+    with pytest.raises(AdapterParseError, match="not valid JSON"):
         openai_mod.tool_call_to_request(tool_call)
 
 
 def test_openai_tool_call_to_request_raises_on_missing_name() -> None:
-    with pytest.raises(ValueError, match="missing a function name"):
+    with pytest.raises(AdapterParseError, match="missing a function name"):
         openai_mod.tool_call_to_request({"id": "x", "type": "function", "function": {}})
 
 
@@ -673,12 +701,12 @@ def test_anthropic_tool_use_to_request_preserves_dotted_id() -> None:
 
 
 def test_anthropic_tool_use_to_request_raises_on_missing_name() -> None:
-    with pytest.raises(ValueError, match="missing a 'name'"):
+    with pytest.raises(AdapterParseError, match="missing a 'name'"):
         anthropic_mod.tool_use_to_request({"type": "tool_use", "id": "x", "input": {}})
 
 
 def test_anthropic_tool_use_to_request_raises_on_non_dict_input() -> None:
-    with pytest.raises(ValueError, match="must be an object"):
+    with pytest.raises(AdapterParseError, match="must be an object"):
         anthropic_mod.tool_use_to_request(
             {"type": "tool_use", "id": "x", "name": "n", "input": "string"}
         )
@@ -954,7 +982,7 @@ def test_openai_parse_pre_parsed_dict_arguments() -> None:
 
 def test_openai_parse_arguments_array_raises() -> None:
     """A JSON array (not object) in arguments is a contract violation."""
-    with pytest.raises(ValueError, match="must decode to a JSON object"):
+    with pytest.raises(AdapterParseError, match="must decode to a JSON object"):
         openai_mod.tool_call_to_request(
             {
                 "type": "function_call",
@@ -967,7 +995,7 @@ def test_openai_parse_arguments_array_raises() -> None:
 
 def test_openai_parse_arguments_wrong_type_raises() -> None:
     """Argument values that are neither string nor dict are rejected."""
-    with pytest.raises(ValueError, match="must be a JSON string or dict"):
+    with pytest.raises(AdapterParseError, match="must be a JSON string or dict"):
         openai_mod.tool_call_to_request(
             {
                 "type": "function_call",

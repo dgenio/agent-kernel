@@ -24,6 +24,7 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from ..errors import AdapterParseError
 from ..models import Capability, CapabilityRequest, ResponseMode
 from ._base import (
     BaseToolMiddleware,
@@ -144,8 +145,8 @@ def tool_call_to_request(tool_call: dict[str, Any]) -> CapabilityRequest:
     spec; this function parses it.
 
     Raises:
-        ValueError: If the dict shape isn't recognisable as either format,
-            or if ``arguments`` is not valid JSON.
+        AdapterParseError: If the dict shape isn't recognisable as either
+            format, or if ``arguments`` is not valid JSON.
     """
     name, _ = _extract_name_and_call_id(tool_call)
     # Force-parse arguments so callers get the JSON-decode error here, not
@@ -173,7 +174,7 @@ def _extract_name_and_call_id(tool_call: dict[str, Any]) -> tuple[str, str]:
         name = tool_call.get("name")
         call_id = tool_call.get("call_id", "") or tool_call.get("id", "")
     if not isinstance(name, str) or not name:
-        raise ValueError(
+        raise AdapterParseError(
             "OpenAI tool_call is missing a function name. Expected either "
             "'function.name' (Chat Completions) or 'name' (Responses API)."
         )
@@ -192,15 +193,15 @@ def _parse_arguments(raw: Any, tool_call: dict[str, Any]) -> dict[str, Any]:
         # Some OpenAI clients pre-parse arguments; accept that shape too.
         return dict(raw)
     if not isinstance(raw, str):
-        raise ValueError(
+        raise AdapterParseError(
             f"OpenAI tool_call 'arguments' must be a JSON string or dict, got {type(raw).__name__}."
         )
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"OpenAI tool_call 'arguments' is not valid JSON: {exc}") from exc
+        raise AdapterParseError(f"OpenAI tool_call 'arguments' is not valid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
-        raise ValueError(
+        raise AdapterParseError(
             "OpenAI tool_call 'arguments' must decode to a JSON object (got "
             f"{type(parsed).__name__})."
         )
@@ -272,17 +273,20 @@ class OpenAIMiddleware(BaseToolMiddleware):
 
         Args:
             tool_calls: Either ``response.output`` items from the Responses API
-                (filtered or unfiltered — non-function items are passed
-                through unchanged) or ``message.tool_calls`` items from the
-                Chat Completions API. Input shape is auto-detected per call.
+                or ``message.tool_calls`` items from the Chat Completions API.
+                Non-function items (e.g. ``message`` / text items in
+                Responses-API output) are skipped — the caller stitches the
+                returned envelopes back into the conversation alongside the
+                original items. Input shape is auto-detected per call.
             justification: Justification applied to every call in the batch.
                 Individual calls may override by including
                 ``"_justification": "..."`` in their arguments.
 
         Returns:
             One vendor-shaped result envelope per *processed* tool call, in
-            input order. Non-tool-call items in the input are skipped so the
-            caller can stitch results back into the conversation as-is.
+            input order. Non-tool-call items in the input are skipped (no
+            envelope is emitted for them) so the caller can interleave
+            results with the original conversation items.
         """
         outputs: list[dict[str, Any]] = []
         for tool_call in tool_calls:
@@ -291,7 +295,7 @@ class OpenAIMiddleware(BaseToolMiddleware):
             try:
                 name, call_id = _extract_name_and_call_id(tool_call)
                 args = _parse_arguments(tool_call.get("arguments"), tool_call)
-            except ValueError as exc:
+            except AdapterParseError as exc:
                 # Surface parse failures as a tool result so the LLM sees the
                 # error rather than the agent loop crashing.
                 outputs.append(

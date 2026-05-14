@@ -26,7 +26,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import ValidationError
 
-from ..errors import AgentKernelError, CapabilityNotFound, DriverError, PolicyDenied
+from ..errors import (
+    AdapterParseError,
+    AgentKernelError,
+    CapabilityNotFound,
+    DriverError,
+    PolicyDenied,
+)
 from ..models import (
     Capability,
     CapabilityRequest,
@@ -183,9 +189,24 @@ def make_namespace_safe_name(capability_id: str) -> str:
     """Convert a dotted capability_id into a vendor-safe identifier.
 
     ``billing.list_invoices`` → ``billing__list_invoices``. The ``__`` separator
-    is reserved so the inverse mapping is unambiguous even when individual
-    segments contain underscores.
+    is reserved: capability IDs that already contain ``__`` cannot be
+    round-tripped unambiguously (``"a__b"`` and ``"a.b"`` would both map to
+    ``"a__b"``), so they are rejected at adapter-emit time rather than
+    silently producing colliding OpenAI tool names.
+
+    Raises:
+        AdapterParseError: If *capability_id* contains the reserved ``__``
+            separator. Single underscores are fine (``"list_invoices_v2"``
+            round-trips cleanly).
     """
+    if _NAMESPACE_SEP in capability_id:
+        raise AdapterParseError(
+            f"Capability ID '{capability_id}' contains the reserved namespace "
+            f"separator '{_NAMESPACE_SEP}'. The OpenAI adapter would map it to "
+            f"a tool name that collides with dotted capability IDs (e.g. "
+            f"'a__b' and 'a.b' both produce 'a__b'). Rename the capability or "
+            f"strip the double underscore."
+        )
     return capability_id.replace(".", _NAMESPACE_SEP)
 
 
