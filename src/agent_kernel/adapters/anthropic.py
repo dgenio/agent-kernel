@@ -229,9 +229,12 @@ class AnthropicMiddleware(BaseToolMiddleware):
             try:
                 request = tool_use_to_request(block)
             except AdapterParseError as exc:
+                # The capability_id is "(unresolved)" because the parse failed
+                # before we could extract one — angle-bracket sentinels like
+                # "<unknown>" read as HTML/placeholder text to some LLMs.
                 results.append(
                     format_result(
-                        error_to_payload(capability_id="<unknown>", error=str(exc)),
+                        error_to_payload(capability_id="(unresolved)", error=str(exc)),
                         tool_use_id=tool_use_id,
                         is_error=True,
                     )

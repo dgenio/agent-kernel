@@ -297,10 +297,13 @@ class OpenAIMiddleware(BaseToolMiddleware):
                 args = _parse_arguments(tool_call.get("arguments"), tool_call)
             except AdapterParseError as exc:
                 # Surface parse failures as a tool result so the LLM sees the
-                # error rather than the agent loop crashing.
+                # error rather than the agent loop crashing. The capability_id
+                # is "(unresolved)" because the parse failed before we could
+                # extract one — angle-bracket sentinels like "<unknown>" read
+                # as HTML/placeholder text to some LLMs.
                 outputs.append(
                     format_result(
-                        error_to_payload(capability_id="<unknown>", error=str(exc)),
+                        error_to_payload(capability_id="(unresolved)", error=str(exc)),
                         call_id=str(tool_call.get("id") or tool_call.get("call_id") or ""),
                         format=self._format,
                     )

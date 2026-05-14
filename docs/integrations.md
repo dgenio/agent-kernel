@@ -230,6 +230,30 @@ at every level. If normalisation fails (e.g. a schema feature OpenAI strict
 mode does not accept) the adapter falls back to non-strict and emits a
 warning.
 
+**Strict mode caveats**
+
+OpenAI strict mode requires every property be listed in `required`. The
+adapter's normaliser enforces this unconditionally. That means pydantic
+fields with non-`None` defaults — which pydantic itself emits as
+*not* required — will be forced into `required` after normalisation. The
+LLM is then expected to always include the field even though pydantic would
+fall back to the default if it were omitted.
+
+To express a truly-optional field under strict mode, use the `Optional[T]`
+pattern (with `None` as the default):
+
+```python
+class ListInvoicesArgs(BaseModel):
+    customer_id: str           # required, str
+    limit: int = 10            # forced into required by strict mode
+    cursor: str | None = None  # required + nullable (LLM can pass null)
+```
+
+Pydantic emits `Optional[str] = None` (or `str | None = None`) as
+`{"anyOf": [{"type": "string"}, {"type": "null"}]}`. OpenAI strict mode
+accepts `null` as a valid value for such fields, so the LLM can effectively
+"omit" them by passing `null`.
+
 ### Anthropic middleware
 
 ```python

@@ -276,6 +276,40 @@ def test_openai_strict_mode_emits_strict_flag_and_normalises_schema() -> None:
     assert set(tool["parameters"]["required"]) == {"operation", "customer_id", "limit"}
 
 
+def test_openai_strict_with_optional_field_preserves_nullable() -> None:
+    """Documented escape hatch: ``Optional[T] = None`` survives strict normalisation.
+
+    OpenAI strict mode lists every property in ``required`` (the adapter enforces
+    this), but accepts ``null`` for fields declared as nullable. Pydantic emits
+    ``Optional`` fields as ``anyOf: [..., {"type": "null"}]``; the normaliser
+    must preserve that shape so the LLM can effectively "omit" the field by
+    passing ``null``.
+    """
+
+    class WithOptional(BaseModel):
+        name: str
+        suffix: str | None = None
+
+    cap = Capability(
+        capability_id="x.y",
+        name="X",
+        description="d",
+        safety_class=SafetyClass.READ,
+        parameters_model=WithOptional,
+        tool_hints=ToolHints(strict=True),
+    )
+    tool = openai_mod.capabilities_to_tools([cap])[0]
+    assert tool["strict"] is True
+    # All properties land in required, including the Optional one.
+    assert set(tool["parameters"]["required"]) == {"name", "suffix"}
+    # The Optional field still advertises null as a valid value via anyOf.
+    suffix_schema = tool["parameters"]["properties"]["suffix"]
+    any_of = suffix_schema.get("anyOf") or []
+    assert any(branch.get("type") == "null" for branch in any_of), (
+        f"Expected 'null' branch in anyOf for the Optional field; got {suffix_schema!r}"
+    )
+
+
 def test_openai_description_omits_sensitivity_when_none() -> None:
     cap = Capability(
         capability_id="x.y",
