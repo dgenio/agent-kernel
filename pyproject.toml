@@ -22,7 +22,10 @@ classifiers = [
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["httpx>=0.27"]
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2",
+]
 
 [project.urls]
 Homepage = "https://github.com/dgenio/agent-kernel"

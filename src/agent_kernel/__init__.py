@@ -25,6 +25,10 @@ Handles & traces::
 
     from agent_kernel import HandleStore, TraceStore
 
+LLM tool-format adapters::
+
+    from agent_kernel import OpenAIMiddleware, AnthropicMiddleware
+
 Errors::
 
     from agent_kernel import (
@@ -35,12 +39,14 @@ Errors::
     )
 """
 
+from .adapters import AnthropicMiddleware, OpenAIMiddleware
 from .drivers.base import Driver, ExecutionContext
 from .drivers.http import HTTPDriver
 from .drivers.mcp import MCPDriver
 from .drivers.memory import InMemoryDriver, make_billing_driver
 from .enums import SafetyClass, SensitivityTag
 from .errors import (
+    AdapterParseError,
     AgentKernelError,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
@@ -76,6 +82,7 @@ from .models import (
     RawResult,
     ResponseMode,
     RoutePlan,
+    ToolHints,
 )
 from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
 from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
@@ -111,10 +118,12 @@ __all__ = [
     "ResponseMode",
     "RoutePlan",
     "ActionTrace",
+    "ToolHints",
     # enums
     "SafetyClass",
     "SensitivityTag",
     # errors
+    "AdapterParseError",
     "AgentKernelError",
     "CapabilityAlreadyRegistered",
     "CapabilityNotFound",
@@ -152,4 +161,7 @@ __all__ = [
     # stores
     "HandleStore",
     "TraceStore",
+    # adapters
+    "AnthropicMiddleware",
+    "OpenAIMiddleware",
 ]

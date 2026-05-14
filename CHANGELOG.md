@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LLM tool-format adapters and middleware (`agent_kernel.adapters`): `OpenAIMiddleware` (OpenAI
+  Responses API + Chat Completions, auto-detected on input) and `AnthropicMiddleware` (Anthropic
+  Messages with `cache_control` support). Both translate `Capability` objects to vendor tool
+  schemas, route tool calls through the full kernel pipeline (grant → invoke → firewall → trace),
+  and surface kernel errors (`PolicyDenied`, `CapabilityNotFound`, `DriverError`) as tool-result
+  errors so the LLM can react. Pre/post hooks (`intercept_tool_call`, `intercept_tool_result`,
+  sync or async) support logging, metrics, approval gates, and per-call justification injection.
+  Zero runtime dependency on the `openai` / `anthropic` SDK packages. (#55, #50, #40)
+- New `Capability` fields for LLM adapters: `parameters_model: type[pydantic.BaseModel] | None`
+  (input schema source + validation), `parameters_schema: dict | None` (raw JSON Schema escape
+  hatch), and `tool_hints: ToolHints | None` (vendor hints — Anthropic `cache_control`, OpenAI
+  `strict` mode). All default to ``None``; existing capabilities and tests are unaffected.
+- New `ToolHints` dataclass and `OpenAIMiddleware` / `AnthropicMiddleware` top-level exports.
+- New `AdapterParseError(AgentKernelError)` exception raised by adapter parse / validation
+  helpers (`tool_call_to_request`, `tool_use_to_request`, `make_namespace_safe_name`) instead
+  of bare `ValueError`. Satisfies `AGENTS.md`'s "no bare ValueError to callers" rule and
+  gives consumers a stable adapter-specific exception type. Also catches capability IDs that
+  contain the reserved OpenAI namespace separator `__` (which would otherwise produce
+  colliding tool names).
+- `Kernel.list_capabilities()` convenience accessor returning every registered capability in
+  registration order. Used by the new adapters but generally useful for tooling that needs to
+  enumerate the registry without keyword search.
 - Declarative policy engine (`DeclarativePolicyEngine`) that loads rules from YAML or TOML files.
   Rules are evaluated top-down with first-match-wins semantics; supports `safety_class`, `sensitivity`,
   `roles`, `attributes`, and `min_justification` match conditions. (#42)
@@ -28,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example policy files in `examples/policies/` (YAML and TOML formats).
 
 ### Changed
+- Runtime dependencies now include `pydantic>=2` in addition to `httpx`. Pydantic is used by the new
+  `agent_kernel.adapters` package for JSON-Schema generation and argument validation when a
+  `Capability` declares a `parameters_model`. Existing kernel behavior is unchanged; pydantic is not
+  imported at module load by anything outside the adapters.
 - `PolicyEngine` protocol no longer requires `explain()`. Engines that need to support
   `Kernel.explain_denial()` should implement the new `ExplainingPolicyEngine` protocol. Built-in
   engines satisfy both. This avoids a breaking typing change for downstream implementers.

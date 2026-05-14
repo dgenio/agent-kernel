@@ -14,6 +14,7 @@ from .firewall.transform import Firewall
 from .handles import HandleStore
 from .models import (
     ActionTrace,
+    Capability,
     CapabilityGrant,
     CapabilityRequest,
     DenialExplanation,
@@ -82,6 +83,15 @@ class Kernel:
         self._drivers[driver.driver_id] = driver
 
     # ── Public API ─────────────────────────────────────────────────────────────
+
+    def list_capabilities(self) -> list[Capability]:
+        """Return every capability registered with the kernel.
+
+        Convenience accessor used by LLM adapters that need to enumerate the
+        full registry (e.g. ``OpenAIMiddleware.get_tools()``) without reaching
+        into private state. Capabilities are returned in registration order.
+        """
+        return self._registry.list_all()
 
     def request_capabilities(
         self,
