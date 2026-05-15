@@ -49,6 +49,17 @@ class FirewallError(AgentKernelError):
     """Raised when the context firewall cannot transform a raw result."""
 
 
+class BudgetExhausted(AgentKernelError):
+    """Raised when a :class:`~agent_kernel.firewall.budgets.BudgetManager` has
+    no remaining cross-invocation context budget.
+
+    Distinct from :class:`FirewallError`: this error fires *before* the
+    firewall transforms data, signalling that the caller has consumed the
+    entire session-level context budget. The current invocation never runs
+    the driver.
+    """
+
+
 # ── Adapter errors ────────────────────────────────────────────────────────────
 
 

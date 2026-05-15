@@ -19,7 +19,7 @@ Policy::
 
 Firewall::
 
-    from agent_kernel import Firewall, Budgets
+    from agent_kernel import Firewall, Budgets, BudgetManager
 
 Handles & traces::
 
@@ -35,6 +35,7 @@ Errors::
         AgentKernelError,
         TokenExpired, TokenInvalid, TokenScopeError,
         PolicyDenied, PolicyConfigError, DriverError, FirewallError,
+        BudgetExhausted,
         CapabilityNotFound, HandleNotFound, HandleExpired,
     )
 """
@@ -48,6 +49,7 @@ from .enums import SafetyClass, SensitivityTag
 from .errors import (
     AdapterParseError,
     AgentKernelError,
+    BudgetExhausted,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
     DriverError,
@@ -61,7 +63,12 @@ from .errors import (
     TokenRevoked,
     TokenScopeError,
 )
-from .firewall.budgets import Budgets
+from .firewall.budgets import (
+    BudgetManager,
+    Budgets,
+    TokenCounter,
+    default_token_counter,
+)
 from .firewall.transform import Firewall
 from .handles import HandleStore
 from .kernel import Kernel
@@ -125,6 +132,7 @@ __all__ = [
     # errors
     "AdapterParseError",
     "AgentKernelError",
+    "BudgetExhausted",
     "CapabilityAlreadyRegistered",
     "CapabilityNotFound",
     "DriverError",
@@ -156,8 +164,11 @@ __all__ = [
     "MCPDriver",
     "make_billing_driver",
     # firewall
-    "Firewall",
+    "BudgetManager",
     "Budgets",
+    "Firewall",
+    "TokenCounter",
+    "default_token_counter",
     # stores
     "HandleStore",
     "TraceStore",

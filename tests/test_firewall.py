@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import datetime
+from typing import Any
 
-from agent_kernel import Firewall
-from agent_kernel.firewall.budgets import Budgets
+import pytest
+
+from agent_kernel import BudgetExhausted, Firewall
+from agent_kernel.firewall.budgets import (
+    BudgetManager,
+    Budgets,
+    default_token_counter,
+)
 from agent_kernel.firewall.summarize import summarize
 from agent_kernel.models import Handle, RawResult
 
@@ -286,3 +293,235 @@ def test_summarize_dict_max_facts() -> None:
     data = {"a": 1, "b": 2, "c": 3}
     facts = summarize(data, max_facts=2)
     assert len(facts) <= 2
+
+
+# ── Token counting ─────────────────────────────────────────────────────────────
+
+
+def test_default_token_counter_none_is_zero() -> None:
+    assert default_token_counter(None) == 0
+
+
+def test_default_token_counter_str_chars_over_four() -> None:
+    # JSON-encoded form is "hello world" with quotes → 13 chars → 3 tokens.
+    assert default_token_counter("hello world") == 3
+
+
+def test_default_token_counter_dict_uses_json_chars() -> None:
+    value: dict[str, Any] = {"id": 1, "name": "alice"}
+    # len('{"id": 1, "name": "alice"}') == 26 → 26 // 4 == 6.
+    assert default_token_counter(value) == 6
+
+
+def test_default_token_counter_non_json_falls_back_to_str() -> None:
+    class NotSerialisable:
+        def __repr__(self) -> str:
+            return "X" * 100
+
+    # The repr is 100 chars; default=str → 100 chars → 25 tokens.
+    # Wrapping in JSON adds two quotes → 102 chars → 25 tokens.
+    assert default_token_counter(NotSerialisable()) == 25
+
+
+# ── BudgetManager: construction validation ─────────────────────────────────────
+
+
+def test_budget_manager_rejects_non_positive_total() -> None:
+    with pytest.raises(ValueError, match="total_budget must be positive"):
+        BudgetManager(total_budget=0)
+    with pytest.raises(ValueError, match="total_budget must be positive"):
+        BudgetManager(total_budget=-1)
+
+
+def test_budget_manager_rejects_non_positive_default_request() -> None:
+    with pytest.raises(ValueError, match="default_request must be positive"):
+        BudgetManager(total_budget=100, default_request=0)
+
+
+# ── BudgetManager: allocation / recording ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_allocate_grants_full_when_under_budget() -> None:
+    bm = BudgetManager(total_budget=1000)
+    granted = await bm.allocate(200)
+    assert granted == 200
+    assert bm.remaining == 800
+    assert bm.used == 0  # reservation, not commit
+
+
+@pytest.mark.asyncio
+async def test_allocate_caps_at_remaining() -> None:
+    bm = BudgetManager(total_budget=1000)
+    await bm.allocate(700)  # reserve 700
+    granted = await bm.allocate(500)
+    # Only 300 is free after the first reservation.
+    assert granted == 300
+    assert bm.remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_allocate_uses_default_request_when_none() -> None:
+    bm = BudgetManager(total_budget=1000, default_request=250)
+    granted = await bm.allocate()
+    assert granted == 250
+
+
+@pytest.mark.asyncio
+async def test_allocate_rejects_negative_request() -> None:
+    bm = BudgetManager(total_budget=1000)
+    with pytest.raises(ValueError, match="non-negative"):
+        await bm.allocate(-10)
+
+
+@pytest.mark.asyncio
+async def test_allocate_raises_budget_exhausted_when_empty() -> None:
+    bm = BudgetManager(total_budget=100)
+    await bm.allocate(100)
+    await bm.record_usage(100, reserved=100)
+    with pytest.raises(BudgetExhausted, match="Session budget exhausted"):
+        await bm.allocate(10)
+
+
+@pytest.mark.asyncio
+async def test_record_usage_reconciles_under_reservation() -> None:
+    bm = BudgetManager(total_budget=1000)
+    reserved = await bm.allocate(400)
+    await bm.record_usage(150, reserved=reserved)
+    # Released the 400 reservation, committed 150 → remaining = 850.
+    assert bm.used == 150
+    assert bm.remaining == 850
+
+
+@pytest.mark.asyncio
+async def test_record_usage_caps_used_at_total() -> None:
+    # Defensive: actual > total should never push used above total.
+    bm = BudgetManager(total_budget=100)
+    await bm.record_usage(999)
+    assert bm.used == 100
+    assert bm.remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_record_usage_rejects_negative() -> None:
+    bm = BudgetManager(total_budget=1000)
+    with pytest.raises(ValueError, match="non-negative"):
+        await bm.record_usage(-1)
+
+
+@pytest.mark.asyncio
+async def test_record_usage_rejects_negative_reserved() -> None:
+    bm = BudgetManager(total_budget=1000)
+    with pytest.raises(ValueError, match="reserved must be non-negative"):
+        await bm.record_usage(0, reserved=-5)
+
+
+@pytest.mark.asyncio
+async def test_release_returns_reservation_to_pool() -> None:
+    bm = BudgetManager(total_budget=1000)
+    reserved = await bm.allocate(400)
+    await bm.release(reserved)
+    assert bm.remaining == 1000
+    assert bm.used == 0
+
+
+@pytest.mark.asyncio
+async def test_release_rejects_negative() -> None:
+    bm = BudgetManager(total_budget=1000)
+    with pytest.raises(ValueError, match="reserved must be non-negative"):
+        await bm.release(-1)
+
+
+# ── BudgetManager: properties ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_usage_fraction_progresses() -> None:
+    bm = BudgetManager(total_budget=200)
+    assert bm.usage_fraction == 0.0
+    await bm.record_usage(100)
+    assert bm.usage_fraction == 0.5
+    await bm.record_usage(100)
+    assert bm.usage_fraction == 1.0
+
+
+def test_total_budget_reflects_constructor() -> None:
+    bm = BudgetManager(total_budget=12345)
+    assert bm.total_budget == 12345
+
+
+# ── BudgetManager: custom counter ──────────────────────────────────────────────
+
+
+def test_custom_token_counter_is_used() -> None:
+    calls: list[Any] = []
+
+    def fake_counter(value: Any) -> int:
+        calls.append(value)
+        return 42
+
+    bm = BudgetManager(total_budget=1000, token_counter=fake_counter)
+    assert bm.count_tokens({"x": 1}) == 42
+    assert calls == [{"x": 1}]
+
+
+# ── BudgetManager: suggested_mode escalation table ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_suggested_mode_above_fifty_percent_keeps_requested() -> None:
+    bm = BudgetManager(total_budget=1000)
+    # 0% used → 100% remaining
+    assert bm.suggested_mode("raw") == "raw"
+    assert bm.suggested_mode("table") == "table"
+    assert bm.suggested_mode("summary") == "summary"
+
+
+@pytest.mark.asyncio
+async def test_suggested_mode_between_twenty_and_fifty_downgrades_raw_only() -> None:
+    bm = BudgetManager(total_budget=1000)
+    # Consume 600 → remaining 400 → 40%
+    await bm.record_usage(600)
+    assert bm.suggested_mode("raw") == "table"
+    assert bm.suggested_mode("table") == "table"
+    assert bm.suggested_mode("summary") == "summary"
+    assert bm.suggested_mode("handle_only") == "handle_only"
+
+
+@pytest.mark.asyncio
+async def test_suggested_mode_between_five_and_twenty_floors_at_summary() -> None:
+    bm = BudgetManager(total_budget=1000)
+    # Consume 850 → remaining 150 → 15%
+    await bm.record_usage(850)
+    assert bm.suggested_mode("raw") == "summary"
+    assert bm.suggested_mode("table") == "summary"
+    assert bm.suggested_mode("summary") == "summary"
+    assert bm.suggested_mode("handle_only") == "handle_only"
+
+
+@pytest.mark.asyncio
+async def test_suggested_mode_under_five_percent_forces_handle_only() -> None:
+    bm = BudgetManager(total_budget=1000)
+    # Consume 980 → remaining 20 → 2%
+    await bm.record_usage(980)
+    assert bm.suggested_mode("raw") == "handle_only"
+    assert bm.suggested_mode("table") == "handle_only"
+    assert bm.suggested_mode("summary") == "handle_only"
+    assert bm.suggested_mode("handle_only") == "handle_only"
+
+
+@pytest.mark.asyncio
+async def test_suggested_mode_boundary_exactly_fifty_percent_downgrades() -> None:
+    # The boundary is strict-less-than, so remaining == 50% sits in the
+    # 20–50% bucket and downgrades raw.
+    bm = BudgetManager(total_budget=1000)
+    await bm.record_usage(500)
+    assert bm.suggested_mode("raw") == "table"
+
+
+@pytest.mark.asyncio
+async def test_suggested_mode_boundary_exactly_twenty_percent_floors_summary() -> None:
+    bm = BudgetManager(total_budget=1000)
+    await bm.record_usage(800)
+    assert bm.suggested_mode("raw") == "summary"
+    assert bm.suggested_mode("table") == "summary"
