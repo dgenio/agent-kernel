@@ -35,7 +35,7 @@ Errors::
         AgentKernelError,
         TokenExpired, TokenInvalid, TokenScopeError,
         PolicyDenied, PolicyConfigError, DriverError, FirewallError,
-        BudgetExhausted,
+        BudgetExhausted, BudgetConfigError,
         CapabilityNotFound, HandleNotFound, HandleExpired,
     )
 """
@@ -49,6 +49,7 @@ from .enums import SafetyClass, SensitivityTag
 from .errors import (
     AdapterParseError,
     AgentKernelError,
+    BudgetConfigError,
     BudgetExhausted,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
@@ -63,12 +64,9 @@ from .errors import (
     TokenRevoked,
     TokenScopeError,
 )
-from .firewall.budgets import (
-    BudgetManager,
-    Budgets,
-    TokenCounter,
-    default_token_counter,
-)
+from .firewall.budget_manager import BudgetManager
+from .firewall.budgets import Budgets
+from .firewall.token_counting import TokenCounter, default_token_counter
 from .firewall.transform import Firewall
 from .handles import HandleStore
 from .kernel import Kernel
@@ -132,6 +130,7 @@ __all__ = [
     # errors
     "AdapterParseError",
     "AgentKernelError",
+    "BudgetConfigError",
     "BudgetExhausted",
     "CapabilityAlreadyRegistered",
     "CapabilityNotFound",

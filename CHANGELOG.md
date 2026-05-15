@@ -22,8 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[tiktoken]` extra is reserved for callers that want to plug in `tiktoken`-based counting.
 - `BudgetExhausted(AgentKernelError)` raised by `BudgetManager.allocate()` (and by
   `Kernel.invoke()` before driver execution) when the cumulative session budget is fully spent.
-- New public exports: `BudgetManager`, `BudgetExhausted`, `TokenCounter`, `default_token_counter`,
-  and `Kernel.budget` accessor property.
+- `BudgetConfigError(AgentKernelError)` raised by `BudgetManager` for invalid configuration or
+  validation failures (non-positive budgets, negative allocate/record/release amounts), replacing
+  bare `ValueError` so callers can catch budget mistakes via the `AgentKernelError` hierarchy
+  per `AGENTS.md` ("never raise bare ValueError to callers").
+- New public exports: `BudgetManager`, `BudgetExhausted`, `BudgetConfigError`, `TokenCounter`,
+  `default_token_counter`, and `Kernel.budget` accessor property.
 - LLM tool-format adapters and middleware (`agent_kernel.adapters`): `OpenAIMiddleware` (OpenAI
   Responses API + Chat Completions, auto-detected on input) and `AnthropicMiddleware` (Anthropic
   Messages with `cache_control` support). Both translate `Capability` objects to vendor tool

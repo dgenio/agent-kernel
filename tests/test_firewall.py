@@ -7,12 +7,14 @@ from typing import Any
 
 import pytest
 
-from agent_kernel import BudgetExhausted, Firewall
-from agent_kernel.firewall.budgets import (
+from agent_kernel import (
+    BudgetConfigError,
+    BudgetExhausted,
     BudgetManager,
-    Budgets,
+    Firewall,
     default_token_counter,
 )
+from agent_kernel.firewall.budgets import Budgets
 from agent_kernel.firewall.summarize import summarize
 from agent_kernel.models import Handle, RawResult
 
@@ -327,14 +329,14 @@ def test_default_token_counter_non_json_falls_back_to_str() -> None:
 
 
 def test_budget_manager_rejects_non_positive_total() -> None:
-    with pytest.raises(ValueError, match="total_budget must be positive"):
+    with pytest.raises(BudgetConfigError, match="total_budget must be positive"):
         BudgetManager(total_budget=0)
-    with pytest.raises(ValueError, match="total_budget must be positive"):
+    with pytest.raises(BudgetConfigError, match="total_budget must be positive"):
         BudgetManager(total_budget=-1)
 
 
 def test_budget_manager_rejects_non_positive_default_request() -> None:
-    with pytest.raises(ValueError, match="default_request must be positive"):
+    with pytest.raises(BudgetConfigError, match="default_request must be positive"):
         BudgetManager(total_budget=100, default_request=0)
 
 
@@ -370,7 +372,7 @@ async def test_allocate_uses_default_request_when_none() -> None:
 @pytest.mark.asyncio
 async def test_allocate_rejects_negative_request() -> None:
     bm = BudgetManager(total_budget=1000)
-    with pytest.raises(ValueError, match="non-negative"):
+    with pytest.raises(BudgetConfigError, match="non-negative"):
         await bm.allocate(-10)
 
 
@@ -405,14 +407,14 @@ async def test_record_usage_caps_used_at_total() -> None:
 @pytest.mark.asyncio
 async def test_record_usage_rejects_negative() -> None:
     bm = BudgetManager(total_budget=1000)
-    with pytest.raises(ValueError, match="non-negative"):
+    with pytest.raises(BudgetConfigError, match="non-negative"):
         await bm.record_usage(-1)
 
 
 @pytest.mark.asyncio
 async def test_record_usage_rejects_negative_reserved() -> None:
     bm = BudgetManager(total_budget=1000)
-    with pytest.raises(ValueError, match="reserved must be non-negative"):
+    with pytest.raises(BudgetConfigError, match="reserved must be non-negative"):
         await bm.record_usage(0, reserved=-5)
 
 
@@ -428,8 +430,15 @@ async def test_release_returns_reservation_to_pool() -> None:
 @pytest.mark.asyncio
 async def test_release_rejects_negative() -> None:
     bm = BudgetManager(total_budget=1000)
-    with pytest.raises(ValueError, match="reserved must be non-negative"):
+    with pytest.raises(BudgetConfigError, match="reserved must be non-negative"):
         await bm.release(-1)
+
+
+def test_budget_config_error_is_agent_kernel_error() -> None:
+    """``BudgetConfigError`` is part of the public exception hierarchy."""
+    from agent_kernel import AgentKernelError
+
+    assert issubclass(BudgetConfigError, AgentKernelError)
 
 
 # ── BudgetManager: properties ──────────────────────────────────────────────────

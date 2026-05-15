@@ -652,6 +652,71 @@ async def test_dry_run_reflects_escalated_mode_under_budget_pressure(
 
 
 @pytest.mark.asyncio
+async def test_budget_manager_releases_reservation_on_firewall_failure(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+) -> None:
+    """Firewall raising after a reservation must release tokens to the pool.
+
+    Without the finally block the reservation would stay locked, permanently
+    eroding the cumulative budget on every transform failure.
+    """
+    from agent_kernel import BudgetManager, FirewallError
+
+    class FailingFirewall:
+        def transform(self, *args: object, **kwargs: object) -> object:
+            raise FirewallError("simulated firewall failure")
+
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    bm = BudgetManager(total_budget=1000, default_request=200)
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        firewall=FailingFirewall(),  # type: ignore[arg-type]
+        budget_manager=bm,
+    )
+    k.register_driver(memory_driver)
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+    with pytest.raises(FirewallError, match="simulated firewall failure"):
+        await k.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices"},
+        )
+    # Reservation was released; nothing committed because the frame never landed.
+    assert bm.remaining == 1000
+    assert bm.used == 0
+
+
+@pytest.mark.asyncio
+async def test_non_admin_raw_request_receives_handle_and_downgraded_frame(
+    kernel: Kernel,
+    reader_principal: Principal,
+) -> None:
+    """A non-admin asking for ``raw`` must get a handle + a non-raw frame.
+
+    Before the admin-gate fix the kernel left ``effective_mode == "raw"``,
+    skipped handle creation, and the firewall then downgraded to summary —
+    yielding a summary frame *without* a handle. The fix mirrors the
+    Firewall's admin gate inside the kernel so the handle is always stored.
+    """
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = kernel.get_token(req, reader_principal, justification="")
+    frame = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices"},
+        response_mode="raw",
+    )
+    assert frame.response_mode != "raw"  # downgraded
+    assert frame.handle is not None  # handle was stored despite the raw request
+
+
+@pytest.mark.asyncio
 async def test_kernel_without_budget_manager_behaves_identically(
     kernel: Kernel,
     reader_principal: Principal,

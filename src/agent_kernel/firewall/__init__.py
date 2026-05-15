@@ -1,8 +1,10 @@
 """Firewall sub-package exports."""
 
-from .budgets import BudgetManager, Budgets, TokenCounter, default_token_counter
+from .budget_manager import BudgetManager
+from .budgets import Budgets
 from .redaction import redact
 from .summarize import summarize
+from .token_counting import TokenCounter, default_token_counter
 from .transform import Firewall
 
 __all__ = [

@@ -10,7 +10,7 @@ from typing import Any, Literal, overload
 from .drivers.base import Driver, ExecutionContext
 from .enums import SafetyClass
 from .errors import AgentKernelError, DriverError
-from .firewall.budgets import BudgetManager
+from .firewall.budget_manager import BudgetManager
 from .firewall.transform import Firewall
 from .handles import HandleStore
 from .models import (
@@ -323,6 +323,18 @@ class Kernel:
 
         action_id = str(uuid.uuid4())
 
+        # ── Mirror Firewall's admin-only ``raw`` gate ─────────────────────────
+        # The Firewall downgrades raw → summary for non-admin principals
+        # (see firewall/transform.py and docs/agent-context/invariants.md).
+        # We must mirror that downgrade *before* deciding whether to store a
+        # handle and before consulting the budget manager, otherwise a
+        # non-admin asking for raw would get a summary frame *without* a
+        # handle (because the kernel skipped handle creation thinking the
+        # mode was still raw).
+        effective_mode: ResponseMode = response_mode
+        if response_mode == "raw" and "admin" not in principal.roles:
+            effective_mode = "summary"
+
         # ── Cross-invocation budget allocation & mode escalation ──────────────
         # When a BudgetManager is attached, reserve a slice of the cumulative
         # session budget before driver execution. The manager raises
@@ -330,11 +342,10 @@ class Kernel:
         # escalated to a more aggressive tier as the remaining budget shrinks
         # (see BudgetManager.suggested_mode). This change is invisible to
         # callers without a BudgetManager — the original mode flows through.
-        effective_mode: ResponseMode = response_mode
         reserved_tokens: int | None = None
         if self._budget_manager is not None:
             reserved_tokens = await self._budget_manager.allocate()
-            effective_mode = self._budget_manager.suggested_mode(response_mode)
+            effective_mode = self._budget_manager.suggested_mode(effective_mode)
 
         _log_ctx = {
             "action_id": action_id,
@@ -410,21 +421,33 @@ class Kernel:
                 data=raw_result.data,
             )
 
-        # ── Firewall transform ────────────────────────────────────────────────
-        frame = self._firewall.transform(
-            raw_result,
-            action_id=action_id,
-            principal_id=principal.principal_id,
-            principal_roles=list(principal.roles),
-            response_mode=effective_mode,
-            constraints=token.constraints,
-            handle=handle,
-        )
-
-        # ── Reconcile cumulative budget against the actual frame payload ──────
-        if self._budget_manager is not None and reserved_tokens is not None:
-            actual_tokens = self._budget_manager.count_tokens(_frame_payload(frame))
-            await self._budget_manager.record_usage(actual_tokens, reserved=reserved_tokens)
+        # ── Firewall transform + budget reconciliation ────────────────────────
+        # Both steps run inside a try/finally so a Firewall exception (e.g.
+        # malformed constraint inputs) still releases any outstanding budget
+        # reservation. record_usage replaces the reservation with committed
+        # usage; the finally branch only fires if we never got there.
+        reservation_consumed = False
+        try:
+            frame = self._firewall.transform(
+                raw_result,
+                action_id=action_id,
+                principal_id=principal.principal_id,
+                principal_roles=list(principal.roles),
+                response_mode=effective_mode,
+                constraints=token.constraints,
+                handle=handle,
+            )
+            if self._budget_manager is not None and reserved_tokens is not None:
+                actual_tokens = self._budget_manager.count_tokens(_frame_payload(frame))
+                await self._budget_manager.record_usage(actual_tokens, reserved=reserved_tokens)
+            reservation_consumed = True
+        finally:
+            if (
+                not reservation_consumed
+                and self._budget_manager is not None
+                and reserved_tokens is not None
+            ):
+                await self._budget_manager.release(reserved_tokens)
 
         # ── Record trace ──────────────────────────────────────────────────────
         trace = ActionTrace(

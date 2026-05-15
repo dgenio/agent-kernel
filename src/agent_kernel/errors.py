@@ -60,6 +60,16 @@ class BudgetExhausted(AgentKernelError):
     """
 
 
+class BudgetConfigError(AgentKernelError):
+    """Raised when a :class:`~agent_kernel.firewall.budgets.BudgetManager` is
+    constructed with invalid parameters, or asked to allocate/record/release
+    a negative amount.
+
+    Used in place of bare :class:`ValueError` so callers can catch budget
+    configuration mistakes without swallowing unrelated stdlib errors.
+    """
+
+
 # ── Adapter errors ────────────────────────────────────────────────────────────
 
 
