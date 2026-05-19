@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-19
+
 ### Added
 - Cross-invocation context budget manager (`BudgetManager`) tracks cumulative token usage across
   multiple `Kernel.invoke()` calls within a session. When attached to a `Kernel` via the new
