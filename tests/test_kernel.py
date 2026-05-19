@@ -440,3 +440,295 @@ def test_explain_denial_engine_without_explain_raises(
     req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
     with pytest.raises(AgentKernelError, match="does not implement explain"):
         k.explain_denial(req, reader_principal)
+
+
+# ── Cross-invocation budget manager (#44) ─────────────────────────────────────
+
+
+def _kernel_with_budget(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    *,
+    total_budget: int,
+    default_request: int = 4_000,
+) -> Kernel:
+    """Helper: construct a kernel wired with a BudgetManager."""
+    from agent_kernel import BudgetManager
+
+    router = StaticRouter(
+        routes={
+            "billing.list_invoices": ["memory"],
+            "billing.get_invoice": ["memory"],
+            "billing.summarize_spend": ["memory"],
+            "billing.update_invoice": ["memory"],
+            "billing.delete_invoice": ["memory"],
+        }
+    )
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        budget_manager=BudgetManager(
+            total_budget=total_budget,
+            default_request=default_request,
+        ),
+    )
+    k.register_driver(memory_driver)
+    return k
+
+
+@pytest.mark.asyncio
+async def test_budget_manager_records_usage_across_invocations(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+) -> None:
+    """Each invocation must move ``remaining`` strictly downward."""
+    k = _kernel_with_budget(registry, memory_driver, total_budget=10_000)
+    assert k.budget is not None
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+
+    initial = k.budget.remaining
+    await k.invoke(token, principal=reader_principal, args={"operation": "billing.list_invoices"})
+    after_first = k.budget.remaining
+    assert after_first < initial
+    assert k.budget.used > 0
+
+    # A second invocation consumes more.
+    await k.invoke(token, principal=reader_principal, args={"operation": "billing.list_invoices"})
+    after_second = k.budget.remaining
+    assert after_second < after_first
+
+
+@pytest.mark.asyncio
+async def test_budget_manager_escalates_mode_when_remaining_under_five_percent(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+) -> None:
+    """When remaining drops below 5%, even ``summary`` escalates to ``handle_only``."""
+    from agent_kernel import BudgetManager
+
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    bm = BudgetManager(total_budget=1000)
+    # Pre-consume to push remaining under 5% before the invoke.
+    await bm.record_usage(980)
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        budget_manager=bm,
+    )
+    k.register_driver(memory_driver)
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+    frame = await k.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices"},
+        response_mode="summary",
+    )
+    assert frame.response_mode == "handle_only"
+
+
+@pytest.mark.asyncio
+async def test_budget_manager_exhausted_raises_before_driver_runs(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+) -> None:
+    """An exhausted budget surfaces ``BudgetExhausted`` and skips the driver."""
+    from agent_kernel import BudgetExhausted, BudgetManager
+
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    bm = BudgetManager(total_budget=100)
+    await bm.record_usage(100)  # Drive remaining to 0.
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        budget_manager=bm,
+    )
+    k.register_driver(memory_driver)
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+    with pytest.raises(BudgetExhausted, match="Session budget exhausted"):
+        await k.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_budget_manager_releases_reservation_on_driver_failure(
+    registry: CapabilityRegistry,
+    reader_principal: Principal,
+) -> None:
+    """When all drivers fail, the reserved tokens must return to the pool."""
+    from agent_kernel import BudgetManager
+
+    # Construct a kernel with a router pointing at a driver that does not exist.
+    router = StaticRouter(routes={"billing.list_invoices": ["nope"]})
+    bm = BudgetManager(total_budget=1000, default_request=200)
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        budget_manager=bm,
+    )
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+    with pytest.raises(DriverError):
+        await k.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices"},
+        )
+    # Budget was reserved then released — nothing committed.
+    assert bm.remaining == 1000
+    assert bm.used == 0
+
+
+@pytest.mark.asyncio
+async def test_dry_run_reports_budget_remaining_when_manager_configured(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+) -> None:
+    """DryRunResult.budget_remaining is populated when a BudgetManager is wired."""
+    from agent_kernel.models import DryRunResult
+
+    k = _kernel_with_budget(registry, memory_driver, total_budget=10_000)
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+    result = await k.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices"},
+        dry_run=True,
+    )
+    assert isinstance(result, DryRunResult)
+    assert result.budget_remaining == 10_000  # Dry-run does not commit.
+
+
+@pytest.mark.asyncio
+async def test_dry_run_reflects_escalated_mode_under_budget_pressure(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+) -> None:
+    """Dry-run mirrors the BudgetManager escalation that a real invoke would apply."""
+    from agent_kernel import BudgetManager
+    from agent_kernel.models import DryRunResult
+
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    bm = BudgetManager(total_budget=1000)
+    await bm.record_usage(980)  # < 5% remaining.
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        budget_manager=bm,
+    )
+    k.register_driver(memory_driver)
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+    result = await k.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices"},
+        response_mode="table",
+        dry_run=True,
+    )
+    assert isinstance(result, DryRunResult)
+    assert result.response_mode == "handle_only"
+
+
+@pytest.mark.asyncio
+async def test_budget_manager_releases_reservation_on_firewall_failure(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+) -> None:
+    """Firewall raising after a reservation must release tokens to the pool.
+
+    Without the finally block the reservation would stay locked, permanently
+    eroding the cumulative budget on every transform failure.
+    """
+    from agent_kernel import BudgetManager, FirewallError
+
+    class FailingFirewall:
+        def transform(self, *args: object, **kwargs: object) -> object:
+            raise FirewallError("simulated firewall failure")
+
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    bm = BudgetManager(total_budget=1000, default_request=200)
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        firewall=FailingFirewall(),  # type: ignore[arg-type]
+        budget_manager=bm,
+    )
+    k.register_driver(memory_driver)
+
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = k.get_token(req, reader_principal, justification="")
+    with pytest.raises(FirewallError, match="simulated firewall failure"):
+        await k.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices"},
+        )
+    # Reservation was released; nothing committed because the frame never landed.
+    assert bm.remaining == 1000
+    assert bm.used == 0
+
+
+@pytest.mark.asyncio
+async def test_non_admin_raw_request_receives_handle_and_downgraded_frame(
+    kernel: Kernel,
+    reader_principal: Principal,
+) -> None:
+    """A non-admin asking for ``raw`` must get a handle + a non-raw frame.
+
+    Before the admin-gate fix the kernel left ``effective_mode == "raw"``,
+    skipped handle creation, and the firewall then downgraded to summary —
+    yielding a summary frame *without* a handle. The fix mirrors the
+    Firewall's admin gate inside the kernel so the handle is always stored.
+    """
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = kernel.get_token(req, reader_principal, justification="")
+    frame = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices"},
+        response_mode="raw",
+    )
+    assert frame.response_mode != "raw"  # downgraded
+    assert frame.handle is not None  # handle was stored despite the raw request
+
+
+@pytest.mark.asyncio
+async def test_kernel_without_budget_manager_behaves_identically(
+    kernel: Kernel,
+    reader_principal: Principal,
+) -> None:
+    """Backward-compat: the default kernel has ``kernel.budget is None``."""
+    assert kernel.budget is None
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
+    token = kernel.get_token(req, reader_principal, justification="")
+    frame = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices"},
+    )
+    # No escalation happens — requested mode flows through.
+    assert frame.response_mode == "summary"

@@ -52,6 +52,7 @@ policy = [
     "pyyaml>=6.0",
     "tomli>=2.0; python_version<'3.11'",
 ]
+tiktoken = ["tiktoken>=0.6"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_kernel"]

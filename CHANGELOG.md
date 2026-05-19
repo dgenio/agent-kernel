@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Cross-invocation context budget manager (`BudgetManager`) tracks cumulative token usage across
+  multiple `Kernel.invoke()` calls within a session. When attached to a `Kernel` via the new
+  `budget_manager` keyword argument, the kernel reserves a budget slice before each invocation
+  and reconciles actual frame-payload usage afterwards. As the remaining budget shrinks the
+  requested `response_mode` is auto-escalated to a more aggressive tier (> 50% remaining keeps
+  the caller's mode; 20–50% downgrades `raw` to `table`; 5–20% floors at `summary`; < 5% forces
+  `handle_only`). `Kernel.invoke(..., dry_run=True)` now also reports `budget_remaining` and the
+  escalated `response_mode` when a manager is configured. The `BudgetManager` is optional and
+  off by default — existing kernels are unchanged. (#44)
+- `TokenCounter` protocol and `default_token_counter` (character-based `len(json.dumps(...))//4`
+  approximation) provide pluggable token counting without runtime dependencies. A new optional
+  `[tiktoken]` extra is reserved for callers that want to plug in `tiktoken`-based counting.
+- `BudgetExhausted(AgentKernelError)` raised by `BudgetManager.allocate()` (and by
+  `Kernel.invoke()` before driver execution) when the cumulative session budget is fully spent.
+- `BudgetConfigError(AgentKernelError)` raised by `BudgetManager` for invalid configuration or
+  validation failures (non-positive budgets, negative allocate/record/release amounts), replacing
+  bare `ValueError` so callers can catch budget mistakes via the `AgentKernelError` hierarchy
+  per `AGENTS.md` ("never raise bare ValueError to callers").
+- New public exports: `BudgetManager`, `BudgetExhausted`, `BudgetConfigError`, `TokenCounter`,
+  `default_token_counter`, and `Kernel.budget` accessor property.
 - LLM tool-format adapters and middleware (`agent_kernel.adapters`): `OpenAIMiddleware` (OpenAI
   Responses API + Chat Completions, auto-detected on input) and `AnthropicMiddleware` (Anthropic
   Messages with `cache_control` support). Both translate `Capability` objects to vendor tool

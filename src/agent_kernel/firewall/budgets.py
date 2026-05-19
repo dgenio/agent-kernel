@@ -1,7 +1,9 @@
-"""Budgets dataclass for the context firewall.
+"""Per-invocation firewall budget caps.
 
-Canonical definition of :class:`Budgets`.  Re-exported via
-``agent_kernel.firewall`` and the top-level ``agent_kernel`` package.
+Defines :class:`Budgets`, the dataclass enforced by the
+:class:`~agent_kernel.firewall.transform.Firewall` when shaping a single
+:class:`~agent_kernel.models.Frame`. Cross-invocation cumulative tracking
+lives in :mod:`agent_kernel.firewall.budget_manager`.
 """
 
 from __future__ import annotations

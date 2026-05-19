@@ -10,6 +10,7 @@ from typing import Any, Literal, overload
 from .drivers.base import Driver, ExecutionContext
 from .enums import SafetyClass
 from .errors import AgentKernelError, DriverError
+from .firewall.budget_manager import BudgetManager
 from .firewall.transform import Firewall
 from .handles import HandleStore
 from .models import (
@@ -33,6 +34,22 @@ from .tokens import CapabilityToken, HMACTokenProvider, TokenProvider
 from .trace import TraceStore
 
 logger = logging.getLogger(__name__)
+
+
+def _frame_payload(frame: Frame) -> Any:
+    """Return the LLM-facing payload from a :class:`Frame` for token counting.
+
+    Only the data the LLM actually sees is counted — facts, table rows,
+    or raw data. Provenance metadata, action IDs, and handle IDs are
+    skipped because they are kernel bookkeeping rather than context.
+    """
+    if frame.response_mode == "raw":
+        return frame.raw_data
+    if frame.response_mode == "table":
+        return frame.table_preview
+    if frame.response_mode == "handle_only":
+        return None
+    return frame.facts
 
 
 class Kernel:
@@ -62,6 +79,7 @@ class Kernel:
         firewall: Firewall | None = None,
         handle_store: HandleStore | None = None,
         trace_store: TraceStore | None = None,
+        budget_manager: BudgetManager | None = None,
     ) -> None:
         self._registry = registry
         self._policy: PolicyEngine = policy or DefaultPolicyEngine()
@@ -70,7 +88,15 @@ class Kernel:
         self._firewall = firewall or Firewall()
         self._handle_store = handle_store or HandleStore()
         self._trace_store = trace_store or TraceStore()
+        self._budget_manager = budget_manager
         self._drivers: dict[str, Driver] = {}
+
+    # ── Budget accessor ────────────────────────────────────────────────────────
+
+    @property
+    def budget(self) -> BudgetManager | None:
+        """The cross-invocation :class:`BudgetManager`, or ``None`` if none is configured."""
+        return self._budget_manager
 
     # ── Driver registration ────────────────────────────────────────────────────
 
@@ -266,6 +292,12 @@ class Kernel:
             effective_response_mode: ResponseMode = response_mode
             if response_mode == "raw" and "admin" not in principal.roles:
                 effective_response_mode = "summary"
+            # Mirror the BudgetManager escalation an actual invoke would apply,
+            # so dry-run reports the mode the caller would really see.
+            if self._budget_manager is not None:
+                effective_response_mode = self._budget_manager.suggested_mode(
+                    effective_response_mode
+                )
             _cost_map: dict[SafetyClass, Literal["low", "medium", "high"]] = {
                 SafetyClass.READ: "low",
                 SafetyClass.WRITE: "medium",
@@ -283,11 +315,37 @@ class Kernel:
                 operation=operation,
                 resolved_args=args,
                 response_mode=effective_response_mode,
-                budget_remaining=None,
+                budget_remaining=(
+                    self._budget_manager.remaining if self._budget_manager is not None else None
+                ),
                 estimated_cost=_cost_map[capability.safety_class],
             )
 
         action_id = str(uuid.uuid4())
+
+        # ── Mirror Firewall's admin-only ``raw`` gate ─────────────────────────
+        # The Firewall downgrades raw → summary for non-admin principals
+        # (see firewall/transform.py and docs/agent-context/invariants.md).
+        # We must mirror that downgrade *before* deciding whether to store a
+        # handle and before consulting the budget manager, otherwise a
+        # non-admin asking for raw would get a summary frame *without* a
+        # handle (because the kernel skipped handle creation thinking the
+        # mode was still raw).
+        effective_mode: ResponseMode = response_mode
+        if response_mode == "raw" and "admin" not in principal.roles:
+            effective_mode = "summary"
+
+        # ── Cross-invocation budget allocation & mode escalation ──────────────
+        # When a BudgetManager is attached, reserve a slice of the cumulative
+        # session budget before driver execution. The manager raises
+        # BudgetExhausted if no budget remains. The requested response_mode is
+        # escalated to a more aggressive tier as the remaining budget shrinks
+        # (see BudgetManager.suggested_mode). This change is invisible to
+        # callers without a BudgetManager — the original mode flows through.
+        reserved_tokens: int | None = None
+        if self._budget_manager is not None:
+            reserved_tokens = await self._budget_manager.allocate()
+            effective_mode = self._budget_manager.suggested_mode(effective_mode)
 
         _log_ctx = {
             "action_id": action_id,
@@ -296,7 +354,12 @@ class Kernel:
         }
         logger.info(
             "invoke_start",
-            extra={**_log_ctx, "token_id": token.token_id, "response_mode": response_mode},
+            extra={
+                **_log_ctx,
+                "token_id": token.token_id,
+                "response_mode": response_mode,
+                "effective_mode": effective_mode,
+            },
         )
 
         # ── Execute with fallback ─────────────────────────────────────────────
@@ -329,6 +392,9 @@ class Kernel:
                 continue
 
         if raw_result is None:
+            # Release any reservation — no tokens were spent by the firewall.
+            if self._budget_manager is not None and reserved_tokens is not None:
+                await self._budget_manager.release(reserved_tokens)
             err_msg = str(last_error) if last_error else "No drivers available."
             logger.warning("invoke_failure", extra={**_log_ctx, "error": err_msg})
             trace = ActionTrace(
@@ -349,22 +415,39 @@ class Kernel:
 
         # ── Store handle ──────────────────────────────────────────────────────
         handle: Handle | None = None
-        if response_mode != "raw":
+        if effective_mode != "raw":
             handle = self._handle_store.store(
                 capability_id=token.capability_id,
                 data=raw_result.data,
             )
 
-        # ── Firewall transform ────────────────────────────────────────────────
-        frame = self._firewall.transform(
-            raw_result,
-            action_id=action_id,
-            principal_id=principal.principal_id,
-            principal_roles=list(principal.roles),
-            response_mode=response_mode,
-            constraints=token.constraints,
-            handle=handle,
-        )
+        # ── Firewall transform + budget reconciliation ────────────────────────
+        # Both steps run inside a try/finally so a Firewall exception (e.g.
+        # malformed constraint inputs) still releases any outstanding budget
+        # reservation. record_usage replaces the reservation with committed
+        # usage; the finally branch only fires if we never got there.
+        reservation_consumed = False
+        try:
+            frame = self._firewall.transform(
+                raw_result,
+                action_id=action_id,
+                principal_id=principal.principal_id,
+                principal_roles=list(principal.roles),
+                response_mode=effective_mode,
+                constraints=token.constraints,
+                handle=handle,
+            )
+            if self._budget_manager is not None and reserved_tokens is not None:
+                actual_tokens = self._budget_manager.count_tokens(_frame_payload(frame))
+                await self._budget_manager.record_usage(actual_tokens, reserved=reserved_tokens)
+            reservation_consumed = True
+        finally:
+            if (
+                not reservation_consumed
+                and self._budget_manager is not None
+                and reserved_tokens is not None
+            ):
+                await self._budget_manager.release(reserved_tokens)
 
         # ── Record trace ──────────────────────────────────────────────────────
         trace = ActionTrace(
