@@ -534,3 +534,16 @@ async def test_suggested_mode_boundary_exactly_twenty_percent_floors_summary() -
     await bm.record_usage(800)
     assert bm.suggested_mode("raw") == "summary"
     assert bm.suggested_mode("table") == "summary"
+
+
+@pytest.mark.asyncio
+async def test_suggested_mode_boundary_exactly_five_percent_is_summary_not_handle_only() -> None:
+    # 5% exactly sits in the 5–20% summary bucket because the handle_only
+    # guard is strictly-less-than: (0.05 < 0.05) is False.  A future change
+    # from `< 0.05` to `<= 0.05` would silently misplace this boundary.
+    bm = BudgetManager(total_budget=1000)
+    await bm.record_usage(950)  # 5% remaining
+    assert bm.suggested_mode("raw") == "summary"
+    assert bm.suggested_mode("table") == "summary"
+    assert bm.suggested_mode("summary") == "summary"
+    assert bm.suggested_mode("handle_only") == "handle_only"  # never relaxes

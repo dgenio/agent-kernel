@@ -50,7 +50,7 @@ class FirewallError(AgentKernelError):
 
 
 class BudgetExhausted(AgentKernelError):
-    """Raised when a :class:`~agent_kernel.firewall.budgets.BudgetManager` has
+    """Raised when a :class:`~agent_kernel.firewall.budget_manager.BudgetManager` has
     no remaining cross-invocation context budget.
 
     Distinct from :class:`FirewallError`: this error fires *before* the
@@ -61,7 +61,7 @@ class BudgetExhausted(AgentKernelError):
 
 
 class BudgetConfigError(AgentKernelError):
-    """Raised when a :class:`~agent_kernel.firewall.budgets.BudgetManager` is
+    """Raised when a :class:`~agent_kernel.firewall.budget_manager.BudgetManager` is
     constructed with invalid parameters, or asked to allocate/record/release
     a negative amount.
 
