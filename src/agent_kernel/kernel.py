@@ -23,11 +23,14 @@ from .models import (
     Frame,
     Handle,
     PolicyDecision,
+    PolicyDecisionTrace,
+    PolicyTraceStep,
     Principal,
     ResponseMode,
     RoutePlan,
 )
 from .policy import DefaultPolicyEngine, PolicyEngine
+from .policy_reasons import AllowReason
 from .registry import CapabilityRegistry
 from .router import Router, StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider, TokenProvider
@@ -303,6 +306,23 @@ class Kernel:
                 SafetyClass.WRITE: "medium",
                 SafetyClass.DESTRUCTIVE: "high",
             }
+            dry_run_trace = PolicyDecisionTrace(
+                engine="Kernel.invoke[dry_run]",
+                capability_id=token.capability_id,
+                principal_id=principal.principal_id,
+                intent=None,
+                scope_keys=[],
+                steps=[
+                    PolicyTraceStep(
+                        name="token_verified",
+                        outcome="allowed",
+                        detail="Token verified; original policy decision was at grant time.",
+                        reason_code=str(AllowReason.TOKEN_VERIFIED),
+                    )
+                ],
+                final_outcome="allowed",
+                final_reason_code=str(AllowReason.TOKEN_VERIFIED),
+            )
             return DryRunResult(
                 capability_id=token.capability_id,
                 principal_id=principal.principal_id,
@@ -310,6 +330,8 @@ class Kernel:
                     allowed=True,
                     reason="Token verified. Policy was evaluated at grant time.",
                     constraints=dict(token.constraints),
+                    reason_code=str(AllowReason.TOKEN_VERIFIED),
+                    trace=dry_run_trace,
                 ),
                 driver_id=driver_id,
                 operation=operation,

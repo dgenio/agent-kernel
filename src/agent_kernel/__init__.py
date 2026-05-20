@@ -16,6 +16,8 @@ Token management::
 Policy::
 
     from agent_kernel import DefaultPolicyEngine, DeclarativePolicyEngine
+    from agent_kernel import PolicyDecisionTrace, PolicyTraceStep
+    from agent_kernel import DenialReason, AllowReason
 
 Firewall::
 
@@ -82,6 +84,8 @@ from .models import (
     Handle,
     ImplementationRef,
     PolicyDecision,
+    PolicyDecisionTrace,
+    PolicyTraceStep,
     Principal,
     Provenance,
     RawResult,
@@ -91,6 +95,7 @@ from .models import (
 )
 from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
 from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
+from .policy_reasons import AllowReason, DenialReason
 from .registry import CapabilityRegistry
 from .router import StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider
@@ -117,6 +122,8 @@ __all__ = [
     "Handle",
     "ImplementationRef",
     "PolicyDecision",
+    "PolicyDecisionTrace",
+    "PolicyTraceStep",
     "Principal",
     "Provenance",
     "RawResult",
@@ -145,8 +152,10 @@ __all__ = [
     "TokenRevoked",
     "TokenScopeError",
     # policy
+    "AllowReason",
     "DefaultPolicyEngine",
     "DeclarativePolicyEngine",
+    "DenialReason",
     "ExplainingPolicyEngine",
     "PolicyEngine",
     "PolicyMatch",

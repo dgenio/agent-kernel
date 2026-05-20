@@ -732,3 +732,68 @@ async def test_kernel_without_budget_manager_behaves_identically(
     )
     # No escalation happens — requested mode flows through.
     assert frame.response_mode == "summary"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Intent / scope, reason codes, and decision trace through the Kernel — #72/#73/#77
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_explain_denial_surfaces_reason_code(kernel: Kernel, reader_principal: Principal) -> None:
+    """Kernel.explain_denial forwards the engine's reason_code."""
+    from agent_kernel import DenialReason
+
+    result = kernel.explain_denial(
+        CapabilityRequest(capability_id="billing.update_invoice", goal="write"),
+        reader_principal,
+        justification="long enough justification here",
+    )
+    # billing.update_invoice is WRITE in conftest; reader has no writer role.
+    assert result.denied is True
+    assert result.reason_code == DenialReason.MISSING_ROLE
+
+
+def test_grant_capability_carries_intent_through_request(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """A request with intent/scope should be accepted end-to-end and reach the decision trace."""
+    from agent_kernel import AllowReason
+
+    req = CapabilityRequest(
+        capability_id="billing.get_invoice",
+        goal="lookup",
+        intent="customer_support_lookup",
+        scope={"region": "eu-west"},
+    )
+    grant = kernel.grant_capability(req, reader_principal, justification="")
+    assert grant.decision.allowed is True
+    assert grant.decision.reason_code == AllowReason.DEFAULT_POLICY_ALLOW
+    assert grant.decision.trace is not None
+    assert grant.decision.trace.intent == "customer_support_lookup"
+    assert grant.decision.trace.scope_keys == ["region"]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_policy_decision_has_trace(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """DryRunResult.policy_decision now carries a synthesized trace.
+
+    The original grant-time decision was discarded with the request; the
+    kernel emits a single-step ``token_verified`` trace so dry-run consumers
+    can rely on a uniformly-shaped trace field.
+    """
+    from agent_kernel.models import DryRunResult
+
+    token = kernel.get_token(
+        CapabilityRequest(capability_id="billing.get_invoice", goal="read"),
+        reader_principal,
+        justification="",
+    )
+    result = await kernel.invoke(token, principal=reader_principal, args={}, dry_run=True)
+    assert isinstance(result, DryRunResult)
+    assert result.policy_decision.trace is not None
+    assert result.policy_decision.trace.engine == "Kernel.invoke[dry_run]"
+    assert result.policy_decision.trace.final_outcome == "allowed"
+    assert result.policy_decision.trace.final_reason_code == "token_verified"
+    assert result.policy_decision.reason_code == "token_verified"

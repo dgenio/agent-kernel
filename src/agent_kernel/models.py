@@ -134,6 +134,22 @@ class CapabilityRequest:
     constraints: dict[str, Any] = field(default_factory=dict)
     """Optional execution constraints (e.g. ``{"max_rows": 10}``)."""
 
+    intent: str | None = None
+    """Structured intent label (e.g. ``"customer_support_lookup"``).
+
+    Free-text :attr:`goal` is still required for human-readable audit; ``intent``
+    is the machine-readable counterpart that declarative policies can match
+    on directly without parsing the goal. See :class:`PolicyMatch.intent`.
+    """
+
+    scope: dict[str, Any] = field(default_factory=dict)
+    """Structured scope metadata describing what the request narrows to.
+
+    Examples: ``{"region": "eu-west"}``, ``{"customer_id": "C-42"}``. Policies
+    can deny a capability invocation that is technically allowed but unsafe
+    for a particular scope. See :class:`PolicyMatch.scope`.
+    """
+
 
 @dataclass(slots=True)
 class Principal:
@@ -150,6 +166,77 @@ class Principal:
 
 
 @dataclass(slots=True)
+class PolicyTraceStep:
+    """A single step recorded while a policy engine evaluated a request.
+
+    Steps describe what the engine considered, in order — which rule it
+    examined, whether it matched, what condition (if any) failed, and what
+    constraint (if any) was applied. Steps never contain raw argument values
+    from the caller; they reference fields and IDs only.
+    """
+
+    name: str
+    """Short label for the step (e.g. ``"safety_class:WRITE"`` or rule name)."""
+
+    outcome: Literal["matched", "skipped", "denied", "allowed", "constraint_applied"]
+    """What happened at this step.
+
+    - ``"matched"``: a rule's match clause matched and evaluation continues.
+    - ``"skipped"``: the step did not apply (e.g. wildcard, wrong safety class).
+    - ``"denied"``: this step produced the final denial.
+    - ``"allowed"``: this step produced the final allow.
+    - ``"constraint_applied"``: the step merged a constraint into the decision.
+    """
+
+    detail: str = ""
+    """Human-readable detail, e.g. ``"role 'writer' required, principal had ['reader']"``."""
+
+    reason_code: str | None = None
+    """For ``"denied"`` steps, the :class:`~agent_kernel.policy_reasons.DenialReason`.
+    For ``"allowed"`` steps, the :class:`~agent_kernel.policy_reasons.AllowReason`.
+    ``None`` for ``"matched"``, ``"skipped"``, and ``"constraint_applied"`` steps.
+    """
+
+
+@dataclass(slots=True)
+class PolicyDecisionTrace:
+    """Structured trace of how a :class:`PolicyDecision` was reached.
+
+    The trace lists every step the policy engine took, in order, so callers
+    can audit which rule matched, which conditions failed, and which
+    constraints were applied. The trace must not contain raw argument
+    values — only field names, role names, attribute names, rule names, and
+    safe IDs — so it is safe to serialize and log.
+    """
+
+    engine: str
+    """Engine identifier (e.g. ``"DefaultPolicyEngine"``)."""
+
+    capability_id: str
+    """The capability that was being evaluated."""
+
+    principal_id: str
+    """The principal the decision was made for."""
+
+    intent: str | None
+    """Echoed :attr:`CapabilityRequest.intent` (may be ``None``)."""
+
+    scope_keys: list[str] = field(default_factory=list)
+    """Scope dimension names present on the request (values redacted for safety)."""
+
+    steps: list[PolicyTraceStep] = field(default_factory=list)
+    """Ordered list of evaluation steps."""
+
+    final_outcome: Literal["allowed", "denied"] = "denied"
+    """The decision the engine reached."""
+
+    final_reason_code: str | None = None
+    """The :class:`~agent_kernel.policy_reasons.AllowReason` or
+    :class:`~agent_kernel.policy_reasons.DenialReason` for the final outcome.
+    """
+
+
+@dataclass(slots=True)
 class PolicyDecision:
     """Result of a policy engine evaluation."""
 
@@ -157,10 +244,26 @@ class PolicyDecision:
     """``True`` if the request is permitted."""
 
     reason: str
-    """Human-readable explanation."""
+    """Human-readable explanation. Wording may evolve; assert on
+    :attr:`reason_code` for stable behavior."""
 
     constraints: dict[str, Any] = field(default_factory=dict)
     """Any additional constraints imposed by the policy (e.g. ``max_rows``)."""
+
+    reason_code: str | None = None
+    """Stable machine-readable code (typically a :class:`~agent_kernel.policy_reasons.AllowReason`
+    or :class:`~agent_kernel.policy_reasons.DenialReason` value).
+
+    Use this for assertions, metrics, and UI mapping. ``None`` only when an
+    out-of-tree policy engine has not populated it.
+    """
+
+    trace: PolicyDecisionTrace | None = None
+    """Structured trace of how this decision was reached.
+
+    Populated by both built-in engines on allow and deny paths. ``None`` for
+    third-party engines that don't produce a trace.
+    """
 
 
 @dataclass(slots=True)
@@ -306,6 +409,12 @@ class FailedCondition:
     suggestion: str
     """Actionable remediation hint."""
 
+    reason_code: str | None = None
+    """Stable machine-readable code (a :class:`~agent_kernel.policy_reasons.DenialReason` value).
+    Use this for assertions instead of matching the human-readable
+    :attr:`suggestion` string.
+    """
+
 
 @dataclass(slots=True)
 class DenialExplanation:
@@ -325,6 +434,12 @@ class DenialExplanation:
 
     narrative: str
     """Human-readable single-sentence summary."""
+
+    reason_code: str | None = None
+    """Primary :class:`~agent_kernel.policy_reasons.DenialReason` for the denial
+    (typically the code of the first :class:`FailedCondition`). ``None`` on the
+    allow path (``denied=False``).
+    """
 
 
 # ── Dry-run ───────────────────────────────────────────────────────────────────
