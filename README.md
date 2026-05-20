@@ -43,6 +43,8 @@ pip install weaver-kernel
 
 > **Note:** The PyPI package is `weaver-kernel` (Weaver ecosystem), but the Python import remains `agent_kernel`.
 
+> **New here?** [docs/tutorial.md](docs/tutorial.md) walks through register → grant → invoke → expand → explain in five minutes.
+
 ```python
 import asyncio, os
 os.environ["AGENT_KERNEL_SECRET"] = "my-secret"
@@ -109,6 +111,45 @@ asyncio.run(main())
 ```
 
 `agent-kernel` sits **above** `contextweaver` (context compilation) and **above** raw tool execution. It provides the authorization, execution, and audit layer.
+
+## How this relates to neighboring projects
+
+`agent-kernel` is the embeddable runtime layer of the **Weaver ecosystem**. The
+projects below solve adjacent problems and are designed to compose, not to
+overlap.
+
+| Project | Role | Where it runs | Use it when… |
+|---|---|---|---|
+| **agent-kernel** *(this repo)* | Embeddable library/runtime: capability registry, policy, HMAC tokens, context firewall, audit trace. | In-process inside your agent host. | You need authorization, redaction, and audit between an LLM loop and a large tool ecosystem. |
+| [**AgentFence**](https://github.com/dgenio/AgentFence) | External CLI / local proxy that intercepts tool calls and applies a policy gate. | Out-of-process, alongside your agent. | You want a policy boundary without changing your agent code, or you need to gate a third-party agent host you can't modify. |
+| [**contextweaver**](https://github.com/dgenio/contextweaver) | Library that selects and compiles the context an LLM receives. | In-process, before the LLM call. | You need to assemble relevant context for a prompt. It sits *under* the LLM loop; agent-kernel sits *between* the LLM and tools. |
+| **ChainWeaver** | Orchestrator for deterministic tool chains. | In-process or as a separate service. | You need to run a multi-step deterministic flow rather than free-form LLM tool use. |
+| [**weaver-spec**](https://github.com/dgenio/weaver-spec) | Specification: invariants, capability/token/frame contracts, conformance suite. | Not a runtime — it's docs + a contract test suite. | You're building another Weaver-compatible implementation, or you want to verify an existing one. |
+
+A minimal architecture using `agent-kernel` as the central runtime:
+
+```
+LLM / agent loop
+       │
+       ▼
+contextweaver  ─►  agent-kernel  ─►  driver  ─►  MCP / HTTP / A2A / internal API
+                       │
+                       ▼
+                  ActionTrace
+```
+
+### When *not* to use this
+
+- You only need a process-level policy gate around an existing agent host —
+  reach for `AgentFence` instead.
+- You only need to compile context for a prompt — use `contextweaver`.
+- You want a deterministic, scripted workflow with no LLM in the inner loop —
+  use `ChainWeaver`.
+- You're writing a static analyzer or one-shot CLI scanner with no
+  per-invocation runtime — `agent-kernel` would be overkill.
+
+See [docs/tutorial.md](docs/tutorial.md) for an end-to-end "secure your first
+MCP tool in 5 minutes" walkthrough.
 
 ## Weaver Spec Compatibility: v0.1.0
 
