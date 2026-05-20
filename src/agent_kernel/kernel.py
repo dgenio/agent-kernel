@@ -23,6 +23,8 @@ from .models import (
     Frame,
     Handle,
     PolicyDecision,
+    PolicyDecisionTrace,
+    PolicyTraceStep,
     Principal,
     ResponseMode,
     RoutePlan,
@@ -303,6 +305,23 @@ class Kernel:
                 SafetyClass.WRITE: "medium",
                 SafetyClass.DESTRUCTIVE: "high",
             }
+            dry_run_trace = PolicyDecisionTrace(
+                engine="Kernel.invoke[dry_run]",
+                capability_id=token.capability_id,
+                principal_id=principal.principal_id,
+                intent=None,
+                scope={},
+                steps=[
+                    PolicyTraceStep(
+                        name="token_verified",
+                        outcome="allowed",
+                        detail="Token verified; original policy decision was at grant time.",
+                        reason_code="token_verified",
+                    )
+                ],
+                final_outcome="allowed",
+                final_reason_code="token_verified",
+            )
             return DryRunResult(
                 capability_id=token.capability_id,
                 principal_id=principal.principal_id,
@@ -310,6 +329,8 @@ class Kernel:
                     allowed=True,
                     reason="Token verified. Policy was evaluated at grant time.",
                     constraints=dict(token.constraints),
+                    reason_code="token_verified",
+                    trace=dry_run_trace,
                 ),
                 driver_id=driver_id,
                 operation=operation,

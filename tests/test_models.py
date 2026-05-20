@@ -152,3 +152,92 @@ def test_capability_token_from_to_dict() -> None:
     restored = CapabilityToken.from_dict(d)
     assert restored.token_id == "tok-1"
     assert restored.constraints == {"max_rows": 10}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CapabilityRequest intent / scope — #72
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_capability_request_intent_defaults_to_none() -> None:
+    req = CapabilityRequest(capability_id="c", goal="g")
+    assert req.intent is None
+    assert req.scope == {}
+
+
+def test_capability_request_explicit_intent_and_scope() -> None:
+    req = CapabilityRequest(
+        capability_id="c",
+        goal="g",
+        intent="customer_support_lookup",
+        scope={"region": "eu-west", "customer_id": "C-42"},
+    )
+    assert req.intent == "customer_support_lookup"
+    assert req.scope == {"region": "eu-west", "customer_id": "C-42"}
+
+
+def test_capability_request_scope_is_independent_per_instance() -> None:
+    """Default-factory dicts must not be shared between CapabilityRequest instances."""
+    a = CapabilityRequest(capability_id="c", goal="g")
+    b = CapabilityRequest(capability_id="c", goal="g")
+    a.scope["x"] = 1
+    assert b.scope == {}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PolicyDecisionTrace / PolicyTraceStep — #73
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_policy_decision_trace_defaults() -> None:
+    from agent_kernel.models import PolicyDecisionTrace
+
+    trace = PolicyDecisionTrace(
+        engine="X",
+        capability_id="c",
+        principal_id="p",
+        intent=None,
+    )
+    assert trace.steps == []
+    assert trace.scope == {}
+    assert trace.final_outcome == "denied"
+    assert trace.final_reason_code is None
+
+
+def test_policy_trace_step_uses_slots() -> None:
+    """PolicyTraceStep is a slotted dataclass; new attributes must not be settable."""
+    from agent_kernel.models import PolicyTraceStep
+
+    step = PolicyTraceStep(name="x", outcome="allowed")
+    import pytest
+
+    with pytest.raises(AttributeError):
+        step.unknown_attribute = "boom"  # type: ignore[attr-defined]
+
+
+def test_policy_decision_trace_is_optional_on_decision() -> None:
+    """PolicyDecision.trace is None by default for engines that don't populate it."""
+    dec = PolicyDecision(allowed=True, reason="ok")
+    assert dec.trace is None
+    assert dec.reason_code is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reason codes round-trip through PolicyDecision / FailedCondition / DenialExplanation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_policy_decision_reason_code_round_trip() -> None:
+    from agent_kernel import DenialReason
+
+    dec = PolicyDecision(allowed=False, reason="nope", reason_code=DenialReason.MISSING_ROLE)
+    assert dec.reason_code == DenialReason.MISSING_ROLE
+    # String comparison — codes are str-compatible.
+    assert dec.reason_code == "missing_role"
+
+
+def test_failed_condition_default_reason_code_is_none() -> None:
+    from agent_kernel.models import FailedCondition
+
+    fc = FailedCondition(condition="x", required=1, actual=0, suggestion="bump x")
+    assert fc.reason_code is None

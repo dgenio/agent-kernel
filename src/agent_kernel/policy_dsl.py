@@ -21,8 +21,11 @@ from .models import (
     DenialExplanation,
     FailedCondition,
     PolicyDecision,
+    PolicyDecisionTrace,
+    PolicyTraceStep,
     Principal,
 )
+from .policy_reasons import AllowReason, DenialReason
 
 # Hint surfaced when the optional ``policy`` extra is missing.
 _POLICY_EXTRA_HINT = (
@@ -54,6 +57,20 @@ class PolicyMatch:
 
     min_justification: int | None = None
     """Match if ``len(justification.strip()) >= min_justification``."""
+
+    intent: list[str] | None = None
+    """Match if :attr:`CapabilityRequest.intent` is in this list.
+
+    A non-``None`` list means "this rule is intent-aware". A request with
+    :attr:`CapabilityRequest.intent` ``None`` never matches an intent-aware
+    rule (so policies that require an intent fail closed for unstructured
+    legacy callers).
+    """
+
+    scope: dict[str, str] | None = None
+    """Match if :attr:`CapabilityRequest.scope` contains ALL these key/value pairs.
+    Use ``"*"`` as the value to require the key with any value.
+    """
 
 
 @dataclass(slots=True)
@@ -260,6 +277,27 @@ class DeclarativePolicyEngine:
                 )
             min_justification = mj_raw
 
+        intent: list[str] | None = None
+        if "intent" in raw_match:
+            intent_raw = raw_match["intent"]
+            if not isinstance(intent_raw, list) or not all(isinstance(i, str) for i in intent_raw):
+                raise PolicyConfigError(
+                    f"Rule '{name}': 'intent' must be a list of strings, "
+                    f"got {type(intent_raw).__name__}."
+                )
+            intent = list(intent_raw)
+
+        scope: dict[str, str] | None = None
+        if "scope" in raw_match:
+            scope_raw = raw_match["scope"]
+            if not isinstance(scope_raw, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in scope_raw.items()
+            ):
+                raise PolicyConfigError(
+                    f"Rule '{name}': 'scope' must be a mapping of string keys to string values."
+                )
+            scope = dict(scope_raw)
+
         constraints_raw = raw.get("constraints", {})
         if not isinstance(constraints_raw, dict):
             raise PolicyConfigError(
@@ -275,6 +313,8 @@ class DeclarativePolicyEngine:
                 roles=roles,
                 attributes=attributes,
                 min_justification=min_justification,
+                intent=intent,
+                scope=scope,
             ),
             action=action,
             constraints=dict(constraints_raw),
@@ -287,6 +327,7 @@ class DeclarativePolicyEngine:
         self,
         rule: PolicyRule,
         capability: Capability,
+        request: CapabilityRequest,
         principal: Principal,
         justification: str,
     ) -> bool:
@@ -302,6 +343,13 @@ class DeclarativePolicyEngine:
             for k, v in m.attributes.items():
                 attr_val = principal.attributes.get(k)
                 if attr_val is None or (v != "*" and attr_val != v):
+                    return False
+        if m.intent is not None and (request.intent is None or request.intent not in m.intent):
+            return False
+        if m.scope is not None:
+            for k, v in m.scope.items():
+                scope_val = request.scope.get(k)
+                if scope_val is None or (v != "*" and str(scope_val) != v):
                     return False
         return m.min_justification is None or len(justification.strip()) >= m.min_justification
 
@@ -333,27 +381,104 @@ class DeclarativePolicyEngine:
         pid = principal.principal_id
         cid = capability.capability_id
 
+        trace = PolicyDecisionTrace(
+            engine="DeclarativePolicyEngine",
+            capability_id=cid,
+            principal_id=pid,
+            intent=request.intent,
+            scope=dict(request.scope),
+        )
+
         for rule in self._rules:
-            if not self._matches(rule, capability, principal, justification):
+            if not self._matches(rule, capability, request, principal, justification):
+                trace.steps.append(
+                    PolicyTraceStep(
+                        name=f"rule:{rule.name}",
+                        outcome="skipped",
+                        detail="match clause did not match",
+                    )
+                )
                 continue
+            trace.steps.append(
+                PolicyTraceStep(
+                    name=f"rule:{rule.name}",
+                    outcome="matched",
+                    detail=f"action={rule.action!r}",
+                )
+            )
             if rule.action == "deny":
-                raise PolicyDenied(rule.reason or f"Denied by rule '{rule.name}'.")
+                detail = rule.reason or f"Denied by rule '{rule.name}'."
+                trace.steps.append(
+                    PolicyTraceStep(
+                        name=f"rule:{rule.name}",
+                        outcome="denied",
+                        detail=detail,
+                        reason_code=str(DenialReason.EXPLICIT_DENY_RULE),
+                    )
+                )
+                trace.final_outcome = "denied"
+                trace.final_reason_code = str(DenialReason.EXPLICIT_DENY_RULE)
+                raise PolicyDenied(detail, reason_code=str(DenialReason.EXPLICIT_DENY_RULE))
             constraints.update(rule.constraints)
+            if rule.constraints:
+                trace.steps.append(
+                    PolicyTraceStep(
+                        name=f"rule:{rule.name}",
+                        outcome="constraint_applied",
+                        detail=f"applied constraints={sorted(rule.constraints)}",
+                    )
+                )
+            reason = f"Allowed by rule '{rule.name}'."
+            trace.steps.append(
+                PolicyTraceStep(
+                    name=f"rule:{rule.name}",
+                    outcome="allowed",
+                    detail=reason,
+                    reason_code=str(AllowReason.RULE_ALLOW),
+                )
+            )
+            trace.final_outcome = "allowed"
+            trace.final_reason_code = str(AllowReason.RULE_ALLOW)
             return PolicyDecision(
                 allowed=True,
-                reason=f"Allowed by rule '{rule.name}'.",
+                reason=reason,
                 constraints=constraints,
+                reason_code=str(AllowReason.RULE_ALLOW),
+                trace=trace,
             )
 
         if self._default == "deny":
-            raise PolicyDenied(
+            detail = (
                 f"No policy rule matched request for capability '{cid}' "
                 f"by principal '{pid}'. Default action is deny."
             )
+            trace.steps.append(
+                PolicyTraceStep(
+                    name="default",
+                    outcome="denied",
+                    detail=detail,
+                    reason_code=str(DenialReason.NO_MATCHING_RULE),
+                )
+            )
+            trace.final_outcome = "denied"
+            trace.final_reason_code = str(DenialReason.NO_MATCHING_RULE)
+            raise PolicyDenied(detail, reason_code=str(DenialReason.NO_MATCHING_RULE))
+        trace.steps.append(
+            PolicyTraceStep(
+                name="default",
+                outcome="allowed",
+                detail="No rule matched; default action is allow.",
+                reason_code=str(AllowReason.DEFAULT_FALLTHROUGH_ALLOW),
+            )
+        )
+        trace.final_outcome = "allowed"
+        trace.final_reason_code = str(AllowReason.DEFAULT_FALLTHROUGH_ALLOW)
         return PolicyDecision(
             allowed=True,
             reason="No rule matched; default action is allow.",
             constraints=constraints,
+            reason_code=str(AllowReason.DEFAULT_FALLTHROUGH_ALLOW),
+            trace=trace,
         )
 
     def explain(
@@ -402,6 +527,7 @@ class DeclarativePolicyEngine:
         pid = principal.principal_id
         explanation_failures: list[FailedCondition] = []
         rule_name = "default-deny"
+        primary_code: str | None = str(DenialReason.NO_MATCHING_RULE)
 
         for rule in self._rules:
             m = rule.match
@@ -419,6 +545,7 @@ class DeclarativePolicyEngine:
                         required=list(m.roles),
                         actual=sorted(roles),
                         suggestion=f"Add one of {m.roles!r} to roles for principal '{pid}'",
+                        reason_code=str(DenialReason.MISSING_ROLE),
                     )
                 )
             if m.attributes is not None:
@@ -431,6 +558,30 @@ class DeclarativePolicyEngine:
                                 required=v,
                                 actual=attr_val if attr_val is not None else "<absent>",
                                 suggestion=f"Set attribute '{k}'={v!r} on principal '{pid}'",
+                                reason_code=str(DenialReason.MISSING_ATTRIBUTE),
+                            )
+                        )
+            if m.intent is not None and (request.intent is None or request.intent not in m.intent):
+                rule_failures.append(
+                    FailedCondition(
+                        condition="intent",
+                        required=list(m.intent),
+                        actual=request.intent if request.intent is not None else "<absent>",
+                        suggestion=(f"Set CapabilityRequest.intent to one of {m.intent!r}"),
+                        reason_code=str(DenialReason.INTENT_NOT_ALLOWED),
+                    )
+                )
+            if m.scope is not None:
+                for k, v in m.scope.items():
+                    scope_val = request.scope.get(k)
+                    if scope_val is None or (v != "*" and str(scope_val) != v):
+                        rule_failures.append(
+                            FailedCondition(
+                                condition=f"scope:{k}",
+                                required=v,
+                                actual=scope_val if scope_val is not None else "<absent>",
+                                suggestion=(f"Set CapabilityRequest.scope[{k!r}]={v!r}"),
+                                reason_code=str(DenialReason.SCOPE_NOT_ALLOWED),
                             )
                         )
             if m.min_justification is not None:
@@ -445,6 +596,7 @@ class DeclarativePolicyEngine:
                                 f"Provide justification with at least "
                                 f"{m.min_justification} characters (currently {stripped})"
                             ),
+                            reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
                         )
                     )
 
@@ -462,8 +614,10 @@ class DeclarativePolicyEngine:
                                 or f"Remove or narrow deny rule '{rule.name}' so this "
                                 f"request does not match it"
                             ),
+                            reason_code=str(DenialReason.EXPLICIT_DENY_RULE),
                         )
                     ]
+                    primary_code = str(DenialReason.EXPLICIT_DENY_RULE)
                     break
                 # Partial-match deny rule: it did NOT cause the denial. Skip
                 # so we don't suggest changes that would actually trigger it.
@@ -472,6 +626,7 @@ class DeclarativePolicyEngine:
             # Allow rule (structurally matched, conditions unmet) — report it.
             rule_name = rule.name
             explanation_failures = rule_failures
+            primary_code = rule_failures[0].reason_code if rule_failures else None
             break
 
         if not explanation_failures:
@@ -484,8 +639,10 @@ class DeclarativePolicyEngine:
                         f"Add an allow rule for safety_class="
                         f"{capability.safety_class.value!r} in your policy file"
                     ),
+                    reason_code=str(DenialReason.NO_MATCHING_RULE),
                 )
             ]
+            primary_code = str(DenialReason.NO_MATCHING_RULE)
 
         remediation = [fc.suggestion for fc in explanation_failures]
         narrative = (
@@ -500,4 +657,5 @@ class DeclarativePolicyEngine:
             failed_conditions=explanation_failures,
             remediation=remediation,
             narrative=narrative,
+            reason_code=primary_code,
         )

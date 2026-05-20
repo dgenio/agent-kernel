@@ -54,11 +54,54 @@ Both built-in engines satisfy `ExplainingPolicyEngine`:
   5. **SECRETS** — requires role `admin|secrets_reader` + `justification ≥ 15 chars`
   6. **max_rows** — 50 (user), 500 (service)
   7. **Rate limiting** — sliding-window per `(principal_id, capability_id)` (60 READ / 10 WRITE / 2 DESTRUCTIVE per 60s; service role gets 10×)
-- **`DeclarativePolicyEngine`** — loads rules from a YAML or TOML file (or a plain dict). Supports `safety_class`, `sensitivity`, `roles`, `attributes`, and `min_justification` match conditions; `allow`/`deny` actions; per-rule `constraints` merged into the resulting `PolicyDecision`; configurable `default` action. Rules are evaluated top-down with first-match-wins. `pyyaml` and `tomli` are optional dependencies — `import agent_kernel` works without them; calling `from_yaml`/`from_toml` without the parser raises `PolicyConfigError` with an install hint.
+- **`DeclarativePolicyEngine`** — loads rules from a YAML or TOML file (or a plain dict). Supports `safety_class`, `sensitivity`, `roles`, `attributes`, `min_justification`, `intent`, and `scope` match conditions; `allow`/`deny` actions; per-rule `constraints` merged into the resulting `PolicyDecision`; configurable `default` action. Rules are evaluated top-down with first-match-wins. `pyyaml` and `tomli` are optional dependencies — `import agent_kernel` works without them; calling `from_yaml`/`from_toml` without the parser raises `PolicyConfigError` with an install hint.
+
+#### Intent and scope on requests
+
+`CapabilityRequest` carries optional structured metadata alongside its free-text `goal`:
+
+- `intent: str | None` — a machine-readable label (e.g. `"customer_support_lookup"`).
+- `scope: dict[str, Any]` — a small structured map (e.g. `{"region": "eu-west", "customer_id": "C-42"}`).
+
+`DeclarativePolicyEngine` rules can match on these via top-level keys in `match`:
+
+```yaml
+- name: support_eu_lookup
+  match:
+    safety_class: [READ]
+    intent: [customer_support_lookup]
+    scope: { region: "eu-west" }
+  action: allow
+```
+
+Intent-aware rules fail closed: a request with `intent=None` never matches a rule that requires a specific intent. `scope: { key: "*" }` means "the key must be present with any value".
 
 #### Denial explanations
 
-`PolicyEngine.explain()` (when available) returns a structured `DenialExplanation` with `denied`, `rule_name`, a `failed_conditions: list[FailedCondition]` describing each missing condition with `required`/`actual`/`suggestion`, a `remediation` list, and a human-readable `narrative`. Engines collect all failing conditions (no short-circuit) so callers get the full picture. For `DeclarativePolicyEngine`, an explicit deny rule that fully matches is reported as the cause; partial-match deny rules are skipped during explanation so the surfaced advice is actionable rather than self-defeating.
+`PolicyEngine.explain()` (when available) returns a structured `DenialExplanation` with `denied`, `rule_name`, a `failed_conditions: list[FailedCondition]` describing each missing condition with `required`/`actual`/`suggestion`/`reason_code`, a `remediation` list, a human-readable `narrative`, and a top-level `reason_code` (the code of the first failed condition). Engines collect all failing conditions (no short-circuit) so callers get the full picture. For `DeclarativePolicyEngine`, an explicit deny rule that fully matches is reported as the cause; partial-match deny rules are skipped during explanation so the surfaced advice is actionable rather than self-defeating.
+
+#### Reason codes
+
+Every `PolicyDecision`, `DenialExplanation`, `FailedCondition`, and `PolicyDenied` from the built-in engines carries a stable `reason_code`. Assert on these codes — not on the human-readable `reason` / `narrative` strings:
+
+| Code (`DenialReason.*`) | When |
+|---|---|
+| `missing_role` | Principal lacks a required role |
+| `missing_tenant_attribute` | PII/PCI capability needs `tenant` attribute |
+| `missing_attribute` | Declarative rule's required attribute absent or mismatched |
+| `insufficient_justification` | Justification shorter than the minimum |
+| `invalid_constraint` | Constraint value (e.g. `max_rows`) not parseable |
+| `rate_limited` | Sliding-window rate limit exceeded |
+| `no_matching_rule` | DSL: no rule matched + default `deny` |
+| `explicit_deny_rule` | DSL: a `deny` rule matched fully |
+| `intent_not_allowed` | DSL: `match.intent` rejected the request's intent |
+| `scope_not_allowed` | DSL: `match.scope` rejected the request's scope |
+
+Allow-side codes (`AllowReason.*`): `default_policy_allow`, `rule_allow`, `default_fallthrough_allow`.
+
+#### Decision trace
+
+Every `PolicyDecision` from a built-in engine carries a `PolicyDecisionTrace` describing how the decision was reached: the engine name, the capability and principal IDs, the request's `intent`/`scope` (echoed), and an ordered list of `PolicyTraceStep` entries. Each step records the rule name, the outcome (`matched`/`skipped`/`denied`/`allowed`/`constraint_applied`), a human-readable detail, and — for terminal steps — the same stable `reason_code` carried on the decision. Traces are safe to log and serialize: they contain rule names, condition names, and codes only — never raw argument values.
 
 #### Dry-run mode
 

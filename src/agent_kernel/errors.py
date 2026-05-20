@@ -28,7 +28,24 @@ class TokenRevoked(AgentKernelError):
 
 
 class PolicyDenied(AgentKernelError):
-    """Raised when the policy engine rejects a capability request."""
+    """Raised when the policy engine rejects a capability request.
+
+    Carries an optional ``reason_code`` attribute holding a stable
+    :class:`~agent_kernel.policy_reasons.DenialReason` value so callers can
+    branch on it without matching the human-readable message:
+
+    .. code-block:: python
+
+        try:
+            kernel.grant_capability(request, principal, justification="...")
+        except PolicyDenied as exc:
+            if exc.reason_code == DenialReason.MISSING_ROLE:
+                ...
+    """
+
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        super().__init__(message)
+        self.reason_code: str | None = reason_code
 
 
 class PolicyConfigError(AgentKernelError):

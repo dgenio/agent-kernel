@@ -17,8 +17,11 @@ from .models import (
     DenialExplanation,
     FailedCondition,
     PolicyDecision,
+    PolicyDecisionTrace,
+    PolicyTraceStep,
     Principal,
 )
+from .policy_reasons import AllowReason, DenialReason
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +215,13 @@ class DefaultPolicyEngine:
         self._limiter = RateLimiter(clock=clock)
 
     @staticmethod
-    def _deny(reason: str, *, principal_id: str, capability_id: str) -> PolicyDenied:
+    def _deny(
+        reason: str,
+        *,
+        principal_id: str,
+        capability_id: str,
+        reason_code: str,
+    ) -> PolicyDenied:
         """Log a policy denial at WARNING and return the exception to raise."""
         logger.warning(
             "policy_denied",
@@ -220,9 +229,10 @@ class DefaultPolicyEngine:
                 "principal_id": principal_id,
                 "capability_id": capability_id,
                 "reason": reason,
+                "reason_code": reason_code,
             },
         )
-        return PolicyDenied(reason)
+        return PolicyDenied(reason, reason_code=reason_code)
 
     def evaluate(
         self,
@@ -253,78 +263,140 @@ class DefaultPolicyEngine:
         pid = principal.principal_id
         cid = capability.capability_id
 
+        trace = PolicyDecisionTrace(
+            engine="DefaultPolicyEngine",
+            capability_id=cid,
+            principal_id=pid,
+            intent=request.intent,
+            scope=dict(request.scope),
+        )
+
+        def _record_deny(detail: str, code: str) -> None:
+            trace.steps.append(
+                PolicyTraceStep(
+                    name="deny",
+                    outcome="denied",
+                    detail=detail,
+                    reason_code=code,
+                )
+            )
+            trace.final_outcome = "denied"
+            trace.final_reason_code = code
+
         # ── Safety class checks ───────────────────────────────────────────────
 
         if capability.safety_class == SafetyClass.WRITE:
             if not (roles & {"writer", "admin"}):
-                raise self._deny(
+                detail = (
                     f"WRITE capabilities require the 'writer' or 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}.",
+                    f"Principal '{pid}' has roles: {sorted(roles)}."
+                )
+                _record_deny(detail, DenialReason.MISSING_ROLE)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.MISSING_ROLE,
                 )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
-                raise self._deny(
+                detail = (
                     f"WRITE capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace).",
+                    f"({stripped_len} after trimming whitespace)."
+                )
+                _record_deny(detail, DenialReason.INSUFFICIENT_JUSTIFICATION)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.INSUFFICIENT_JUSTIFICATION,
                 )
 
         elif capability.safety_class == SafetyClass.DESTRUCTIVE:
             if "admin" not in roles:
-                raise self._deny(
+                detail = (
                     f"DESTRUCTIVE capabilities require the 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}.",
+                    f"Principal '{pid}' has roles: {sorted(roles)}."
+                )
+                _record_deny(detail, DenialReason.MISSING_ROLE)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.MISSING_ROLE,
                 )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
-                raise self._deny(
+                detail = (
                     f"DESTRUCTIVE capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace).",
+                    f"({stripped_len} after trimming whitespace)."
+                )
+                _record_deny(detail, DenialReason.INSUFFICIENT_JUSTIFICATION)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.INSUFFICIENT_JUSTIFICATION,
                 )
 
         # ── Sensitivity checks ────────────────────────────────────────────────
 
         if capability.sensitivity in (SensitivityTag.PII, SensitivityTag.PCI):
             if "tenant" not in principal.attributes:
-                raise self._deny(
+                detail = (
                     f"Capability '{cid}' has "
                     f"{capability.sensitivity.value} sensitivity and requires "
-                    "the principal to have a 'tenant' attribute.",
+                    "the principal to have a 'tenant' attribute."
+                )
+                _record_deny(detail, DenialReason.MISSING_TENANT_ATTRIBUTE)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.MISSING_TENANT_ATTRIBUTE,
                 )
             # Enforce allowed_fields unless the principal is a pii_reader.
             if capability.allowed_fields and "pii_reader" not in roles:
                 constraints["allowed_fields"] = capability.allowed_fields
+                trace.steps.append(
+                    PolicyTraceStep(
+                        name="sensitivity:allowed_fields",
+                        outcome="constraint_applied",
+                        detail=f"applied allowed_fields={capability.allowed_fields}",
+                    )
+                )
 
         if capability.sensitivity == SensitivityTag.SECRETS:
             if not (roles & {"admin", "secrets_reader"}):
-                raise self._deny(
+                detail = (
                     f"SECRETS capabilities require the 'admin' or 'secrets_reader' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}.",
+                    f"Principal '{pid}' has roles: {sorted(roles)}."
+                )
+                _record_deny(detail, DenialReason.MISSING_ROLE)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.MISSING_ROLE,
                 )
             stripped_len = len(justification.strip())
             if stripped_len < _MIN_JUSTIFICATION:
-                raise self._deny(
+                detail = (
                     f"SECRETS capabilities require a justification of at least "
                     f"{_MIN_JUSTIFICATION} characters. "
                     f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace).",
+                    f"({stripped_len} after trimming whitespace)."
+                )
+                _record_deny(detail, DenialReason.INSUFFICIENT_JUSTIFICATION)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.INSUFFICIENT_JUSTIFICATION,
                 )
 
         # ── Row cap ───────────────────────────────────────────────────────────
@@ -335,15 +407,27 @@ class DefaultPolicyEngine:
             try:
                 requested = int(constraints["max_rows"])
             except (TypeError, ValueError) as exc:
-                raise self._deny(
+                detail = (
                     f"Invalid 'max_rows' constraint: {constraints['max_rows']!r} "
-                    "is not a valid integer.",
+                    "is not a valid integer."
+                )
+                _record_deny(detail, DenialReason.INVALID_CONSTRAINT)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.INVALID_CONSTRAINT,
                 ) from exc
             constraints["max_rows"] = min(max(requested, 0), max_rows)
         else:
             constraints["max_rows"] = max_rows
+        trace.steps.append(
+            PolicyTraceStep(
+                name="row_cap",
+                outcome="constraint_applied",
+                detail=f"max_rows={constraints['max_rows']}",
+            )
+        )
 
         # ── Rate limiting ─────────────────────────────────────────────────
 
@@ -353,27 +437,45 @@ class DefaultPolicyEngine:
             if "service" in roles:
                 limit *= _SERVICE_RATE_MULTIPLIER
             if not self._limiter.check(rate_key, limit, window):
-                raise self._deny(
+                detail = (
                     f"Rate limit exceeded: {limit} {capability.safety_class.value} "
-                    f"invocations per {window}s for principal '{pid}'",
+                    f"invocations per {window}s for principal '{pid}'"
+                )
+                _record_deny(detail, DenialReason.RATE_LIMITED)
+                raise self._deny(
+                    detail,
                     principal_id=pid,
                     capability_id=cid,
+                    reason_code=DenialReason.RATE_LIMITED,
                 )
             self._limiter.record(rate_key)
 
         reason = "Request approved by DefaultPolicyEngine."
+        trace.steps.append(
+            PolicyTraceStep(
+                name="allow",
+                outcome="allowed",
+                detail=reason,
+                reason_code=str(AllowReason.DEFAULT_POLICY_ALLOW),
+            )
+        )
+        trace.final_outcome = "allowed"
+        trace.final_reason_code = str(AllowReason.DEFAULT_POLICY_ALLOW)
         logger.info(
             "policy_allowed",
             extra={
                 "principal_id": pid,
                 "capability_id": cid,
                 "reason": reason,
+                "reason_code": str(AllowReason.DEFAULT_POLICY_ALLOW),
             },
         )
         return PolicyDecision(
             allowed=True,
             reason=reason,
             constraints=constraints,
+            reason_code=str(AllowReason.DEFAULT_POLICY_ALLOW),
+            trace=trace,
         )
 
     def explain(
@@ -415,6 +517,7 @@ class DefaultPolicyEngine:
                         required=["writer", "admin"],
                         actual=sorted(roles),
                         suggestion=f"Add 'writer' or 'admin' role to principal '{pid}'",
+                        reason_code=str(DenialReason.MISSING_ROLE),
                     )
                 )
             stripped = len(justification.strip())
@@ -428,6 +531,7 @@ class DefaultPolicyEngine:
                             f"Provide justification with at least {_MIN_JUSTIFICATION} "
                             f"characters (currently {stripped})"
                         ),
+                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
                     )
                 )
 
@@ -439,6 +543,7 @@ class DefaultPolicyEngine:
                         required=["admin"],
                         actual=sorted(roles),
                         suggestion=f"Add 'admin' role to principal '{pid}'",
+                        reason_code=str(DenialReason.MISSING_ROLE),
                     )
                 )
             stripped = len(justification.strip())
@@ -452,6 +557,7 @@ class DefaultPolicyEngine:
                             f"Provide justification with at least {_MIN_JUSTIFICATION} "
                             f"characters (currently {stripped})"
                         ),
+                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
                     )
                 )
 
@@ -467,6 +573,7 @@ class DefaultPolicyEngine:
                     required="present",
                     actual="absent",
                     suggestion=f"Add 'tenant' attribute to principal '{pid}'",
+                    reason_code=str(DenialReason.MISSING_TENANT_ATTRIBUTE),
                 )
             )
 
@@ -478,6 +585,7 @@ class DefaultPolicyEngine:
                         required=["admin", "secrets_reader"],
                         actual=sorted(roles),
                         suggestion=f"Add 'admin' or 'secrets_reader' role to principal '{pid}'",
+                        reason_code=str(DenialReason.MISSING_ROLE),
                     )
                 )
             stripped = len(justification.strip())
@@ -491,6 +599,7 @@ class DefaultPolicyEngine:
                             f"Provide justification with at least {_MIN_JUSTIFICATION} "
                             f"characters (currently {stripped})"
                         ),
+                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
                     )
                 )
 
@@ -507,9 +616,11 @@ class DefaultPolicyEngine:
                 + "; ".join(fc.suggestion for fc in failed)
                 + "."
             )
+            primary_code = first.reason_code
         else:
             rule_name = "allowed"
             narrative = f"Request for '{cid}' by '{pid}' would be allowed by DefaultPolicyEngine."
+            primary_code = None
 
         return DenialExplanation(
             denied=denied,
@@ -517,4 +628,5 @@ class DefaultPolicyEngine:
             failed_conditions=failed,
             remediation=remediation,
             narrative=narrative,
+            reason_code=primary_code,
         )

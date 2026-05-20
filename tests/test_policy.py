@@ -1261,3 +1261,466 @@ def test_declarative_from_toml_install_hint(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(PolicyConfigError, match="weaver-kernel\\[policy\\]"):
         DeclarativePolicyEngine.from_toml(Path("does-not-matter.toml"))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stable denial reason codes — #77
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+from agent_kernel import AllowReason, DenialReason  # noqa: E402
+
+
+class TestDefaultEngineReasonCodes:
+    """Every built-in denial path on DefaultPolicyEngine carries a stable code."""
+
+    def test_write_missing_role_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(
+                _req("cap.w"),
+                _cap("cap.w", SafetyClass.WRITE),
+                p,
+                justification="long enough justification",
+            )
+        assert exc.value.reason_code == DenialReason.MISSING_ROLE
+
+    def test_write_short_justification_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["writer"])
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(
+                _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="short"
+            )
+        assert exc.value.reason_code == DenialReason.INSUFFICIENT_JUSTIFICATION
+
+    def test_destructive_missing_role_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["writer"])
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(
+                _req("cap.d"),
+                _cap("cap.d", SafetyClass.DESTRUCTIVE),
+                p,
+                justification="long enough justification",
+            )
+        assert exc.value.reason_code == DenialReason.MISSING_ROLE
+
+    def test_destructive_short_justification_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["admin"])
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(
+                _req("cap.d"),
+                _cap("cap.d", SafetyClass.DESTRUCTIVE),
+                p,
+                justification="short",
+            )
+        assert exc.value.reason_code == DenialReason.INSUFFICIENT_JUSTIFICATION
+
+    def test_pii_missing_tenant_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        cap = _cap("cap.pii", SafetyClass.READ, SensitivityTag.PII)
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(_req("cap.pii"), cap, p, justification="")
+        assert exc.value.reason_code == DenialReason.MISSING_TENANT_ATTRIBUTE
+
+    def test_secrets_missing_role_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        cap = _cap("cap.s", SafetyClass.READ, SensitivityTag.SECRETS)
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(_req("cap.s"), cap, p, justification="long enough justification")
+        assert exc.value.reason_code == DenialReason.MISSING_ROLE
+
+    def test_secrets_short_justification_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["secrets_reader"])
+        cap = _cap("cap.s", SafetyClass.READ, SensitivityTag.SECRETS)
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(_req("cap.s"), cap, p, justification="short")
+        assert exc.value.reason_code == DenialReason.INSUFFICIENT_JUSTIFICATION
+
+    def test_invalid_max_rows_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(
+                _req("cap.r", max_rows="nope"),
+                _cap("cap.r", SafetyClass.READ),
+                p,
+                justification="",
+            )
+        assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT
+
+    def test_rate_limited_code(self) -> None:
+        # Force a low limit by using a custom engine.
+        engine = DefaultPolicyEngine(rate_limits={SafetyClass.READ: (1, 60.0)})
+        p = Principal(principal_id="u1", roles=["reader"])
+        cap = _cap("cap.r", SafetyClass.READ)
+        engine.evaluate(_req("cap.r"), cap, p, justification="")
+        with pytest.raises(PolicyDenied) as exc:
+            engine.evaluate(_req("cap.r"), cap, p, justification="")
+        assert exc.value.reason_code == DenialReason.RATE_LIMITED
+
+    def test_allow_has_reason_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        dec = engine.evaluate(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.allowed is True
+        assert dec.reason_code == AllowReason.DEFAULT_POLICY_ALLOW
+
+
+class TestDefaultEngineExplainReasonCodes:
+    """``explain()`` populates a reason_code on each FailedCondition."""
+
+    def test_write_missing_role_reason_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        result = engine.explain(
+            _req("cap.w"),
+            _cap("cap.w", SafetyClass.WRITE),
+            p,
+            justification="long enough justification",
+        )
+        assert result.denied is True
+        assert result.reason_code == DenialReason.MISSING_ROLE
+        assert result.failed_conditions[0].reason_code == DenialReason.MISSING_ROLE
+
+    def test_write_two_failures_codes(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        result = engine.explain(
+            _req("cap.w"), _cap("cap.w", SafetyClass.WRITE), p, justification="too short"
+        )
+        codes = {fc.reason_code for fc in result.failed_conditions}
+        assert DenialReason.MISSING_ROLE in codes
+        assert DenialReason.INSUFFICIENT_JUSTIFICATION in codes
+
+    def test_pii_missing_tenant_reason_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        cap = _cap("cap.pii", SafetyClass.READ, SensitivityTag.PII)
+        result = engine.explain(_req("cap.pii"), cap, p, justification="")
+        assert result.reason_code == DenialReason.MISSING_TENANT_ATTRIBUTE
+
+    def test_allowed_has_no_reason_code(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1")
+        result = engine.explain(
+            _req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification=""
+        )
+        assert result.denied is False
+        assert result.reason_code is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Structured policy decision trace — #73
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDefaultEngineDecisionTrace:
+    """DefaultPolicyEngine.evaluate() attaches a structured trace."""
+
+    def test_allow_trace_engine_and_final_outcome(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        dec = engine.evaluate(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.trace is not None
+        assert dec.trace.engine == "DefaultPolicyEngine"
+        assert dec.trace.capability_id == "cap.r"
+        assert dec.trace.principal_id == "u1"
+        assert dec.trace.final_outcome == "allowed"
+        assert dec.trace.final_reason_code == AllowReason.DEFAULT_POLICY_ALLOW
+
+    def test_allow_trace_has_constraint_step(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        dec = engine.evaluate(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.trace is not None
+        outcomes = [s.outcome for s in dec.trace.steps]
+        assert "constraint_applied" in outcomes
+        assert "allowed" in outcomes
+
+    def test_trace_echoes_intent_and_scope(self, engine: DefaultPolicyEngine) -> None:
+        p = Principal(principal_id="u1", roles=["reader"])
+        req = CapabilityRequest(
+            capability_id="cap.r",
+            goal="g",
+            intent="support_lookup",
+            scope={"region": "eu-west"},
+        )
+        dec = engine.evaluate(req, _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.trace is not None
+        assert dec.trace.intent == "support_lookup"
+        assert dec.trace.scope == {"region": "eu-west"}
+
+    def test_trace_no_raw_args_leaked(self, engine: DefaultPolicyEngine) -> None:
+        """Sensitive values from request.constraints must never appear in trace details."""
+        p = Principal(principal_id="u1", roles=["reader"])
+        req = _req("cap.r", api_token="super-secret-do-not-leak-XYZ")
+        dec = engine.evaluate(req, _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.trace is not None
+        for step in dec.trace.steps:
+            assert "super-secret-do-not-leak-XYZ" not in step.detail
+
+
+class TestDeclarativeEngineDecisionTrace:
+    """DeclarativePolicyEngine produces a trace on allow, explicit-deny, and default-deny."""
+
+    @staticmethod
+    def _engine(rules: list[dict[str, object]], default: str = "deny") -> DeclarativePolicyEngine:
+        return DeclarativePolicyEngine.from_dict({"default": default, "rules": rules})
+
+    def test_allow_rule_trace(self) -> None:
+        eng = self._engine(
+            [{"name": "all_reads", "match": {"safety_class": ["READ"]}, "action": "allow"}]
+        )
+        p = Principal(principal_id="u1")
+        dec = eng.evaluate(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.trace is not None
+        assert dec.trace.engine == "DeclarativePolicyEngine"
+        assert dec.trace.final_outcome == "allowed"
+        assert dec.trace.final_reason_code == AllowReason.RULE_ALLOW
+        # First step should be a matched rule.
+        assert dec.trace.steps[0].outcome == "matched"
+        assert dec.trace.steps[0].name == "rule:all_reads"
+
+    def test_explicit_deny_rule_trace(self) -> None:
+        eng = self._engine(
+            [
+                {
+                    "name": "no_destructive",
+                    "match": {"safety_class": ["DESTRUCTIVE"]},
+                    "action": "deny",
+                    "reason": "destructive disabled",
+                }
+            ]
+        )
+        p = Principal(principal_id="u1", roles=["admin"])
+        with pytest.raises(PolicyDenied) as exc:
+            eng.evaluate(
+                _req("cap.d"),
+                _cap("cap.d", SafetyClass.DESTRUCTIVE),
+                p,
+                justification="long enough justification",
+            )
+        assert exc.value.reason_code == DenialReason.EXPLICIT_DENY_RULE
+
+    def test_default_deny_trace(self) -> None:
+        eng = self._engine([])
+        p = Principal(principal_id="u1")
+        with pytest.raises(PolicyDenied) as exc:
+            eng.evaluate(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert exc.value.reason_code == DenialReason.NO_MATCHING_RULE
+
+    def test_default_fallthrough_allow_trace(self) -> None:
+        eng = self._engine([], default="allow")
+        p = Principal(principal_id="u1")
+        dec = eng.evaluate(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.trace is not None
+        assert dec.trace.final_reason_code == AllowReason.DEFAULT_FALLTHROUGH_ALLOW
+
+    def test_trace_skipped_rule_count(self) -> None:
+        """Non-matching rules appear as 'skipped' steps before the matching one."""
+        eng = self._engine(
+            [
+                {"name": "writes", "match": {"safety_class": ["WRITE"]}, "action": "allow"},
+                {"name": "reads", "match": {"safety_class": ["READ"]}, "action": "allow"},
+            ]
+        )
+        p = Principal(principal_id="u1")
+        dec = eng.evaluate(_req("cap.r"), _cap("cap.r", SafetyClass.READ), p, justification="")
+        assert dec.trace is not None
+        outcomes = [s.outcome for s in dec.trace.steps]
+        assert outcomes[0] == "skipped"  # writes rule skipped first
+        assert "matched" in outcomes
+        assert "allowed" in outcomes
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Intent and scope — #72
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestIntentAndScopeMatching:
+    """DeclarativePolicyEngine matches on CapabilityRequest.intent and .scope."""
+
+    @staticmethod
+    def _engine(rules: list[dict[str, object]], default: str = "deny") -> DeclarativePolicyEngine:
+        return DeclarativePolicyEngine.from_dict({"default": default, "rules": rules})
+
+    def test_intent_allow_matches(self) -> None:
+        eng = self._engine(
+            [
+                {
+                    "name": "support_lookup_only",
+                    "match": {"safety_class": ["READ"], "intent": ["support_lookup"]},
+                    "action": "allow",
+                }
+            ]
+        )
+        req = CapabilityRequest(capability_id="cap.r", goal="g", intent="support_lookup")
+        dec = eng.evaluate(
+            req, _cap("cap.r", SafetyClass.READ), Principal(principal_id="u1"), justification=""
+        )
+        assert dec.allowed is True
+        assert dec.reason_code == AllowReason.RULE_ALLOW
+
+    def test_intent_mismatch_falls_through_to_default_deny(self) -> None:
+        eng = self._engine(
+            [
+                {
+                    "name": "support_lookup_only",
+                    "match": {"safety_class": ["READ"], "intent": ["support_lookup"]},
+                    "action": "allow",
+                }
+            ]
+        )
+        req = CapabilityRequest(capability_id="cap.r", goal="g", intent="marketing_export")
+        with pytest.raises(PolicyDenied) as exc:
+            eng.evaluate(
+                req,
+                _cap("cap.r", SafetyClass.READ),
+                Principal(principal_id="u1"),
+                justification="",
+            )
+        assert exc.value.reason_code == DenialReason.NO_MATCHING_RULE
+
+    def test_intent_none_does_not_match_intent_aware_rule(self) -> None:
+        """A request without an intent must NOT silently match an intent-aware allow rule."""
+        eng = self._engine(
+            [
+                {
+                    "name": "support_lookup_only",
+                    "match": {"safety_class": ["READ"], "intent": ["support_lookup"]},
+                    "action": "allow",
+                }
+            ]
+        )
+        req = _req("cap.r")  # intent=None
+        with pytest.raises(PolicyDenied):
+            eng.evaluate(
+                req,
+                _cap("cap.r", SafetyClass.READ),
+                Principal(principal_id="u1"),
+                justification="",
+            )
+
+    def test_scope_matches_value(self) -> None:
+        eng = self._engine(
+            [
+                {
+                    "name": "eu_only",
+                    "match": {"safety_class": ["READ"], "scope": {"region": "eu-west"}},
+                    "action": "allow",
+                }
+            ]
+        )
+        req = CapabilityRequest(capability_id="cap.r", goal="g", scope={"region": "eu-west"})
+        dec = eng.evaluate(
+            req, _cap("cap.r", SafetyClass.READ), Principal(principal_id="u1"), justification=""
+        )
+        assert dec.allowed is True
+
+    def test_scope_wildcard_requires_presence(self) -> None:
+        eng = self._engine(
+            [
+                {
+                    "name": "any_region",
+                    "match": {"safety_class": ["READ"], "scope": {"region": "*"}},
+                    "action": "allow",
+                }
+            ]
+        )
+        # Missing key: denied
+        req_missing = _req("cap.r")
+        with pytest.raises(PolicyDenied):
+            eng.evaluate(
+                req_missing,
+                _cap("cap.r", SafetyClass.READ),
+                Principal(principal_id="u1"),
+                justification="",
+            )
+        # Present key: allowed
+        req_present = CapabilityRequest(
+            capability_id="cap.r", goal="g", scope={"region": "anything"}
+        )
+        dec = eng.evaluate(
+            req_present,
+            _cap("cap.r", SafetyClass.READ),
+            Principal(principal_id="u1"),
+            justification="",
+        )
+        assert dec.allowed is True
+
+    def test_intent_explain_reports_code(self) -> None:
+        """explain() surfaces INTENT_NOT_ALLOWED on a rule that requires a specific intent."""
+        eng = self._engine(
+            [
+                {
+                    "name": "support_lookup_only",
+                    "match": {"safety_class": ["READ"], "intent": ["support_lookup"]},
+                    "action": "allow",
+                }
+            ]
+        )
+        req = CapabilityRequest(capability_id="cap.r", goal="g", intent="marketing_export")
+        result = eng.explain(
+            req,
+            _cap("cap.r", SafetyClass.READ),
+            Principal(principal_id="u1"),
+            justification="",
+        )
+        assert result.denied is True
+        codes = {fc.reason_code for fc in result.failed_conditions}
+        assert DenialReason.INTENT_NOT_ALLOWED in codes
+
+    def test_scope_explain_reports_code(self) -> None:
+        eng = self._engine(
+            [
+                {
+                    "name": "eu_only",
+                    "match": {"safety_class": ["READ"], "scope": {"region": "eu-west"}},
+                    "action": "allow",
+                }
+            ]
+        )
+        req = CapabilityRequest(capability_id="cap.r", goal="g", scope={"region": "us-east"})
+        result = eng.explain(
+            req,
+            _cap("cap.r", SafetyClass.READ),
+            Principal(principal_id="u1"),
+            justification="",
+        )
+        codes = {fc.reason_code for fc in result.failed_conditions}
+        assert DenialReason.SCOPE_NOT_ALLOWED in codes
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DSL parser: intent / scope validation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_dsl_parser_rejects_non_list_intent() -> None:
+    with pytest.raises(PolicyConfigError, match="'intent' must be a list"):
+        DeclarativePolicyEngine.from_dict(
+            {"rules": [{"name": "x", "match": {"intent": "support"}, "action": "allow"}]}
+        )
+
+
+def test_dsl_parser_rejects_non_dict_scope() -> None:
+    with pytest.raises(PolicyConfigError, match="'scope' must be a mapping"):
+        DeclarativePolicyEngine.from_dict(
+            {"rules": [{"name": "x", "match": {"scope": "eu-west"}, "action": "allow"}]}
+        )
+
+
+def test_dsl_parser_rejects_non_string_scope_value() -> None:
+    with pytest.raises(PolicyConfigError, match="string keys to string values"):
+        DeclarativePolicyEngine.from_dict(
+            {"rules": [{"name": "x", "match": {"scope": {"k": 1}}, "action": "allow"}]}
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PolicyDenied carries reason_code through raise / except
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_policy_denied_default_reason_code_is_none() -> None:
+    err = PolicyDenied("bare message")
+    assert err.reason_code is None
+    assert str(err) == "bare message"
+
+
+def test_policy_denied_carries_reason_code() -> None:
+    err = PolicyDenied("msg", reason_code=DenialReason.MISSING_ROLE)
+    assert err.reason_code == DenialReason.MISSING_ROLE

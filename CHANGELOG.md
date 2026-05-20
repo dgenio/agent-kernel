@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Structured intent and scope metadata on `CapabilityRequest`: new optional
+  `intent: str | None` and `scope: dict[str, Any]` fields let policy engines
+  authorize based on machine-readable intent and scope alongside the existing
+  free-text `goal`. `DeclarativePolicyEngine` rules can match on these via new
+  `intent: [...]` and `scope: {key: value}` clauses in YAML/TOML policy files.
+  Intent-aware allow rules fail closed for legacy callers that don't set an
+  intent. (#72)
+- Structured policy decision trace (`PolicyDecisionTrace` + `PolicyTraceStep`):
+  both built-in policy engines now attach a step-by-step trace to every
+  `PolicyDecision` (allow and deny paths). Each step records the rule
+  considered, the outcome (`matched`/`skipped`/`denied`/`allowed`/
+  `constraint_applied`), a human-readable detail, and — for terminal
+  steps — the stable reason code. Traces echo `intent` / `scope` from the
+  request and contain no raw argument values. `DryRunResult.policy_decision`
+  also carries a synthesized single-step trace. (#73)
+- Stable machine-readable denial reason codes: new `DenialReason` and
+  `AllowReason` enums in `agent_kernel.policy_reasons` (also exported as
+  `from agent_kernel import DenialReason, AllowReason`). Every built-in
+  denial path on `DefaultPolicyEngine` and `DeclarativePolicyEngine` populates
+  `PolicyDecision.reason_code`, `DenialExplanation.reason_code`,
+  `FailedCondition.reason_code`, and `PolicyDenied.reason_code`. Tests should
+  assert on these codes instead of matching the human-readable `reason` /
+  `narrative` strings, which remain part of the API but may evolve for
+  clarity. Codes: `missing_role`, `missing_tenant_attribute`,
+  `missing_attribute`, `insufficient_justification`, `invalid_constraint`,
+  `rate_limited`, `no_matching_rule`, `explicit_deny_rule`,
+  `intent_not_allowed`, `scope_not_allowed`; allow-side: `default_policy_allow`,
+  `rule_allow`, `default_fallthrough_allow`. (#77)
+- New public exports: `AllowReason`, `DenialReason`, `PolicyDecisionTrace`,
+  `PolicyTraceStep`.
+
+### Changed
+- `PolicyDecision` gained optional `reason_code: str | None` and
+  `trace: PolicyDecisionTrace | None` fields (both default `None` so
+  third-party engines that don't populate them keep working).
+- `DenialExplanation` and `FailedCondition` gained optional `reason_code`
+  fields populated by both built-in engines on every denial path.
+- `PolicyDenied(reason_code=...)` keyword argument: the exception now carries
+  a `reason_code` attribute so callers can branch on a stable code without
+  matching the human-readable message.
+
 ## [0.6.0] - 2026-05-19
 
 ### Added
