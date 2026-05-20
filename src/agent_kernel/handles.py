@@ -175,12 +175,34 @@ class HandleStore:
                 ``scope``) or is requested by a different principal.
         """
         # ── Principal binding ─────────────────────────────────────────────────
-        if handle.principal_id and principal_id and handle.principal_id != principal_id:
+        # A handle bound to a principal is not a bearer credential. If the
+        # handle has a non-empty principal_id, the caller MUST present a
+        # matching principal_id — omitting it counts as a mismatch (otherwise
+        # any caller in the same process could expand by passing "").
+        if handle.principal_id and handle.principal_id != principal_id:
             raise HandleConstraintViolation(
                 f"Handle '{handle.handle_id}' was granted to principal "
                 f"'{handle.principal_id}' and cannot be expanded by "
-                f"'{principal_id}'.",
+                f"'{principal_id or '<unspecified>'}'.",
                 reason_code=DenialReason.HANDLE_PRINCIPAL_MISMATCH,
+            )
+
+        # ── Query input validation ────────────────────────────────────────────
+        # Validate user-supplied query types up front so callers see a stable
+        # HandleConstraintViolation (with INVALID_CONSTRAINT) instead of a
+        # bare TypeError/ValueError from inside the expansion logic. Public
+        # interfaces must not leak stdlib exceptions (see AGENTS.md).
+        raw_filter = query.get("filter")
+        if raw_filter is not None and not isinstance(raw_filter, dict):
+            raise HandleConstraintViolation(
+                f"Handle expand 'filter' must be a dict, got {type(raw_filter).__name__}.",
+                reason_code=DenialReason.INVALID_CONSTRAINT,
+            )
+        raw_fields = query.get("fields")
+        if raw_fields is not None and not isinstance(raw_fields, list | tuple):
+            raise HandleConstraintViolation(
+                f"Handle expand 'fields' must be a list, got {type(raw_fields).__name__}.",
+                reason_code=DenialReason.INVALID_CONSTRAINT,
             )
 
         # ── Grant-constraint rechecks ─────────────────────────────────────────
@@ -188,7 +210,7 @@ class HandleStore:
         granted_fields = handle.constraints.get("allowed_fields") or []
         granted_scope = handle.constraints.get("scope") or {}
 
-        requested_fields: list[str] = list(query.get("fields", []))
+        requested_fields: list[str] = list(raw_fields or [])
         if granted_fields and requested_fields:
             disallowed = [f for f in requested_fields if f not in granted_fields]
             if disallowed:
@@ -199,14 +221,14 @@ class HandleStore:
                     reason_code=DenialReason.HANDLE_CONSTRAINT_VIOLATION,
                 )
 
+        filter_in: dict[str, Any] = raw_filter or {}
         if granted_scope:
-            filter_spec_in: dict[str, Any] = query.get("filter", {}) or {}
             for sk, sv in granted_scope.items():
-                if sk in filter_spec_in and filter_spec_in[sk] != sv:
+                if sk in filter_in and filter_in[sk] != sv:
                     raise HandleConstraintViolation(
                         f"Handle '{handle.handle_id}' is scoped to "
                         f"{sk}={sv!r}; request filter "
-                        f"{sk}={filter_spec_in[sk]!r} is outside that scope.",
+                        f"{sk}={filter_in[sk]!r} is outside that scope.",
                         reason_code=DenialReason.HANDLE_CONSTRAINT_VIOLATION,
                     )
 
@@ -216,7 +238,7 @@ class HandleStore:
         # ── Filtering ──────────────────────────────────────────────────────────
         # Grant scope is AND-merged into the request filter so the caller
         # cannot bypass it by omitting the scope key.
-        filter_spec: dict[str, Any] = dict(query.get("filter", {}) or {})
+        filter_spec: dict[str, Any] = dict(filter_in)
         for sk, sv in granted_scope.items():
             filter_spec.setdefault(sk, sv)
         if filter_spec:
@@ -227,16 +249,33 @@ class HandleStore:
             ]
 
         # ── Pagination ────────────────────────────────────────────────────────
-        offset = int(query.get("offset", 0))
-        requested_limit = query.get("limit")
-        limit = len(rows) if requested_limit is None else int(requested_limit)
+        try:
+            offset = int(query.get("offset", 0))
+        except (TypeError, ValueError) as exc:
+            raise HandleConstraintViolation(
+                f"Handle expand 'offset' must be an integer, got {query.get('offset')!r}.",
+                reason_code=DenialReason.INVALID_CONSTRAINT,
+            ) from exc
+        requested_limit_raw = query.get("limit")
+        requested_limit: int | None
+        if requested_limit_raw is None:
+            requested_limit = None
+        else:
+            try:
+                requested_limit = int(requested_limit_raw)
+            except (TypeError, ValueError) as exc:
+                raise HandleConstraintViolation(
+                    f"Handle expand 'limit' must be an integer, got {requested_limit_raw!r}.",
+                    reason_code=DenialReason.INVALID_CONSTRAINT,
+                ) from exc
+        limit = len(rows) if requested_limit is None else requested_limit
 
         if isinstance(granted_max_rows, int) and granted_max_rows >= 0:
-            if requested_limit is not None and int(requested_limit) > granted_max_rows:
+            if requested_limit is not None and requested_limit > granted_max_rows:
                 raise HandleConstraintViolation(
                     f"Handle '{handle.handle_id}' grant caps rows at "
                     f"{granted_max_rows}; request asked for "
-                    f"limit={int(requested_limit)}.",
+                    f"limit={requested_limit}.",
                     reason_code=DenialReason.HANDLE_CONSTRAINT_VIOLATION,
                 )
             limit = min(limit, granted_max_rows)

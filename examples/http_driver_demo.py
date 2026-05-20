@@ -119,6 +119,7 @@ async def main() -> None:
             expanded = kernel.expand(
                 frame.handle,
                 query={"limit": 3, "fields": ["id", "name", "price"]},
+                principal=principal,
             )
             for row in expanded.table_preview:
                 print(f"  {row}")

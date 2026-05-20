@@ -535,10 +535,11 @@ class Kernel:
         Args:
             handle: The :class:`Handle` to expand.
             query: Query parameters (``offset``, ``limit``, ``fields``, ``filter``).
-            principal: The principal performing the expansion. When provided,
-                the handle's persisted ``principal_id`` is checked — handles
-                cannot be expanded by a principal other than the one the
-                original grant was issued to.
+            principal: The principal performing the expansion. **Required**
+                when the handle was created with a non-empty ``principal_id``:
+                an omitted principal is treated as a mismatch and raises
+                :class:`HandleConstraintViolation` (handle IDs are not bearer
+                credentials). Optional for handles that were not principal-bound.
 
         Returns:
             A :class:`Frame` with the requested slice of data.

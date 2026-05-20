@@ -250,10 +250,67 @@ def test_expand_principal_mismatch_denied(store: HandleStore) -> None:
     assert exc.value.reason_code == DenialReason.HANDLE_PRINCIPAL_MISMATCH
 
 
+def test_expand_principal_missing_denied_for_bound_handle(store: HandleStore) -> None:
+    """A principal-bound handle cannot be expanded without proving the principal.
+
+    Regression: an earlier implementation only enforced the binding when both
+    sides were non-empty, so a caller could bypass by passing principal_id=""
+    (or by omitting it via the default).
+    """
+    handle = store.store("cap.x", _granted_rows(), principal_id="p-original")
+    # No principal_id argument at all.
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={})
+    assert exc.value.reason_code == DenialReason.HANDLE_PRINCIPAL_MISMATCH
+    # Explicit empty string.
+    with pytest.raises(HandleConstraintViolation) as exc2:
+        store.expand(handle, query={}, principal_id="")
+    assert exc2.value.reason_code == DenialReason.HANDLE_PRINCIPAL_MISMATCH
+
+
 def test_expand_principal_same_succeeds(store: HandleStore) -> None:
     handle = store.store("cap.x", _granted_rows(), principal_id="p-1")
     frame = store.expand(handle, query={"limit": 5}, principal_id="p-1")
     assert len(frame.table_preview) == 5
+
+
+def test_expand_unbound_handle_still_works_without_principal(store: HandleStore) -> None:
+    """Handles without a stored principal_id are not principal-bound — callers
+    can still expand them without supplying a principal_id (back-compat)."""
+    handle = store.store("cap.x", _granted_rows())  # no principal_id
+    frame = store.expand(handle, query={"limit": 3})
+    assert len(frame.table_preview) == 3
+
+
+# ── Query input validation (#75 / #76 review feedback) ─────────────────────────
+
+
+def test_expand_invalid_filter_type_raises_stable(store: HandleStore) -> None:
+    handle = store.store("cap.x", _granted_rows())
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"filter": ["not-a-dict"]})
+    assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT
+
+
+def test_expand_invalid_fields_type_raises_stable(store: HandleStore) -> None:
+    handle = store.store("cap.x", _granted_rows())
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"fields": "id"})  # string, not list
+    assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT
+
+
+def test_expand_invalid_offset_raises_stable(store: HandleStore) -> None:
+    handle = store.store("cap.x", _granted_rows())
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"offset": "abc"})
+    assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT
+
+
+def test_expand_invalid_limit_raises_stable(store: HandleStore) -> None:
+    handle = store.store("cap.x", _granted_rows())
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"limit": "abc"})
+    assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT
 
 
 def test_expand_no_constraints_is_unchanged(store: HandleStore) -> None:

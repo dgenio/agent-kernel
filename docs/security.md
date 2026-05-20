@@ -31,10 +31,13 @@ Any change to these fields invalidates the HMAC signature.
 Consider an agent that obtains a token for `billing.list_invoices` then passes it to a different agent. The second agent cannot use it because `verify()` checks that `token.principal_id == expected_principal_id`.
 
 The same principle extends to handles: every `Handle` carries the `principal_id`
-the original grant was issued to, and `HandleStore.expand(..., principal_id=...)`
-rejects expansion attempts from any other principal with
-`HandleConstraintViolation` (`reason_code = HANDLE_PRINCIPAL_MISMATCH`). A
-handle ID alone is not a bearer credential.
+the original grant was issued to. When `handle.principal_id` is non-empty,
+`HandleStore.expand` rejects expansion unless the caller supplies a matching
+`principal_id`. **An omitted or empty `principal_id` is treated as a
+mismatch** (`HandleConstraintViolation`, `reason_code = HANDLE_PRINCIPAL_MISMATCH`),
+so a handle ID alone is not a bearer credential — proof of the original
+principal is always required. `Kernel.expand(..., principal=Principal(...))`
+forwards the principal automatically.
 
 ## Handle expansion boundary
 
