@@ -85,5 +85,8 @@ class AllowReason(_StrEnumCompat):
     DEFAULT_FALLTHROUGH_ALLOW = "default_fallthrough_allow"
     """Allowed because no rule matched and the engine's default action is ``allow``."""
 
+    TOKEN_VERIFIED = "token_verified"
+    """Allowed in dry-run: the token was verified; policy was evaluated at grant time."""
+
 
 __all__ = ["AllowReason", "DenialReason"]

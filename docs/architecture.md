@@ -97,11 +97,11 @@ Every `PolicyDecision`, `DenialExplanation`, `FailedCondition`, and `PolicyDenie
 | `intent_not_allowed` | DSL: `match.intent` rejected the request's intent |
 | `scope_not_allowed` | DSL: `match.scope` rejected the request's scope |
 
-Allow-side codes (`AllowReason.*`): `default_policy_allow`, `rule_allow`, `default_fallthrough_allow`.
+Allow-side codes (`AllowReason.*`): `default_policy_allow`, `rule_allow`, `default_fallthrough_allow`, `token_verified`.
 
 #### Decision trace
 
-Every `PolicyDecision` from a built-in engine carries a `PolicyDecisionTrace` describing how the decision was reached: the engine name, the capability and principal IDs, the request's `intent`/`scope` (echoed), and an ordered list of `PolicyTraceStep` entries. Each step records the rule name, the outcome (`matched`/`skipped`/`denied`/`allowed`/`constraint_applied`), a human-readable detail, and — for terminal steps — the same stable `reason_code` carried on the decision. Traces are safe to log and serialize: they contain rule names, condition names, and codes only — never raw argument values.
+Every `PolicyDecision` from a built-in engine carries a `PolicyDecisionTrace` describing how the decision was reached: the engine name, the capability and principal IDs, the request's `intent` (echoed) and `scope_keys` (scope dimension names only — values are redacted), and an ordered list of `PolicyTraceStep` entries. Each step records the rule name, the outcome (`matched`/`skipped`/`denied`/`allowed`/`constraint_applied`), a human-readable detail, and — for terminal steps — the same stable `reason_code` carried on the decision. Traces are safe to log and serialize: they contain rule names, condition names, and codes only — never raw argument values.
 
 #### Dry-run mode
 

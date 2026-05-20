@@ -349,7 +349,7 @@ class DeclarativePolicyEngine:
         if m.scope is not None:
             for k, v in m.scope.items():
                 scope_val = request.scope.get(k)
-                if scope_val is None or (v != "*" and str(scope_val) != v):
+                if scope_val is None or (v != "*" and scope_val != v):
                     return False
         return m.min_justification is None or len(justification.strip()) >= m.min_justification
 
@@ -386,7 +386,7 @@ class DeclarativePolicyEngine:
             capability_id=cid,
             principal_id=pid,
             intent=request.intent,
-            scope=dict(request.scope),
+            scope_keys=sorted(request.scope.keys()),
         )
 
         for rule in self._rules:
@@ -574,7 +574,7 @@ class DeclarativePolicyEngine:
             if m.scope is not None:
                 for k, v in m.scope.items():
                     scope_val = request.scope.get(k)
-                    if scope_val is None or (v != "*" and str(scope_val) != v):
+                    if scope_val is None or (v != "*" and scope_val != v):
                         rule_failures.append(
                             FailedCondition(
                                 condition=f"scope:{k}",

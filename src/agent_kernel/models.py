@@ -221,8 +221,8 @@ class PolicyDecisionTrace:
     intent: str | None
     """Echoed :attr:`CapabilityRequest.intent` (may be ``None``)."""
 
-    scope: dict[str, Any] = field(default_factory=dict)
-    """Echoed :attr:`CapabilityRequest.scope` (may be empty)."""
+    scope_keys: list[str] = field(default_factory=list)
+    """Scope dimension names present on the request (values redacted for safety)."""
 
     steps: list[PolicyTraceStep] = field(default_factory=list)
     """Ordered list of evaluation steps."""

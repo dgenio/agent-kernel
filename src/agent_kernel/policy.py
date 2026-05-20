@@ -268,7 +268,7 @@ class DefaultPolicyEngine:
             capability_id=cid,
             principal_id=pid,
             intent=request.intent,
-            scope=dict(request.scope),
+            scope_keys=sorted(request.scope.keys()),
         )
 
         def _record_deny(detail: str, code: str) -> None:
@@ -425,7 +425,7 @@ class DefaultPolicyEngine:
             PolicyTraceStep(
                 name="row_cap",
                 outcome="constraint_applied",
-                detail=f"max_rows={constraints['max_rows']}",
+                detail="max_rows capped",
             )
         )
 

@@ -770,7 +770,7 @@ def test_grant_capability_carries_intent_through_request(
     assert grant.decision.reason_code == AllowReason.DEFAULT_POLICY_ALLOW
     assert grant.decision.trace is not None
     assert grant.decision.trace.intent == "customer_support_lookup"
-    assert grant.decision.trace.scope == {"region": "eu-west"}
+    assert grant.decision.trace.scope_keys == ["region"]
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,7 @@ from .models import (
     RoutePlan,
 )
 from .policy import DefaultPolicyEngine, PolicyEngine
+from .policy_reasons import AllowReason
 from .registry import CapabilityRegistry
 from .router import Router, StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider, TokenProvider
@@ -310,17 +311,17 @@ class Kernel:
                 capability_id=token.capability_id,
                 principal_id=principal.principal_id,
                 intent=None,
-                scope={},
+                scope_keys=[],
                 steps=[
                     PolicyTraceStep(
                         name="token_verified",
                         outcome="allowed",
                         detail="Token verified; original policy decision was at grant time.",
-                        reason_code="token_verified",
+                        reason_code=str(AllowReason.TOKEN_VERIFIED),
                     )
                 ],
                 final_outcome="allowed",
-                final_reason_code="token_verified",
+                final_reason_code=str(AllowReason.TOKEN_VERIFIED),
             )
             return DryRunResult(
                 capability_id=token.capability_id,
@@ -329,7 +330,7 @@ class Kernel:
                     allowed=True,
                     reason="Token verified. Policy was evaluated at grant time.",
                     constraints=dict(token.constraints),
-                    reason_code="token_verified",
+                    reason_code=str(AllowReason.TOKEN_VERIFIED),
                     trace=dry_run_trace,
                 ),
                 driver_id=driver_id,

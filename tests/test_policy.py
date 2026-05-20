@@ -1440,7 +1440,7 @@ class TestDefaultEngineDecisionTrace:
         dec = engine.evaluate(req, _cap("cap.r", SafetyClass.READ), p, justification="")
         assert dec.trace is not None
         assert dec.trace.intent == "support_lookup"
-        assert dec.trace.scope == {"region": "eu-west"}
+        assert dec.trace.scope_keys == ["region"]
 
     def test_trace_no_raw_args_leaked(self, engine: DefaultPolicyEngine) -> None:
         """Sensitive values from request.constraints must never appear in trace details."""

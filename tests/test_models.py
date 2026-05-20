@@ -199,7 +199,7 @@ def test_policy_decision_trace_defaults() -> None:
         intent=None,
     )
     assert trace.steps == []
-    assert trace.scope == {}
+    assert trace.scope_keys == []
     assert trace.final_outcome == "denied"
     assert trace.final_reason_code is None
 
