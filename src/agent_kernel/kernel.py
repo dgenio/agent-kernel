@@ -39,6 +39,36 @@ from .trace import TraceStore
 logger = logging.getLogger(__name__)
 
 
+_MEMORY_CAPABILITY_PREFIX = "memory."
+_MEMORY_SENSITIVE_ARG_KEYS: frozenset[str] = frozenset(
+    {"payload", "content", "value", "memory", "text", "body"}
+)
+
+
+def _redact_args_for_trace(capability_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Strip raw memory payloads from :class:`ActionTrace.args`.
+
+    Memory capabilities (``capability_id`` starting with ``"memory."``) may
+    carry durable text the principal is committing to or fetching from
+    long-term memory. Tracing the raw payload would defeat the I-01 boundary
+    that the :class:`Firewall` enforces for outputs — so we apply an
+    equivalent input-side redaction at trace-record time.
+
+    The resulting dict preserves keys (so audit can confirm a payload was
+    provided) and replaces sensitive values with ``"[REDACTED]"``. Non-memory
+    capabilities are returned unchanged.
+    """
+    if not capability_id.startswith(_MEMORY_CAPABILITY_PREFIX):
+        return args
+    redacted: dict[str, Any] = {}
+    for k, v in args.items():
+        if k.lower() in _MEMORY_SENSITIVE_ARG_KEYS:
+            redacted[k] = "[REDACTED]"
+        else:
+            redacted[k] = v
+    return redacted
+
+
 def _frame_payload(frame: Frame) -> Any:
     """Return the LLM-facing payload from a :class:`Frame` for token counting.
 
@@ -425,7 +455,7 @@ class Kernel:
                 principal_id=principal.principal_id,
                 token_id=token.token_id,
                 invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-                args=args,
+                args=_redact_args_for_trace(token.capability_id, args),
                 response_mode=response_mode,
                 driver_id="",
                 error=err_msg,
@@ -441,6 +471,8 @@ class Kernel:
             handle = self._handle_store.store(
                 capability_id=token.capability_id,
                 data=raw_result.data,
+                principal_id=principal.principal_id,
+                constraints=token.constraints,
             )
 
         # ── Firewall transform + budget reconciliation ────────────────────────
@@ -478,7 +510,7 @@ class Kernel:
             principal_id=principal.principal_id,
             token_id=token.token_id,
             invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-            args=args,
+            args=_redact_args_for_trace(token.capability_id, args),
             response_mode=frame.response_mode,
             driver_id=used_driver_id,
             handle_id=handle.handle_id if handle else None,
@@ -491,12 +523,22 @@ class Kernel:
         )
         return frame
 
-    def expand(self, handle: Handle, *, query: dict[str, Any]) -> Frame:
+    def expand(
+        self,
+        handle: Handle,
+        *,
+        query: dict[str, Any],
+        principal: Principal | None = None,
+    ) -> Frame:
         """Expand a handle with pagination, field selection, or filtering.
 
         Args:
             handle: The :class:`Handle` to expand.
             query: Query parameters (``offset``, ``limit``, ``fields``, ``filter``).
+            principal: The principal performing the expansion. When provided,
+                the handle's persisted ``principal_id`` is checked — handles
+                cannot be expanded by a principal other than the one the
+                original grant was issued to.
 
         Returns:
             A :class:`Frame` with the requested slice of data.
@@ -504,15 +546,23 @@ class Kernel:
         Raises:
             HandleNotFound: If the handle is unknown.
             HandleExpired: If the handle has expired.
+            HandleConstraintViolation: If the requested expansion exceeds the
+                grant's persisted constraints (``max_rows``, ``allowed_fields``,
+                ``scope``) or is requested by a different principal.
         """
         logger.info(
             "expand",
             extra={
                 "handle_id": handle.handle_id,
                 "capability_id": handle.capability_id,
+                "principal_id": principal.principal_id if principal else "",
             },
         )
-        return self._handle_store.expand(handle, query=query)
+        return self._handle_store.expand(
+            handle,
+            query=query,
+            principal_id=principal.principal_id if principal else "",
+        )
 
     def explain(self, action_id: str) -> ActionTrace:
         """Retrieve the audit trace for a past invocation.

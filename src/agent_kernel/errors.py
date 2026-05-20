@@ -126,3 +126,22 @@ class HandleNotFound(AgentKernelError):
 
 class HandleExpired(AgentKernelError):
     """Raised when a handle's TTL has elapsed."""
+
+
+class HandleConstraintViolation(AgentKernelError):
+    """Raised when a handle expansion request violates the grant's constraints.
+
+    Handles persist the constraints attached to the original
+    :class:`~agent_kernel.models.PolicyDecision` (e.g. ``max_rows``,
+    ``allowed_fields``). :meth:`HandleStore.expand` rechecks the requested
+    query against those constraints; expansions that would exceed the row
+    cap, request disallowed fields, or violate scope raise this error so
+    callers can branch on ``reason_code`` rather than parse the message.
+
+    Carries the same ``reason_code`` shape as :class:`PolicyDenied` so
+    metrics and UI mapping use one denial vocabulary across the kernel.
+    """
+
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        super().__init__(message)
+        self.reason_code: str | None = reason_code

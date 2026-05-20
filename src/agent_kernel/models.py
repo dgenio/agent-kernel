@@ -314,13 +314,30 @@ class RawResult:
 
 @dataclass(slots=True)
 class Handle:
-    """An opaque reference to a full dataset stored in the HandleStore."""
+    """An opaque reference to a full dataset stored in the HandleStore.
+
+    Handles carry the grant constraints persisted at creation time. The
+    :class:`HandleStore` rechecks those constraints when the handle is
+    expanded, so an over-broad expand query is denied with a stable
+    :class:`~agent_kernel.errors.HandleConstraintViolation` rather than
+    silently returning data the original grant never authorised.
+    """
 
     handle_id: str
     capability_id: str
     created_at: datetime.datetime
     expires_at: datetime.datetime
     total_rows: int = 0
+
+    principal_id: str = ""
+    """Principal the original grant was issued to. ``expand`` rejects use by
+    other principals so handle references cannot be shared as a back-door."""
+
+    constraints: dict[str, Any] = field(default_factory=dict)
+    """Grant constraints copied from :attr:`PolicyDecision.constraints` at
+    handle creation time. ``expand`` rechecks ``max_rows``, ``allowed_fields``,
+    and any ``scope`` filter against these values.
+    """
 
 
 @dataclass(slots=True)

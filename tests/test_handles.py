@@ -6,8 +6,14 @@ import datetime
 
 import pytest
 
-from agent_kernel import HandleExpired, HandleNotFound, HandleStore
+from agent_kernel import (
+    HandleConstraintViolation,
+    HandleExpired,
+    HandleNotFound,
+    HandleStore,
+)
 from agent_kernel.models import Handle
+from agent_kernel.policy_reasons import DenialReason
 
 
 @pytest.fixture()
@@ -145,3 +151,113 @@ def test_periodic_eviction_on_store() -> None:
         s.store("cap.x", [i], ttl_seconds=-1)
     # All expired entries should have been evicted at the interval boundary
     assert len(s._meta) == 0
+
+
+# ── Grant-constraint expand (#76) ─────────────────────────────────────────────
+
+
+def _granted_rows() -> list[dict[str, object]]:
+    return [
+        {"id": i, "email": f"u{i}@example.com", "status": "ok", "region": "eu" if i < 10 else "us"}
+        for i in range(20)
+    ]
+
+
+def test_store_persists_grant_constraints(store: HandleStore) -> None:
+    handle = store.store(
+        "cap.x",
+        _granted_rows(),
+        principal_id="p-1",
+        constraints={"max_rows": 5, "allowed_fields": ["id", "status"]},
+    )
+    assert handle.principal_id == "p-1"
+    assert handle.constraints == {"max_rows": 5, "allowed_fields": ["id", "status"]}
+
+
+def test_expand_denies_limit_over_granted_max_rows(store: HandleStore) -> None:
+    handle = store.store("cap.x", _granted_rows(), constraints={"max_rows": 3})
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"limit": 50})
+    assert exc.value.reason_code == DenialReason.HANDLE_CONSTRAINT_VIOLATION
+
+
+def test_expand_caps_unspecified_limit_to_grant_max_rows(store: HandleStore) -> None:
+    handle = store.store("cap.x", _granted_rows(), constraints={"max_rows": 3})
+    frame = store.expand(handle, query={})
+    # 20 source rows, but grant caps at 3.
+    assert len(frame.table_preview) == 3
+
+
+def test_expand_denies_disallowed_fields(store: HandleStore) -> None:
+    handle = store.store(
+        "cap.x",
+        _granted_rows(),
+        constraints={"allowed_fields": ["id", "status"]},
+    )
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"fields": ["id", "email"]})
+    assert exc.value.reason_code == DenialReason.HANDLE_CONSTRAINT_VIOLATION
+    assert "email" in str(exc.value)
+
+
+def test_expand_applies_allowed_fields_when_none_requested(store: HandleStore) -> None:
+    handle = store.store(
+        "cap.x",
+        _granted_rows(),
+        constraints={"allowed_fields": ["id", "status"]},
+    )
+    frame = store.expand(handle, query={})
+    assert frame.table_preview, "table preview must not be empty"
+    for row in frame.table_preview:
+        assert set(row.keys()) == {"id", "status"}, (
+            "disallowed grant field leaked through unscoped expand"
+        )
+
+
+def test_expand_scope_enforces_filter_dimension(store: HandleStore) -> None:
+    handle = store.store(
+        "cap.x",
+        _granted_rows(),
+        constraints={"scope": {"region": "eu"}},
+    )
+    # Asking for region=us on an eu-scoped grant must be denied.
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"filter": {"region": "us"}})
+    assert exc.value.reason_code == DenialReason.HANDLE_CONSTRAINT_VIOLATION
+
+
+def test_expand_scope_filter_is_default_and_blocks_us_rows(store: HandleStore) -> None:
+    handle = store.store(
+        "cap.x",
+        _granted_rows(),
+        constraints={"scope": {"region": "eu"}},
+    )
+    frame = store.expand(handle, query={})
+    # All 20 rows pre-filter; only the eu half should pass through.
+    assert frame.table_preview, "scoped expand must return at least one row"
+    for row in frame.table_preview:
+        assert row["region"] == "eu", "us-region row leaked through scoped expand"
+
+
+def test_expand_principal_mismatch_denied(store: HandleStore) -> None:
+    handle = store.store(
+        "cap.x",
+        _granted_rows(),
+        principal_id="p-original",
+    )
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={}, principal_id="p-attacker")
+    assert exc.value.reason_code == DenialReason.HANDLE_PRINCIPAL_MISMATCH
+
+
+def test_expand_principal_same_succeeds(store: HandleStore) -> None:
+    handle = store.store("cap.x", _granted_rows(), principal_id="p-1")
+    frame = store.expand(handle, query={"limit": 5}, principal_id="p-1")
+    assert len(frame.table_preview) == 5
+
+
+def test_expand_no_constraints_is_unchanged(store: HandleStore) -> None:
+    # Handles created without constraints still behave like the legacy code path.
+    handle = store.store("cap.x", _granted_rows())
+    frame = store.expand(handle, query={"limit": 2})
+    assert len(frame.table_preview) == 2
