@@ -20,8 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PolicyDecision` (allow and deny paths). Each step records the rule
   considered, the outcome (`matched`/`skipped`/`denied`/`allowed`/
   `constraint_applied`), a human-readable detail, and — for terminal
-  steps — the stable reason code. Traces echo `intent` / `scope` from the
-  request and contain no raw argument values. `DryRunResult.policy_decision`
+  steps — the stable reason code. Traces echo `intent` and `scope_keys`
+  (scope dimension names only — values redacted) from the request and contain
+  no raw argument values. `DryRunResult.policy_decision`
   also carries a synthesized single-step trace. (#73)
 - Stable machine-readable denial reason codes: new `DenialReason` and
   `AllowReason` enums in `agent_kernel.policy_reasons` (also exported as
