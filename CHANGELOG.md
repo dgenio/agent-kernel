@@ -10,12 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - "Secure your first MCP tool in 5 minutes" tutorial: new
   [`docs/tutorial.md`](docs/tutorial.md) walks a new reader from install to a
-  working invocation, covering registration, principals, grants, all four
-  response modes, handle expansion, policy denial with stable
-  `reason_code`, and `explain()` audit. Companion runnable example
+  working invocation, covering registration, principals, grants, the three
+  LLM-safe response modes (`summary` / `table` / `handle_only`), handle
+  expansion, policy denial with stable `reason_code`, and `explain()`
+  audit. The admin-only `raw` mode is described but not exercised by the
+  walkthrough. Companion runnable example
   [`examples/tutorial.py`](examples/tutorial.py) uses `InMemoryDriver`
-  (offline, zero external deps) and is exercised by `make example` and CI.
-  (#46)
+  (offline, zero external deps) and is exercised by `make example` and CI;
+  it now `assert`s that no PII field leaks into the LLM-safe Frame so a
+  firewall regression fails the build. (#46)
 - README "How this relates to neighboring projects" section: a neutral
   boundaries table covering `AgentFence` (external CLI/proxy gate),
   `contextweaver` (context compilation library), `ChainWeaver`

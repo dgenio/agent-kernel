@@ -170,7 +170,11 @@ async def main() -> None:
     for row in table_frame.table_preview[:2]:
         print(f"    {row}")
     leaked = [row for row in table_frame.table_preview if "email" in row]
-    print(f"  PII fields leaked into Frame: {len(leaked)}  (expected: 0)")
+    assert leaked == [], (
+        f"firewall regression: 'email' is not in allowed_fields but reached "
+        f"the table-mode Frame in {len(leaked)} row(s): {leaked}"
+    )
+    print(f"  PII fields leaked into Frame: {len(leaked)}  (asserted == 0)")
 
     print("\n=== Step 6: Invoke in handle_only mode and expand ===")
     handle_token = kernel.get_token(list_req, reader, justification="")

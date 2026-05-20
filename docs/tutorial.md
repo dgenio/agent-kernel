@@ -166,8 +166,8 @@ assert all("email" not in row for row in table_frame.table_preview)
 ## 6. Expand a Handle
 
 Handles let the LLM stay inside its context budget while still pulling
-specific rows or fields on demand. The expand projection is applied on
-top of `allowed_fields`, never around it.
+specific rows or fields on demand. The expand query supports `offset`,
+`limit`, `fields`, and an equality `filter`.
 
 ```python
 handle_frame = asyncio.run(
@@ -185,6 +185,18 @@ expanded = kernel.expand(
 print(expanded.table_preview)
 # [{'id': 'INV-001', 'amount': 120.0}, {'id': 'INV-002', 'amount': 540.0}]
 ```
+
+> **Where the security boundary is today.** The `Firewall` enforces
+> `allowed_fields` when it builds the `summary` and `table` previews, so
+> disallowed columns never reach the LLM-safe Frame. `HandleStore.expand()`
+> currently filters by whatever `fields` the caller passes in the query
+> against the stored raw rows — it does **not yet** re-apply the
+> capability's `allowed_fields` projection. Until the in-flight grant
+> constraint work lands (tracking issue
+> [#76](https://github.com/dgenio/agent-kernel/issues/76), PR
+> [#79](https://github.com/dgenio/agent-kernel/pull/79)), treat handle
+> expansion as authorized-but-field-unconstrained: only request `fields`
+> the caller is allowed to see.
 
 ## 7. Watch policy enforcement
 
