@@ -272,6 +272,117 @@ def test_secrets_denied_writer_role(engine: DefaultPolicyEngine) -> None:
         engine.evaluate(_req("cap.sec"), cap, p, justification="long enough justification here")
 
 
+# ── MEMORY (#75) ──────────────────────────────────────────────────────────────
+
+
+def _memory_request(scope: dict[str, object] | None = None) -> CapabilityRequest:
+    return CapabilityRequest(
+        capability_id="memory.read",
+        goal="test memory",
+        scope=scope or {},
+    )
+
+
+def test_memory_read_project_scope_allowed(engine: DefaultPolicyEngine) -> None:
+    """Reading project-scoped memory works for any reader."""
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("memory.read", SafetyClass.READ, SensitivityTag.MEMORY)
+    dec = engine.evaluate(_memory_request({"memory_scope": "project"}), cap, p, justification="")
+    assert dec.allowed is True
+
+
+def test_memory_read_sensitive_denied_without_role(engine: DefaultPolicyEngine) -> None:
+    """Reading sensitive-scoped memory requires memory_reader_sensitive."""
+    from agent_kernel.policy_reasons import DenialReason
+
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("memory.read", SafetyClass.READ, SensitivityTag.MEMORY)
+    with pytest.raises(PolicyDenied) as exc:
+        engine.evaluate(_memory_request({"memory_scope": "sensitive"}), cap, p, justification="")
+    assert exc.value.reason_code == DenialReason.MEMORY_SENSITIVE_READ_DENIED
+
+
+def test_memory_read_sensitive_allowed_with_role(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["reader", "memory_reader_sensitive"])
+    cap = _cap("memory.read", SafetyClass.READ, SensitivityTag.MEMORY)
+    dec = engine.evaluate(_memory_request({"memory_scope": "sensitive"}), cap, p, justification="")
+    assert dec.allowed is True
+
+
+def test_memory_read_sensitive_allowed_with_admin(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["admin"])
+    cap = _cap("memory.read", SafetyClass.READ, SensitivityTag.MEMORY)
+    dec = engine.evaluate(_memory_request({"memory_scope": "sensitive"}), cap, p, justification="")
+    assert dec.allowed is True
+
+
+def test_memory_write_denied_without_writer_role(engine: DefaultPolicyEngine) -> None:
+    """memory.write requires the memory_writer role even when SafetyClass=WRITE
+    would otherwise be satisfied by a generic writer."""
+    from agent_kernel.policy_reasons import DenialReason
+
+    p = Principal(principal_id="u1", roles=["writer"])
+    cap = _cap("memory.write", SafetyClass.WRITE, SensitivityTag.MEMORY)
+    req = CapabilityRequest(capability_id="memory.write", goal="store a note")
+    with pytest.raises(PolicyDenied) as exc:
+        engine.evaluate(req, cap, p, justification="needs durable notes for session")
+    # Writer role passes the safety_class check (no MISSING_ROLE there) and we
+    # reach the MEMORY branch.
+    assert exc.value.reason_code == DenialReason.MEMORY_WRITE_REQUIRES_WRITER
+
+
+def test_memory_write_allowed_with_memory_writer_role(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["writer", "memory_writer"])
+    cap = _cap("memory.write", SafetyClass.WRITE, SensitivityTag.MEMORY)
+    req = CapabilityRequest(capability_id="memory.write", goal="store a note")
+    dec = engine.evaluate(req, cap, p, justification="needs durable notes for session")
+    assert dec.allowed is True
+
+
+def test_memory_write_allowed_with_admin(engine: DefaultPolicyEngine) -> None:
+    p = Principal(principal_id="u1", roles=["admin"])
+    cap = _cap("memory.write", SafetyClass.WRITE, SensitivityTag.MEMORY)
+    req = CapabilityRequest(capability_id="memory.write", goal="store a note")
+    dec = engine.evaluate(req, cap, p, justification="needs durable notes for session")
+    assert dec.allowed is True
+
+
+def test_memory_destructive_requires_writer(engine: DefaultPolicyEngine) -> None:
+    """DESTRUCTIVE memory (e.g. memory.forget) is treated as write-class."""
+    from agent_kernel.policy_reasons import DenialReason
+
+    p = Principal(principal_id="u1", roles=["admin"])
+    # admin passes the DESTRUCTIVE safety_class. The MEMORY branch then needs
+    # memory_writer OR admin; admin satisfies it.
+    cap = _cap("memory.forget", SafetyClass.DESTRUCTIVE, SensitivityTag.MEMORY)
+    req = CapabilityRequest(capability_id="memory.forget", goal="purge notes")
+    dec = engine.evaluate(req, cap, p, justification="user requested deletion of all notes")
+    assert dec.allowed is True
+
+    # A principal with destructive role but no memory_writer fails the memory rule.
+    p2 = Principal(principal_id="u2", roles=["writer"])
+    cap2 = _cap("memory.forget", SafetyClass.DESTRUCTIVE, SensitivityTag.MEMORY)
+    with pytest.raises(PolicyDenied) as exc:
+        engine.evaluate(req, cap2, p2, justification="user requested deletion of all notes")
+    # writer is not admin, so DESTRUCTIVE fails first on MISSING_ROLE.
+    assert exc.value.reason_code == DenialReason.MISSING_ROLE
+
+
+def test_memory_explain_lists_failed_conditions() -> None:
+    """explain() lists the memory denial alongside the FailedCondition reason_code."""
+    from agent_kernel.policy_reasons import DenialReason
+
+    eng = DefaultPolicyEngine()
+    p = Principal(principal_id="u1", roles=["reader"])
+    cap = _cap("memory.read", SafetyClass.READ, SensitivityTag.MEMORY)
+    explanation = eng.explain(
+        _memory_request({"memory_scope": "sensitive"}), cap, p, justification=""
+    )
+    assert explanation.denied is True
+    codes = [fc.reason_code for fc in explanation.failed_conditions]
+    assert str(DenialReason.MEMORY_SENSITIVE_READ_DENIED) in codes
+
+
 # ── Confused-deputy binding (via token) ────────────────────────────────────────
 
 

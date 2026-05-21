@@ -30,3 +30,11 @@ class SensitivityTag(str, Enum):
 
     SECRETS = "SECRETS"
     """Credentials, API keys, tokens."""
+
+    MEMORY = "MEMORY"
+    """Durable agent memory (project notes, session handoff, learned context).
+
+    Reading durable memory may expose sensitive past context; writing creates
+    durable assumptions that persist into future sessions. Policy treats
+    writes as higher risk than reads. See ``DefaultPolicyEngine.evaluate``.
+    """
