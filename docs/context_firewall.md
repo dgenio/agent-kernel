@@ -118,3 +118,59 @@ manager = BudgetManager(total_budget=128_000, token_counter=tiktoken_counter)
 
 The default counter (`default_token_counter`) is a character-based
 `len(json.dumps(value)) // 4` approximation with no extra dependencies.
+
+## Streaming
+
+For large results that arrive incrementally (e.g. SSE-style HTTP responses,
+chunked database cursors, line-by-line tool output), `Firewall.apply_stream()`
+lets you process chunks one at a time. PII redaction and per-chunk budget
+caps apply on every yielded Frame — secrets cannot leak just because they
+arrived in chunk N rather than the final aggregate.
+
+```python
+from agent_kernel.drivers.base import ExecutionContext, StreamingDriver
+
+class MyStreamingDriver:
+    driver_id = "stream"
+
+    async def execute(self, ctx: ExecutionContext):
+        # one-shot fallback, called when StreamingDriver isn't used.
+        ...
+
+    async def execute_stream(self, ctx: ExecutionContext):
+        async for row in some_async_cursor(ctx):
+            yield {"row": row}
+        yield {"__is_final__": True}  # explicit sentinel (optional)
+
+
+# isinstance(driver, StreamingDriver) is runtime-checkable.
+assert isinstance(MyStreamingDriver(), StreamingDriver)
+
+async for frame in kernel.invoke_stream(token, principal=p, args={}):
+    handle_chunk(frame)
+    if frame.is_final:
+        break
+```
+
+When the resolved driver does **not** implement `StreamingDriver`,
+`Kernel.invoke_stream` falls back to a single `Driver.execute()` call and
+yields exactly one `Frame` with `is_final=True`. Each invocation produces
+one `ActionTrace` covering the whole stream.
+
+## Observability
+
+`agent_kernel.instrument_kernel(kernel)` installs OpenTelemetry spans and
+metric emission on `Kernel.invoke` and `Kernel.grant_capability`:
+
+```python
+from agent_kernel import Kernel, instrument_kernel, OTEL_AVAILABLE
+
+kernel = Kernel(registry=...)
+if OTEL_AVAILABLE:
+    instrument_kernel(kernel)  # no-op when [otel] extra not installed
+```
+
+Spans: `agent_kernel.invoke`, `agent_kernel.grant`. Metrics:
+`agent_kernel.invocations` (counter), `agent_kernel.invocation_duration`
+(histogram, ms), `agent_kernel.policy_denials` (counter). The call is
+idempotent — repeat invocations on the same kernel are no-ops.

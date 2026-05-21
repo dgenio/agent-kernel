@@ -156,3 +156,19 @@ class ManifestError(FederationError):
     serialised, parsed, or imported (e.g. missing fields, invalid version,
     duplicate capability IDs).
     """
+
+
+class ManifestSignatureError(FederationError):
+    """Raised when a signed manifest fails HMAC verification.
+
+    A signature mismatch indicates either tampering, a wrong shared
+    secret, or a bug in the publisher's signing code. Either way the
+    manifest must not be imported — the importer should reject the
+    payload outright.
+    """
+
+
+class DiscoveryError(FederationError):
+    """Raised when peer/registry discovery fails (network error, malformed
+    response, or rate-limit hit).
+    """

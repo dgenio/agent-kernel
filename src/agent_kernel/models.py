@@ -371,6 +371,16 @@ class Frame:
     raw_data: Any = None
     """Only populated in ``raw`` response mode for admin principals."""
 
+    is_final: bool = False
+    """``True`` when this Frame is the last chunk of a stream.
+
+    Always ``True`` for non-streaming :meth:`Kernel.invoke` returns. In
+    :meth:`Kernel.invoke_stream`, only the last yielded Frame has this
+    set; intermediate chunks have ``is_final=False``. Consumers should
+    look at this flag to detect end-of-stream uniformly across the
+    streaming and non-streaming paths.
+    """
+
 
 # ── Audit trace ───────────────────────────────────────────────────────────────
 

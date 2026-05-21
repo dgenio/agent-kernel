@@ -151,3 +151,66 @@ their own capability records and want the canonical strictest-wins union.
 - Kernel methods: `Kernel.advertise()`, `Kernel.import_remote()`,
   `Kernel.kernel_id`.
 - Errors: `FederationError`, `ManifestError`, `TrustPolicyError`.
+
+## Federated discovery (part 2, issue #51)
+
+The discovery layer on top of the local marketplace adds two pieces:
+
+1. **Signed manifests.** `sign_manifest(manifest, secret=...)` wraps a
+   manifest in an `HMAC-SHA256` envelope. `verify_manifest(envelope,
+   secret=...)` validates the signature and returns the embedded
+   `CapabilityManifest`. Tampered or wrong-secret envelopes raise
+   `ManifestSignatureError`.
+
+2. **HTTP discovery.** `discover_peers(...)` fetches one or more manifests
+   over HTTP, either from direct peer URLs or by first resolving a
+   registry URL that returns a JSON list of peer URLs.
+
+```python
+from agent_kernel import discover_peers, sign_manifest, serve_manifest_payload
+
+# Publisher side — expose the manifest from any ASGI framework.
+@app.get("/kernel/manifest")
+async def manifest_endpoint():
+    return serve_manifest_payload(kernel.advertise(endpoint="..."), secret=SECRET)
+
+# Importer side.
+manifests = await kernel.discover_peers(
+    peer_urls=["https://peer-a/manifest", "https://peer-b/manifest"],
+    secret=SECRET,  # mandatory if peers serve signed envelopes
+)
+for m in manifests:
+    kernel.import_remote(m, driver=HTTPDriver.from_manifest(m))
+```
+
+### Asymmetric signing modes
+
+`discover_peers` is **strict** about signing: if you pass a `secret`, every
+manifest must be signed; if you don't, every manifest must be unsigned.
+Receiving the "wrong" shape raises `ManifestSignatureError`. This avoids
+the silent-downgrade pitfall where an attacker strips the signature to
+serve an unsigned manifest in its place.
+
+### Rate limiting
+
+`DiscoveryRateLimiter` (default: 10 calls per 60 seconds) caps how often
+`discover_peers` can hit the network. The limiter is per-instance — share
+one across calls to enforce a session-wide budget. Exceeding the budget
+raises `DiscoveryError`.
+
+### Security boundary (still holds)
+
+Discovery does not change the import/invoke pipeline. Even after a
+successful `discover_peers` + `import_remote`, every invocation still
+flows through the *local* policy → token → firewall pipeline. Discovery
+only decides *what* capabilities a kernel might import; it never grants
+authority.
+
+### Reference
+
+- Functions: [`discover_peers`](../src/agent_kernel/federation_discovery.py),
+  [`sign_manifest`](../src/agent_kernel/federation_discovery.py),
+  [`verify_manifest`](../src/agent_kernel/federation_discovery.py),
+  [`serve_manifest_payload`](../src/agent_kernel/federation_discovery.py).
+- Kernel methods: `Kernel.discover_peers()`.
+- New errors: `ManifestSignatureError`, `DiscoveryError`.

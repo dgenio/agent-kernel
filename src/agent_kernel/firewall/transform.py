@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from ..models import (
@@ -212,7 +213,69 @@ class Firewall:
             provenance=provenance,
         )
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    async def apply_stream(
+        self,
+        response_chunks: AsyncIterator[dict[str, Any]],
+        *,
+        action_id: str,
+        capability_id: str,
+        principal_id: str,
+        principal_roles: list[str],
+        response_mode: ResponseMode,
+        constraints: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Frame]:
+        """Stream chunks through the firewall, applying redaction per chunk.
+
+        Each chunk is wrapped in a synthetic :class:`RawResult` and passed
+        through :meth:`transform`. The same admin gate, redaction, and
+        budget caps that apply to a single-shot :meth:`transform` apply to
+        *every* chunk — PII never leaks even when results stream in.
+
+        Mode escalation across chunks (e.g. dropping from ``table`` to
+        ``summary`` as budget drains) is the caller's responsibility — the
+        Firewall itself is stateless. ``Kernel.invoke_stream`` orchestrates
+        escalation via :class:`BudgetManager.suggested_mode`.
+
+        The synthetic key ``"__is_final__"`` on a chunk is stripped before
+        firewall processing and re-applied to the yielded Frame's
+        ``is_final`` attribute. If the iterator ends without ever
+        producing an explicit final chunk, no extra sentinel is yielded
+        here — that bookkeeping is left to higher layers.
+
+        Args:
+            response_chunks: Async iterator of raw chunks from the driver.
+            action_id: The audit action ID for this stream.
+            capability_id: Capability being executed.
+            principal_id: Principal making the request.
+            principal_roles: Principal's roles (used for admin gate).
+            response_mode: Current response mode (may differ chunk-to-chunk
+                if the caller passes pre-escalated modes).
+            constraints: Active execution constraints.
+
+        Yields:
+            :class:`Frame` chunks with ``is_final`` set on the last one.
+        """
+        async for chunk in response_chunks:
+            is_final = bool(chunk.get("__is_final__", False))
+            payload = {k: v for k, v in chunk.items() if k != "__is_final__"}
+            synthetic_raw = RawResult(
+                capability_id=capability_id,
+                data=payload,
+                metadata={"action_id": action_id, "streaming": True},
+            )
+            frame = self.transform(
+                synthetic_raw,
+                action_id=action_id,
+                principal_id=principal_id,
+                principal_roles=principal_roles,
+                response_mode=response_mode,
+                constraints=constraints,
+            )
+            if is_final:
+                from dataclasses import replace
+
+                frame = replace(frame, is_final=True)
+            yield frame
 
     def _make_table(self, data: Any, *, max_rows: int) -> list[dict[str, Any]]:
         """Convert *data* to a list of dicts, capped at *max_rows*."""

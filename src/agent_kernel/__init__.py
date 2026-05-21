@@ -54,19 +54,21 @@ from .drivers.http import HTTPDriver
 from .drivers.mcp import MCPDriver
 from .drivers.memory import InMemoryDriver, make_billing_driver
 from .enums import SafetyClass, SensitivityTag
-from .errors import (
+from .errors import (  # noqa: I001 - keep group ordering stable
     AdapterParseError,
     AgentKernelError,
     BudgetConfigError,
     BudgetExhausted,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
+    DiscoveryError,
     DriverError,
     FederationError,
     FirewallError,
     HandleExpired,
     HandleNotFound,
     ManifestError,
+    ManifestSignatureError,
     NamespaceNotFound,
     PolicyConfigError,
     PolicyDenied,
@@ -83,12 +85,22 @@ from .federation import (
     import_manifest,
     merge_sensitivity,
 )
+from .federation_discovery import (
+    DiscoveryRateLimiter,
+    discover_peers,
+    serve_manifest_payload,
+    sign_manifest,
+    verify_manifest,
+)
 from .firewall.budget_manager import BudgetManager
 from .firewall.budgets import Budgets
 from .firewall.token_counting import TokenCounter, default_token_counter
 from .firewall.transform import Firewall
 from .handles import HandleStore
-from .kernel import Kernel
+from .kernel import (
+    Kernel,
+    StreamingDriver,  # re-export for backwards-compatible imports
+)
 from .models import (
     ActionTrace,
     Capability,
@@ -114,6 +126,7 @@ from .models import (
     ToolHints,
     TrustLevel,
 )
+from .otel import OTEL_AVAILABLE, instrument_kernel
 from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
 from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
 from .policy_reasons import AllowReason, DenialReason
@@ -166,12 +179,14 @@ __all__ = [
     "BudgetExhausted",
     "CapabilityAlreadyRegistered",
     "CapabilityNotFound",
+    "DiscoveryError",
     "DriverError",
     "FederationError",
     "FirewallError",
     "HandleExpired",
     "HandleNotFound",
     "ManifestError",
+    "ManifestSignatureError",
     "NamespaceNotFound",
     "PolicyConfigError",
     "PolicyDenied",
@@ -186,6 +201,12 @@ __all__ = [
     "build_manifest",
     "import_manifest",
     "merge_sensitivity",
+    # federation discovery (issue #51)
+    "DiscoveryRateLimiter",
+    "discover_peers",
+    "serve_manifest_payload",
+    "sign_manifest",
+    "verify_manifest",
     # policy
     "AllowReason",
     "DefaultPolicyEngine",
@@ -218,4 +239,9 @@ __all__ = [
     # adapters
     "AnthropicMiddleware",
     "OpenAIMiddleware",
+    # observability
+    "OTEL_AVAILABLE",
+    "instrument_kernel",
+    # streaming
+    "StreamingDriver",
 ]

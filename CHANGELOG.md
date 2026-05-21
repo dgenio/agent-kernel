@@ -34,6 +34,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New docs: [`docs/federation.md`](docs/federation.md) for the marketplace
   protocol and a namespace section in
   [`docs/capabilities.md`](docs/capabilities.md).
+- Capability marketplace, part 2 — federated discovery: new
+  `agent_kernel.federation_discovery` module with `discover_peers()`,
+  `sign_manifest()`, `verify_manifest()`, `serve_manifest_payload()`, and
+  `DiscoveryRateLimiter`. `Kernel.discover_peers()` fetches one or more
+  manifests over HTTP from peer URLs or a registry URL. Signed envelopes
+  (HMAC-SHA256) detect tampering and let importers refuse unsigned
+  manifests when a verification secret is in play (and vice versa). New
+  errors `ManifestSignatureError` and `DiscoveryError`. (#51, closes #49)
+- OpenTelemetry integration: new `agent_kernel.otel` module with
+  `instrument_kernel(kernel)` that wraps `Kernel.invoke` and
+  `Kernel.grant_capability` with OTel spans + metrics (invocation count,
+  latency histogram, denial counter). No-op when the optional `[otel]`
+  extra is not installed (`OTEL_AVAILABLE` reports the runtime status).
+  Idempotent — repeat calls on the same kernel are no-ops. (#38)
+- Streaming firewall: new `Firewall.apply_stream()` async-iterator method
+  that processes driver chunks one-at-a-time, applying PII redaction
+  per-chunk. New `StreamingDriver` Protocol in `drivers/base.py` extends
+  `Driver` with an optional `execute_stream()`. New `Kernel.invoke_stream()`
+  yields `Frame` chunks; the last chunk carries `is_final=True`. Drivers
+  without `execute_stream` automatically fall back to a single-chunk stream
+  via `execute()`. `Frame` gained an `is_final: bool` field. (#47)
+
+### Changed
+- Tech debt: `policy_dsl.py` decomposed (was 661 lines). Parsing and
+  schema dataclasses now live in `policy_dsl_parser.py`
+  (`PolicyMatch`, `PolicyRule`, `parse_engine_data`, `parse_rule`,
+  YAML/TOML loaders), and the denial-explanation traversal in
+  `policy_dsl_explain.py`. The public import surface
+  (`DeclarativePolicyEngine`, `PolicyMatch`, `PolicyRule`) is unchanged.
+  `RateLimiter` and rate-limit constants extracted from `policy.py` into
+  a new `rate_limit.py` module; `policy.py` continues to re-export them
+  under their original names. (#68)
+- Tech debt: `kernel.py` split into the `agent_kernel.kernel` sub-package
+  to honour AGENTS.md's ≤ 300-line module bar. The `Kernel` class lives
+  in `kernel/__init__.py`; heavy methods (invoke pipeline, dry-run,
+  federation, streaming) delegate to sibling modules. Existing
+  `from agent_kernel import Kernel` / `from agent_kernel.kernel import Kernel`
+  imports are unchanged. (#68)
+
+### Tests
+- Added explicit dry-run regression tests for `HTTPDriver` and `MCPDriver`,
+  pinning the kernel's driver-agnostic dry-run short-circuit. (#68)
 
 ## [0.7.0] - 2026-05-20
 
