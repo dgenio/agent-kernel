@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Capability namespaces and hierarchical discovery in `CapabilityRegistry`:
+  dot-notation `capability_id`s now expose `list_namespaces()` /
+  `list_namespace(prefix)` operations; `register_namespace(prefix, loader=...)`
+  enables deferred registration for large tool ecosystems (the loader runs
+  at most once on first access). `search()` gained an `offset` kwarg for
+  pagination, strips a small stop-word set, and now scores with a
+  BM25-flavoured ranker that weights `capability_id`/`tags` matches above
+  `description`. Flat (un-namespaced) capability IDs continue to work
+  unchanged. (#45)
+- Capability marketplace, part 1 — manifest format & local registry: new
+  `CapabilityDescriptor` and `CapabilityManifest` dataclasses (both
+  JSON-round-trippable via `to_dict`/`from_dict`), new
+  `agent_kernel.federation` module with `build_manifest()`,
+  `import_manifest()`, and `merge_sensitivity()`, and new `Kernel.advertise()`
+  / `Kernel.import_remote()` methods. `Kernel` gained a `kernel_id`
+  argument used as the manifest publisher identity. Three trust policies
+  are honoured at import time (`most_restrictive` (default), `local_only`,
+  `remote_deferred`); imported capabilities are routed through a
+  caller-supplied driver and flow through the full local policy → token →
+  firewall pipeline. HMAC tokens remain kernel-scoped — a token issued by
+  one kernel cannot be verified by another with a different secret. New
+  errors `NamespaceNotFound`, `FederationError`, `ManifestError`,
+  `TrustPolicyError`. (#52)
+- New docs: [`docs/federation.md`](docs/federation.md) for the marketplace
+  protocol and a namespace section in
+  [`docs/capabilities.md`](docs/capabilities.md).
+
 ## [0.7.0] - 2026-05-20
 
 ### Added
