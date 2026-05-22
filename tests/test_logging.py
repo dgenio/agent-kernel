@@ -140,7 +140,7 @@ async def test_no_secret_material_in_logs(
             args={},
         )
         assert frame.handle is not None
-        log_kernel.expand(frame.handle, query={"offset": 0, "limit": 1})
+        log_kernel.expand(frame.handle, query={"offset": 0, "limit": 1}, principal=reader)
         log_kernel.explain(frame.action_id)
 
     all_text = _all_log_text(caplog.records)
@@ -216,7 +216,7 @@ async def test_expand_emits_info(
     assert frame.handle is not None
 
     with caplog.at_level(logging.INFO, logger="agent_kernel.kernel"):
-        log_kernel.expand(frame.handle, query={})
+        log_kernel.expand(frame.handle, query={}, principal=reader)
 
     assert any(
         "expand" in r.getMessage() for r in caplog.records if r.name == "agent_kernel.kernel"

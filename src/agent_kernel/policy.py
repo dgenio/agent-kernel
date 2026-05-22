@@ -399,6 +399,48 @@ class DefaultPolicyEngine:
                     reason_code=DenialReason.INSUFFICIENT_JUSTIFICATION,
                 )
 
+        # ── Memory action checks ─────────────────────────────────────────────
+        # Placed AFTER all other sensitivity checks (see invariants.md:
+        # "rule placement matters"). Memory reads at scope == "sensitive"
+        # require an explicit reader role; memory writes are treated as
+        # higher-risk than reads because they persist into future sessions
+        # and require the 'memory_writer' role (or 'admin').
+        if capability.sensitivity == SensitivityTag.MEMORY:
+            memory_scope = str(request.scope.get("memory_scope", "")) if request.scope else ""
+            is_write = capability.safety_class in (
+                SafetyClass.WRITE,
+                SafetyClass.DESTRUCTIVE,
+            )
+            if is_write and not (roles & {"memory_writer", "admin"}):
+                detail = (
+                    f"MEMORY write capabilities require the 'memory_writer' or "
+                    f"'admin' role. Principal '{pid}' has roles: {sorted(roles)}."
+                )
+                _record_deny(detail, DenialReason.MEMORY_WRITE_REQUIRES_WRITER)
+                raise self._deny(
+                    detail,
+                    principal_id=pid,
+                    capability_id=cid,
+                    reason_code=DenialReason.MEMORY_WRITE_REQUIRES_WRITER,
+                )
+            if (
+                not is_write
+                and memory_scope == "sensitive"
+                and not (roles & {"memory_reader_sensitive", "admin"})
+            ):
+                detail = (
+                    f"MEMORY read with scope='sensitive' requires the "
+                    f"'memory_reader_sensitive' or 'admin' role. "
+                    f"Principal '{pid}' has roles: {sorted(roles)}."
+                )
+                _record_deny(detail, DenialReason.MEMORY_SENSITIVE_READ_DENIED)
+                raise self._deny(
+                    detail,
+                    principal_id=pid,
+                    capability_id=cid,
+                    reason_code=DenialReason.MEMORY_SENSITIVE_READ_DENIED,
+                )
+
         # ── Row cap ───────────────────────────────────────────────────────────
 
         max_rows = _MAX_ROWS_SERVICE if "service" in roles else _MAX_ROWS_USER
@@ -600,6 +642,41 @@ class DefaultPolicyEngine:
                             f"characters (currently {stripped})"
                         ),
                         reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
+                    )
+                )
+
+        if capability.sensitivity == SensitivityTag.MEMORY:
+            memory_scope = str(request.scope.get("memory_scope", "")) if request.scope else ""
+            is_write = capability.safety_class in (
+                SafetyClass.WRITE,
+                SafetyClass.DESTRUCTIVE,
+            )
+            if is_write and not (roles & {"memory_writer", "admin"}):
+                failed.append(
+                    FailedCondition(
+                        condition="roles",
+                        required=["memory_writer", "admin"],
+                        actual=sorted(roles),
+                        suggestion=(f"Add 'memory_writer' or 'admin' role to principal '{pid}'"),
+                        reason_code=str(DenialReason.MEMORY_WRITE_REQUIRES_WRITER),
+                    )
+                )
+            if (
+                not is_write
+                and memory_scope == "sensitive"
+                and not (roles & {"memory_reader_sensitive", "admin"})
+            ):
+                failed.append(
+                    FailedCondition(
+                        condition="roles",
+                        required=["memory_reader_sensitive", "admin"],
+                        actual=sorted(roles),
+                        suggestion=(
+                            f"Add 'memory_reader_sensitive' or 'admin' role to "
+                            f"principal '{pid}' (or narrow the request scope away "
+                            f"from 'sensitive')"
+                        ),
+                        reason_code=str(DenialReason.MEMORY_SENSITIVE_READ_DENIED),
                     )
                 )
 

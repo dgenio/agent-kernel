@@ -111,6 +111,7 @@ async def main() -> None:
         expanded = kernel.expand(
             frame.handle,
             query={"offset": 0, "limit": 3, "fields": ["id", "amount", "status"]},
+            principal=analyst,
         )
         for row in expanded.table_preview:
             print(f"  {row}")
@@ -121,6 +122,7 @@ async def main() -> None:
         overdue = kernel.expand(
             frame.handle,
             query={"filter": {"status": "overdue"}, "limit": 3, "fields": ["id", "amount"]},
+            principal=analyst,
         )
         print(f"  Overdue rows returned: {len(overdue.table_preview)}")
         for row in overdue.table_preview:

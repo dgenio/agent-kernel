@@ -72,6 +72,31 @@ class DenialReason(_StrEnumCompat):
     SCOPE_NOT_ALLOWED = "scope_not_allowed"
     """A declarative rule restricted scope values and the request's scope does not match."""
 
+    # Handle expansion (#76)
+    HANDLE_CONSTRAINT_VIOLATION = "handle_constraint_violation"
+    """A handle expansion request violated the grant's persisted constraints
+    (e.g. requested ``limit`` exceeds the grant's ``max_rows``, requested
+    fields are not in ``allowed_fields``, or the scope filter is incompatible).
+    """
+
+    HANDLE_PRINCIPAL_MISMATCH = "handle_principal_mismatch"
+    """A handle was presented for expansion by a principal other than the one
+    the original grant was issued to. Handles are principal-scoped to prevent
+    confused-deputy through handle sharing.
+    """
+
+    # Memory actions (#75)
+    MEMORY_WRITE_REQUIRES_WRITER = "memory_write_requires_writer"
+    """A ``memory.write`` capability was requested without the
+    ``memory_writer`` role. Durable memory writes persist into future
+    sessions and require an explicit role grant.
+    """
+
+    MEMORY_SENSITIVE_READ_DENIED = "memory_sensitive_read_denied"
+    """A memory read of scope ``sensitive`` was requested without the
+    ``memory_reader_sensitive`` role.
+    """
+
 
 class AllowReason(_StrEnumCompat):
     """Stable codes describing why a policy decision allowed a request."""

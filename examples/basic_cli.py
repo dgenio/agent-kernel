@@ -124,6 +124,7 @@ async def main() -> None:
         expanded = kernel.expand(
             frame.handle,
             query={"offset": 0, "limit": 3, "fields": ["id", "title"]},
+            principal=reader,
         )
         print("  First 3 rows (id + title only):")
         for row in expanded.table_preview:

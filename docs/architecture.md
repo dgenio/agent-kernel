@@ -52,8 +52,9 @@ Both built-in engines satisfy `ExplainingPolicyEngine`:
   3. **DESTRUCTIVE** — requires role `admin` + `justification ≥ 15 chars`
   4. **PII/PCI** — requires `tenant` attribute; enforces `allowed_fields` unless `pii_reader`
   5. **SECRETS** — requires role `admin|secrets_reader` + `justification ≥ 15 chars`
-  6. **max_rows** — 50 (user), 500 (service)
-  7. **Rate limiting** — sliding-window per `(principal_id, capability_id)` (60 READ / 10 WRITE / 2 DESTRUCTIVE per 60s; service role gets 10×)
+  6. **MEMORY** — `memory.read` with `scope.memory_scope == "sensitive"` requires role `memory_reader_sensitive|admin`; `memory.write` / DESTRUCTIVE memory requires role `memory_writer|admin`. Project-scoped memory reads are allowed by default. The kernel also redacts `payload`/`content`/`value`/`memory`/`text`/`body` keys from `ActionTrace.args` for any capability whose ID starts with `memory.`
+  7. **max_rows** — 50 (user), 500 (service)
+  8. **Rate limiting** — sliding-window per `(principal_id, capability_id)` (60 READ / 10 WRITE / 2 DESTRUCTIVE per 60s; service role gets 10×)
 - **`DeclarativePolicyEngine`** — loads rules from a YAML or TOML file (or a plain dict). Supports `safety_class`, `sensitivity`, `roles`, `attributes`, `min_justification`, `intent`, and `scope` match conditions; `allow`/`deny` actions; per-rule `constraints` merged into the resulting `PolicyDecision`; configurable `default` action. Rules are evaluated top-down with first-match-wins. `pyyaml` and `tomli` are optional dependencies — `import agent_kernel` works without them; calling `from_yaml`/`from_toml` without the parser raises `PolicyConfigError` with an install hint.
 
 #### Intent and scope on requests
@@ -96,6 +97,10 @@ Every `PolicyDecision`, `DenialExplanation`, `FailedCondition`, and `PolicyDenie
 | `explicit_deny_rule` | DSL: a `deny` rule matched fully |
 | `intent_not_allowed` | DSL: `match.intent` rejected the request's intent |
 | `scope_not_allowed` | DSL: `match.scope` rejected the request's scope |
+| `handle_constraint_violation` | `HandleStore.expand` request exceeded grant's `max_rows`, `allowed_fields`, or `scope` (#76) |
+| `handle_principal_mismatch` | Handle expansion attempted by a different principal than the one the original grant was issued to (#76) |
+| `memory_write_requires_writer` | `SensitivityTag.MEMORY` WRITE/DESTRUCTIVE without `memory_writer` or `admin` role (#75) |
+| `memory_sensitive_read_denied` | `SensitivityTag.MEMORY` read with `scope.memory_scope == "sensitive"` without `memory_reader_sensitive` or `admin` role (#75) |
 
 Allow-side codes (`AllowReason.*`): `default_policy_allow`, `rule_allow`, `default_fallthrough_allow`, `token_verified`.
 
