@@ -38,7 +38,7 @@ from agent_kernel import (
     StaticRouter,
 )
 from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.errors import PolicyDenied
+from agent_kernel.errors import HandleConstraintViolation, PolicyDenied
 from agent_kernel.models import CapabilityRequest, ImplementationRef
 
 # A tiny, deterministic dataset that mixes safe and PII-bearing fields.
@@ -193,6 +193,20 @@ async def main() -> None:
     print(f"  expanded rows: {len(expanded.table_preview)}")
     for row in expanded.table_preview:
         print(f"    {row}")
+    # Prove the new grant-constraint enforcement (#76): requesting a field the
+    # grant doesn't allow must raise HandleConstraintViolation. Without this
+    # check a future regression on the expand path would silently leak data
+    # that the firewall already excluded from the summary/table previews.
+    try:
+        kernel.expand(
+            handle_frame.handle,
+            query={"fields": ["email"]},
+            principal=reader,
+        )
+    except HandleConstraintViolation as exc:
+        print(f"  blocked disallowed field: reason_code={exc.reason_code}")
+    else:  # pragma: no cover - defensive
+        raise SystemExit("Expected HandleConstraintViolation for disallowed field on expand")
 
     print("\n=== Step 7: Watch policy enforcement deny a writer call ===")
     create_req = CapabilityRequest(

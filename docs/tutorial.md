@@ -195,6 +195,22 @@ print(expanded.table_preview)
 > ensures handles are not bearer credentials — a handle bound to one
 > principal cannot be expanded by another.
 
+Asking for a disallowed field is rejected with a stable `reason_code`:
+
+```python
+from agent_kernel.errors import HandleConstraintViolation
+
+try:
+    kernel.expand(handle_frame.handle, query={"fields": ["email"]}, principal=alice)
+except HandleConstraintViolation as exc:
+    print(exc.reason_code)   # 'handle_constraint_violation'
+```
+
+The same shape applies to `limit` over the grant's `max_rows`, a
+`filter` that disagrees with the grant's `scope`, and a `principal`
+mismatch (the last raises with
+`reason_code="handle_principal_mismatch"`).
+
 ## 7. Watch policy enforcement
 
 Add a WRITE capability and try to call it as the reader principal. The
