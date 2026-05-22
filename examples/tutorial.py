@@ -188,6 +188,7 @@ async def main() -> None:
     expanded = kernel.expand(
         handle_frame.handle,
         query={"offset": 0, "limit": 2, "fields": ["id", "amount"]},
+        principal=reader,
     )
     print(f"  expanded rows: {len(expanded.table_preview)}")
     for row in expanded.table_preview:

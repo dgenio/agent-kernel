@@ -181,22 +181,19 @@ handle_frame = asyncio.run(
 expanded = kernel.expand(
     handle_frame.handle,
     query={"offset": 0, "limit": 2, "fields": ["id", "amount"]},
+    principal=alice,
 )
 print(expanded.table_preview)
 # [{'id': 'INV-001', 'amount': 120.0}, {'id': 'INV-002', 'amount': 540.0}]
 ```
 
-> **Where the security boundary is today.** The `Firewall` enforces
-> `allowed_fields` when it builds the `summary` and `table` previews, so
-> disallowed columns never reach the LLM-safe Frame. `HandleStore.expand()`
-> currently filters by whatever `fields` the caller passes in the query
-> against the stored raw rows — it does **not yet** re-apply the
-> capability's `allowed_fields` projection. Until the in-flight grant
-> constraint work lands (tracking issue
-> [#76](https://github.com/dgenio/agent-kernel/issues/76), PR
-> [#79](https://github.com/dgenio/agent-kernel/pull/79)), treat handle
-> expansion as authorized-but-field-unconstrained: only request `fields`
-> the caller is allowed to see.
+> **Security boundary.** The `Firewall` enforces `allowed_fields` when it
+> builds the `summary` and `table` previews, so disallowed columns never
+> reach the LLM-safe Frame. `HandleStore.expand()` now also enforces the
+> grant's `allowed_fields` projection: requesting a field outside the
+> grant raises `HandleConstraintViolation`. The `principal` argument
+> ensures handles are not bearer credentials — a handle bound to one
+> principal cannot be expanded by another.
 
 ## 7. Watch policy enforcement
 
