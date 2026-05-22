@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- "Secure your first MCP tool in 5 minutes" tutorial: new
+  [`docs/tutorial.md`](docs/tutorial.md) walks a new reader from install to a
+  working invocation, covering registration, principals, grants, the three
+  LLM-safe response modes (`summary` / `table` / `handle_only`), handle
+  expansion, policy denial with stable `reason_code`, and `explain()`
+  audit. The admin-only `raw` mode is described but not exercised by the
+  walkthrough. Companion runnable example
+  [`examples/tutorial.py`](examples/tutorial.py) uses `InMemoryDriver`
+  (offline, zero external deps) and is exercised by `make example` and CI;
+  it now `assert`s that no PII field leaks into the LLM-safe Frame so a
+  firewall regression fails the build. (#46)
+- README "How this relates to neighboring projects" section: a neutral
+  boundaries table covering `AgentFence` (external CLI/proxy gate),
+  `contextweaver` (context compilation library), `ChainWeaver`
+  (deterministic flow orchestrator), and `weaver-spec` (specification +
+  conformance suite), plus a "When *not* to use this" callout. (#71)
 - Grant-constraint enforcement on handle expansion (#76). `Handle` now carries
   the `principal_id` and `constraints` from the original grant, persisted at
   handle creation time by `HandleStore.store`. `HandleStore.expand` rechecks
