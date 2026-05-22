@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-22
+
 ### Added
 - "Secure your first MCP tool in 5 minutes" tutorial: new
   [`docs/tutorial.md`](docs/tutorial.md) walks a new reader from install to a
