@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal
 import httpx
 
 from ..drivers.base import Driver
+from ..errors import FederationError
 from ..federation import TrustPolicy, build_manifest, import_manifest
 from ..federation_discovery import DiscoveryRateLimiter, discover_peers
 from ..models import Capability, CapabilityManifest
@@ -62,6 +63,17 @@ def perform_import_remote(
     trust_policy: TrustPolicy,
 ) -> list[Capability]:
     """Register *manifest*'s capabilities into *kernel*'s registry."""
+    # Imported capabilities must be routable. Require a mutable router up front
+    # so we fail clean instead of registering capabilities that can never be
+    # invoked.
+    router_add = getattr(kernel._router, "add_route", None)
+    if router_add is None:
+        raise FederationError(
+            "import_remote() requires a router that supports add_route(); "
+            f"the configured {type(kernel._router).__name__} does not, so "
+            "imported capabilities would be unroutable. Use a mutable router "
+            "(e.g. StaticRouter) or pre-configure routes for the imported IDs."
+        )
     kernel.register_driver(driver)
     imported = import_manifest(
         manifest=manifest,
@@ -69,10 +81,8 @@ def perform_import_remote(
         driver_id=driver.driver_id,
         trust_policy=trust_policy,
     )
-    router_add = getattr(kernel._router, "add_route", None)
-    if router_add is not None:
-        for cap in imported:
-            router_add(cap.capability_id, [driver.driver_id])
+    for cap in imported:
+        router_add(cap.capability_id, [driver.driver_id])
     logger.info(
         "import_remote",
         extra={

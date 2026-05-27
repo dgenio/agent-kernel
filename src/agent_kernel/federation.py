@@ -57,9 +57,12 @@ _VALID_TRUST_POLICIES: frozenset[str] = frozenset(
 )
 
 # Ordering used by ``most_restrictive`` when picking between two sensitivity
-# tags. The strictest tag wins.
+# tags. The strictest tag wins. Every SensitivityTag member must appear here —
+# a missing tag would default to rank 0 in ``_stricter`` and be silently
+# downgraded to NONE. ``test_every_sensitivity_tag_outranks_none`` guards this.
 _SENSITIVITY_RANK: dict[SensitivityTag, int] = {
     SensitivityTag.NONE: 0,
+    SensitivityTag.MEMORY: 1,
     SensitivityTag.PII: 2,
     SensitivityTag.PCI: 3,
     SensitivityTag.SECRETS: 4,
@@ -156,7 +159,9 @@ def import_manifest(
     Raises:
         TrustPolicyError: If *trust_policy* is not one of the documented values.
         ManifestError: If the manifest is malformed (missing fields, wrong
-            version, or contains a capability ID already registered locally).
+            version), contains a capability ID already registered locally, or
+            lists the same capability ID more than once. The registry is left
+            untouched when this is raised.
     """
     if trust_policy not in _VALID_TRUST_POLICIES:
         raise TrustPolicyError(
@@ -175,6 +180,29 @@ def import_manifest(
             "Endpoints are required so the local kernel can route imported "
             "capabilities to a driver."
         )
+
+    # Validate the whole batch before registering anything so a malformed
+    # manifest leaves the registry untouched (all-or-nothing import). A
+    # mid-loop failure would otherwise leave capabilities registered but
+    # unrouted, since the caller adds routes only after this returns.
+    existing = {cap.capability_id for cap in registry.list_all()}
+    seen: set[str] = set()
+    for descriptor in manifest.capabilities:
+        cap_id = descriptor.capability_id
+        if cap_id in existing:
+            raise ManifestError(
+                f"Manifest from kernel '{manifest.kernel_id}' contains capability "
+                f"'{cap_id}', which is already registered locally. Imported "
+                "capability IDs must be unique; unregister or rename the existing "
+                "capability before importing."
+            )
+        if cap_id in seen:
+            raise ManifestError(
+                f"Manifest from kernel '{manifest.kernel_id}' lists capability "
+                f"'{cap_id}' more than once. Capability IDs within a manifest "
+                "must be unique."
+            )
+        seen.add(cap_id)
 
     imported: list[Capability] = []
     for descriptor in manifest.capabilities:

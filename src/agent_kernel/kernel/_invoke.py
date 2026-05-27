@@ -41,6 +41,30 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger("agent_kernel.kernel")
 
+_MEMORY_CAPABILITY_PREFIX = "memory."
+_MEMORY_SENSITIVE_ARG_KEYS: frozenset[str] = frozenset(
+    {"payload", "content", "value", "memory", "text", "body"}
+)
+
+
+def _redact_args_for_trace(capability_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Strip raw memory payloads from :class:`ActionTrace.args`.
+
+    Memory capabilities (``capability_id`` starting with ``"memory."``) may
+    carry durable text the principal is committing to or fetching from
+    long-term memory. Tracing the raw payload would defeat the I-01 boundary
+    the :class:`Firewall` enforces for outputs — so we apply an equivalent
+    input-side redaction at trace-record time. Keys are preserved (so audit
+    can confirm a payload was provided); sensitive values become
+    ``"[REDACTED]"``. Non-memory capabilities are returned unchanged.
+    """
+    if not capability_id.startswith(_MEMORY_CAPABILITY_PREFIX):
+        return args
+    return {
+        k: ("[REDACTED]" if k.lower() in _MEMORY_SENSITIVE_ARG_KEYS else v)
+        for k, v in args.items()
+    }
+
 
 def resolve_effective_mode(
     *,
@@ -117,7 +141,7 @@ def record_failure_trace(
             principal_id=principal_id,
             token_id=token_id,
             invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-            args=args,
+            args=_redact_args_for_trace(capability_id, args),
             response_mode=response_mode,
             driver_id="",
             error=error_message,
@@ -145,7 +169,7 @@ def record_success_trace(
             principal_id=principal_id,
             token_id=token_id,
             invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-            args=args,
+            args=_redact_args_for_trace(capability_id, args),
             response_mode=response_mode,
             driver_id=driver_id,
             handle_id=handle_id,
@@ -238,6 +262,8 @@ async def perform_invoke(
         handle = kernel._handles.store(
             capability_id=token.capability_id,
             data=raw_result.data,
+            principal_id=principal.principal_id,
+            constraints=token.constraints,
         )
 
     reservation_consumed = False

@@ -35,7 +35,7 @@ from ..models import (
     RoutePlan,
 )
 from ..tokens import CapabilityToken
-from ._invoke import resolve_effective_mode
+from ._invoke import _redact_args_for_trace, resolve_effective_mode
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
@@ -124,6 +124,8 @@ async def invoke_stream_impl(
                 handle = kernel._handles.store(
                     capability_id=token.capability_id,
                     data=raw.data,
+                    principal_id=principal.principal_id,
+                    constraints=token.constraints,
                 )
             frame = kernel._fw.transform(
                 raw,
@@ -146,7 +148,7 @@ async def invoke_stream_impl(
                 principal_id=principal.principal_id,
                 token_id=token.token_id,
                 invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-                args=args,
+                args=_redact_args_for_trace(token.capability_id, args),
                 response_mode=(last_frame.response_mode if last_frame else initial_mode),
                 driver_id=fallback_driver_id,
                 handle_id=handle.handle_id if handle else None,

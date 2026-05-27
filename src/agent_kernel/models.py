@@ -316,13 +316,30 @@ class RawResult:
 
 @dataclass(slots=True)
 class Handle:
-    """An opaque reference to a full dataset stored in the HandleStore."""
+    """An opaque reference to a full dataset stored in the HandleStore.
+
+    Handles carry the grant constraints persisted at creation time. The
+    :class:`HandleStore` rechecks those constraints when the handle is
+    expanded, so an over-broad expand query is denied with a stable
+    :class:`~agent_kernel.errors.HandleConstraintViolation` rather than
+    silently returning data the original grant never authorised.
+    """
 
     handle_id: str
     capability_id: str
     created_at: datetime.datetime
     expires_at: datetime.datetime
     total_rows: int = 0
+
+    principal_id: str = ""
+    """Principal the original grant was issued to. ``expand`` rejects use by
+    other principals so handle references cannot be shared as a back-door."""
+
+    constraints: dict[str, Any] = field(default_factory=dict)
+    """Grant constraints copied from :attr:`PolicyDecision.constraints` at
+    handle creation time. ``expand`` rechecks ``max_rows``, ``allowed_fields``,
+    and any ``scope`` filter against these values.
+    """
 
 
 @dataclass(slots=True)
@@ -375,11 +392,9 @@ class Frame:
     is_final: bool = False
     """``True`` when this Frame is the last chunk of a stream.
 
-    Always ``True`` for non-streaming :meth:`Kernel.invoke` returns. In
-    :meth:`Kernel.invoke_stream`, only the last yielded Frame has this
-    set; intermediate chunks have ``is_final=False``. Consumers should
-    look at this flag to detect end-of-stream uniformly across the
-    streaming and non-streaming paths.
+    Non-streaming :meth:`~agent_kernel.Kernel.invoke` always returns a Frame
+    with ``is_final=True``. For :meth:`~agent_kernel.Kernel.invoke_stream`, only
+    the terminal Frame has it set; intermediate chunks have ``is_final=False``.
     """
 
 
@@ -475,7 +490,8 @@ class NamespaceMetadata:
     """Dot-notation namespace prefix (e.g. ``"billing"`` or ``"billing.invoices"``)."""
 
     description: str = ""
-    """Optional human-readable description shown by ``list_namespaces``."""
+    """Optional human-readable description of the namespace. Not surfaced by
+    ``CapabilityRegistry.list_namespaces`` (which returns prefixes only)."""
 
     loader: Callable[[], list[Capability]] | None = None
     """Optional zero-arg loader invoked at most once on first access.
@@ -537,27 +553,39 @@ class CapabilityDescriptor:
         """Reconstruct a descriptor from a dict produced by :meth:`to_dict`.
 
         Raises:
-            ManifestError: If *data* is not a dict, is missing a required key,
-                or carries an invalid field value (e.g. an unknown safety class).
+            ManifestError: If a required field is missing or ``safety_class`` /
+                ``sensitivity`` carries an unrecognised value.
         """
-        if not isinstance(data, dict):
-            raise ManifestError(
-                f"CapabilityDescriptor must be a JSON object, got {type(data).__name__}."
-            )
         try:
-            return cls(
-                capability_id=data["capability_id"],
-                name=data["name"],
-                description=data["description"],
-                safety_class=SafetyClass(data["safety_class"]),
-                sensitivity=SensitivityTag(data.get("sensitivity", SensitivityTag.NONE.value)),
-                tags=list(data.get("tags", [])),
-                parameters_schema=data.get("parameters_schema"),
-            )
+            capability_id = data["capability_id"]
+            name = data["name"]
+            description = data["description"]
+            safety_class_raw = data["safety_class"]
         except KeyError as exc:
-            raise ManifestError(f"CapabilityDescriptor missing required key {exc}.") from exc
-        except (ValueError, TypeError) as exc:
-            raise ManifestError(f"CapabilityDescriptor has an invalid field value: {exc}") from exc
+            raise ManifestError(f"Capability descriptor is missing required field {exc}.") from exc
+        try:
+            safety_class = SafetyClass(safety_class_raw)
+        except ValueError as exc:
+            raise ManifestError(
+                f"Capability descriptor field 'safety_class' has invalid value "
+                f"{safety_class_raw!r}."
+            ) from exc
+        sensitivity_raw = data.get("sensitivity", SensitivityTag.NONE.value)
+        try:
+            sensitivity = SensitivityTag(sensitivity_raw)
+        except ValueError as exc:
+            raise ManifestError(
+                f"Capability descriptor field 'sensitivity' has invalid value {sensitivity_raw!r}."
+            ) from exc
+        return cls(
+            capability_id=capability_id,
+            name=name,
+            description=description,
+            safety_class=safety_class,
+            sensitivity=sensitivity,
+            tags=list(data.get("tags", [])),
+            parameters_schema=data.get("parameters_schema"),
+        )
 
 
 TrustLevel = Literal["verified", "unverified"]
@@ -616,31 +644,34 @@ class CapabilityManifest:
         """Reconstruct a manifest from a dict produced by :meth:`to_dict`.
 
         Raises:
-            ManifestError: If *data* is not a dict, is missing a required key,
-                or ``capabilities`` is not a list of valid descriptors.
+            ManifestError: If a required field is missing, ``capabilities`` is
+                not a list, or ``trust_level`` is not ``"verified"`` /
+                ``"unverified"``.
         """
-        if not isinstance(data, dict):
-            raise ManifestError(
-                f"CapabilityManifest must be a JSON object, got {type(data).__name__}."
-            )
         try:
             kernel_id = data["kernel_id"]
             version = data["version"]
             endpoint = data["endpoint"]
-            capabilities_raw = data["capabilities"]
+            raw_capabilities = data["capabilities"]
         except KeyError as exc:
-            raise ManifestError(f"CapabilityManifest missing required key {exc}.") from exc
-        if not isinstance(capabilities_raw, list):
+            raise ManifestError(f"Manifest is missing required field {exc}.") from exc
+        if not isinstance(raw_capabilities, list):
             raise ManifestError(
-                "CapabilityManifest 'capabilities' must be a list, got "
-                f"{type(capabilities_raw).__name__}."
+                "Manifest field 'capabilities' must be a list, got "
+                f"{type(raw_capabilities).__name__}."
+            )
+        trust_level = data.get("trust_level", "unverified")
+        if trust_level not in ("verified", "unverified"):
+            raise ManifestError(
+                f"Manifest field 'trust_level' has invalid value {trust_level!r}; "
+                "expected 'verified' or 'unverified'."
             )
         return cls(
             kernel_id=kernel_id,
             version=version,
             endpoint=endpoint,
-            trust_level=data.get("trust_level", "unverified"),
-            capabilities=[CapabilityDescriptor.from_dict(c) for c in capabilities_raw],
+            trust_level=trust_level,
+            capabilities=[CapabilityDescriptor.from_dict(c) for c in raw_capabilities],
         )
 
 

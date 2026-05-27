@@ -49,7 +49,9 @@ async def test_full_flow(kernel: Kernel, reader_principal: Principal) -> None:
 
     # expand
     assert frame.handle is not None
-    expanded = kernel.expand(frame.handle, query={"offset": 0, "limit": 2})
+    expanded = kernel.expand(
+        frame.handle, query={"offset": 0, "limit": 2}, principal=reader_principal
+    )
     assert len(expanded.table_preview) <= 2
 
 

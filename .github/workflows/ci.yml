@@ -45,6 +45,7 @@ jobs:
           python examples/basic_cli.py
           python examples/billing_demo.py
           python examples/http_driver_demo.py
+          python examples/tutorial.py
 
   conformance_stub:
     name: "Weaver Spec Conformance Stub (v0.1.0)"

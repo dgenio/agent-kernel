@@ -1,75 +1,23 @@
 """Capability registry: register, lookup, namespaced discovery, and ranked search.
 
-Supports dot-notation namespaces (``"billing.invoices.list"``), deferred
-namespace loaders for large tool ecosystems, and a BM25-flavoured score
-that weights matches on ``capability_id`` and ``tags`` higher than
-``description``. Flat (un-namespaced) capability IDs continue to work — they
-are treated as living in a single-segment namespace.
+Supports dot-notation namespaces (``"billing.invoices.list"``) and deferred
+namespace loaders for large tool ecosystems; ranked search is delegated to
+:mod:`agent_kernel.search_index`. Flat capability IDs continue to work — they
+live in a single-segment namespace named after themselves.
 """
 
 from __future__ import annotations
 
-import math
-import re
 from collections.abc import Callable
 
 from .errors import (
-    AgentKernelError,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
+    FederationError,
     NamespaceNotFound,
 )
 from .models import Capability, CapabilityRequest, NamespaceMetadata
-
-# Common English stop words that add noise to keyword search. Kept small
-# (only words an LLM would routinely type into a goal) to avoid suppressing
-# domain terms.
-_STOP_WORDS: frozenset[str] = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "any",
-        "are",
-        "as",
-        "at",
-        "be",
-        "by",
-        "for",
-        "from",
-        "get",
-        "give",
-        "i",
-        "in",
-        "is",
-        "it",
-        "me",
-        "my",
-        "of",
-        "on",
-        "or",
-        "please",
-        "show",
-        "that",
-        "the",
-        "this",
-        "to",
-        "want",
-        "with",
-    }
-)
-
-# Field weights for BM25-flavoured scoring. Matches on capability_id and tags
-# carry the most signal; description text is the noisiest.
-_WEIGHT_ID = 4.0
-_WEIGHT_NAME = 2.0
-_WEIGHT_TAGS = 3.0
-_WEIGHT_DESCRIPTION = 1.0
-
-# BM25 tunables (Lucene defaults). Held constant — randomness in matching is
-# forbidden by AGENTS.md.
-_BM25_K1 = 1.5
-_BM25_B = 0.75
+from .search_index import SearchIndex, tokenize
 
 
 class CapabilityRegistry:
@@ -91,10 +39,8 @@ class CapabilityRegistry:
     def __init__(self) -> None:
         self._store: dict[str, Capability] = {}
         self._namespaces: dict[str, NamespaceMetadata] = {}
-        # Reset cached search statistics when registrations change.
-        self._search_cache_dirty: bool = True
-        self._avg_doc_len: float = 0.0
-        self._doc_freq: dict[str, int] = {}
+        # BM25 statistics live in the search index, refreshed lazily on change.
+        self._index = SearchIndex()
 
     # ── Registration ──────────────────────────────────────────────────────────
 
@@ -113,7 +59,7 @@ class CapabilityRegistry:
                 "Use a unique capability_id."
             )
         self._store[capability.capability_id] = capability
-        self._search_cache_dirty = True
+        self._index.mark_dirty()
 
     def register_many(self, capabilities: list[Capability]) -> None:
         """Register multiple capabilities at once.
@@ -230,15 +176,9 @@ class CapabilityRegistry:
             NamespaceNotFound: If no declared namespace or registered capability
                 lives under *prefix*.
         """
-        # Load the deepest declared namespace that is `prefix` itself or an
-        # ancestor of it, so a loader registered at e.g. "billing" still fires
-        # for list_namespace("billing.invoices").
-        segments = prefix.split(".")
-        for depth in range(len(segments), 0, -1):
-            ancestor = ".".join(segments[:depth])
-            if ancestor in self._namespaces:
-                self._maybe_load_namespace(ancestor)
-                break
+        ancestor = self._deepest_declared_namespace(prefix)
+        if ancestor is not None:
+            self._maybe_load_namespace(ancestor)
         results = [
             cap
             for cap_id, cap in self._store.items()
@@ -268,144 +208,89 @@ class CapabilityRegistry:
         ``description``. Capabilities tied on score are returned in
         ``capability_id`` order for determinism.
 
-        Triggers any deferred namespace loader whose prefix overlaps the goal
-        tokens before scoring.
+        Triggers every not-yet-loaded deferred namespace loader before scoring,
+        so results span the full registry. Each loader runs at most once.
 
         Args:
             goal: Free-text description of the user's intent.
-            max_results: Maximum number of results to return.
+            max_results: Maximum number of results to return. Negative values
+                are clamped to ``0`` (returns no results).
             offset: Number of leading results to skip (paginates large
-                registries).
+                registries). Negative values are clamped to ``0``.
 
         Returns:
             Ordered list (highest score first) of :class:`CapabilityRequest`.
-
-        Raises:
-            AgentKernelError: If ``offset`` or ``max_results`` is negative.
         """
-        if offset < 0:
-            raise AgentKernelError(f"search() offset must be >= 0, got {offset}.")
-        if max_results < 0:
-            raise AgentKernelError(f"search() max_results must be >= 0, got {max_results}.")
+        offset = max(offset, 0)
+        max_results = max(max_results, 0)
 
-        tokens = self._tokenize(goal)
+        tokens = tokenize(goal)
         if not tokens:
             return []
 
-        self._load_namespaces_overlapping(tokens)
+        self._load_all_deferred_namespaces()
 
-        if self._search_cache_dirty:
-            self._rebuild_search_index()
-
-        scored: list[tuple[float, Capability]] = []
-        for cap in self._store.values():
-            score = self._score(cap, tokens)
-            if score > 0:
-                scored.append((score, cap))
-
-        scored.sort(key=lambda x: (-x[0], x[1].capability_id))
-
+        ranked = self._index.ranked(self._store, tokens)
         if offset:
-            scored = scored[offset:]
+            ranked = ranked[offset:]
         return [
             CapabilityRequest(capability_id=cap.capability_id, goal=goal)
-            for _, cap in scored[:max_results]
+            for cap in ranked[:max_results]
         ]
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _tokenize(text: str) -> list[str]:
-        """Split *text* into lower-case word tokens with stop-words removed."""
-        return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if t not in _STOP_WORDS]
+    def _deepest_declared_namespace(self, prefix: str) -> str | None:
+        """Return the longest declared namespace owning *prefix*, else ``None``.
 
-    @staticmethod
-    def _corpus_fields(cap: Capability) -> tuple[list[str], list[str], list[str], list[str]]:
-        """Return per-field token lists used for scoring (id, name, tags, description)."""
-        tokenize = CapabilityRegistry._tokenize
-        return (
-            tokenize(cap.capability_id.replace(".", " ").replace("_", " ")),
-            tokenize(cap.name),
-            tokenize(" ".join(cap.tags)),
-            tokenize(cap.description),
-        )
-
-    def _rebuild_search_index(self) -> None:
-        """Refresh BM25 document statistics after the registry mutates."""
-        total_len = 0
-        doc_freq: dict[str, int] = {}
-        for cap in self._store.values():
-            id_tokens, name_tokens, tag_tokens, desc_tokens = self._corpus_fields(cap)
-            total_len += len(id_tokens) + len(name_tokens) + len(tag_tokens) + len(desc_tokens)
-            unique_tokens = set(id_tokens) | set(name_tokens) | set(tag_tokens) | set(desc_tokens)
-            for tok in unique_tokens:
-                doc_freq[tok] = doc_freq.get(tok, 0) + 1
-        n = len(self._store) or 1
-        self._avg_doc_len = total_len / n
-        self._doc_freq = doc_freq
-        self._search_cache_dirty = False
-
-    def _score(self, cap: Capability, tokens: list[str]) -> float:
-        """Return a BM25-flavoured match score for *cap* against query *tokens*."""
-        id_tokens, name_tokens, tag_tokens, desc_tokens = self._corpus_fields(cap)
-        doc_tokens = id_tokens + name_tokens + tag_tokens + desc_tokens
-        if not doc_tokens:
-            return 0.0
-        doc_len = len(doc_tokens)
-        n = len(self._store) or 1
-        score = 0.0
-        for tok in tokens:
-            df = self._doc_freq.get(tok, 0)
-            if df == 0:
-                continue
-            # Per-field term frequency with field-specific weights.
-            tf = (
-                _WEIGHT_ID * id_tokens.count(tok)
-                + _WEIGHT_NAME * name_tokens.count(tok)
-                + _WEIGHT_TAGS * tag_tokens.count(tok)
-                + _WEIGHT_DESCRIPTION * desc_tokens.count(tok)
-            )
-            if tf == 0:
-                continue
-            idf = math.log(1 + (n - df + 0.5) / (df + 0.5))
-            norm = 1 - _BM25_B + _BM25_B * (doc_len / (self._avg_doc_len or 1.0))
-            score += idf * ((tf * (_BM25_K1 + 1)) / (tf + _BM25_K1 * norm))
-        # Exact-prefix bonus: capability_id starts with the joined query.
-        joined = ".".join(tokens)
-        if joined and cap.capability_id.startswith(joined):
-            score += 1.0
-        return score
+        ``ns`` owns *prefix* when ``prefix == ns`` or ``prefix.startswith(ns + ".")``;
+        the deepest match's deferred loader is the one to run.
+        """
+        best: str | None = None
+        for ns in self._namespaces:
+            covers = prefix == ns or prefix.startswith(ns + ".")
+            if covers and (best is None or len(ns) > len(best)):
+                best = ns
+        return best
 
     def _maybe_load_for(self, capability_id: str) -> None:
-        """Trigger any deferred loader whose prefix covers *capability_id*."""
-        head, _, _ = capability_id.partition(".")
-        candidates = [head, capability_id]
-        for prefix in candidates:
-            if prefix in self._namespaces:
-                self._maybe_load_namespace(prefix)
+        """Trigger the deferred loader of the deepest namespace covering *capability_id*."""
+        ancestor = self._deepest_declared_namespace(capability_id)
+        if ancestor is not None:
+            self._maybe_load_namespace(ancestor)
 
     def _maybe_load_namespace(self, prefix: str) -> None:
-        """Invoke the deferred loader for *prefix* if it has not run yet."""
+        """Invoke the deferred loader for *prefix* if it has not run yet.
+
+        The batch is validated before anything registers: every returned
+        ``capability_id`` must equal *prefix* or start with ``prefix + "."``. On
+        violation nothing registers and the loaded flag resets for retry.
+
+        Raises:
+            FederationError: If the loader returns a capability whose
+                ``capability_id`` does not live under *prefix*.
+        """
         meta = self._namespaces.get(prefix)
         if meta is None or meta.loaded or meta.loader is None:
             return
         loader = meta.loader
         # Mark as loaded *before* calling so a recursive load doesn't re-enter.
         meta.loaded = True
-        for cap in loader():
-            if not (cap.capability_id == prefix or cap.capability_id.startswith(prefix + ".")):
-                raise AgentKernelError(
+        for cap in (loaded := list(loader())):
+            cap_id = cap.capability_id
+            if cap_id != prefix and not cap_id.startswith(prefix + "."):
+                meta.loaded = False
+                raise FederationError(
                     f"Namespace loader for '{prefix}' returned capability "
-                    f"'{cap.capability_id}', which is outside the declared namespace."
+                    f"'{cap_id}', which does not live under the namespace. "
+                    f"Loaders must return only capabilities whose capability_id "
+                    f"equals '{prefix}' or starts with '{prefix}.'."
                 )
+        for cap in loaded:
             self.register(cap)
 
-    def _load_namespaces_overlapping(self, tokens: list[str]) -> None:
-        """Load any deferred namespace whose prefix shares a token with *tokens*."""
-        token_set = set(tokens)
+    def _load_all_deferred_namespaces(self) -> None:
+        """Trigger every not-yet-loaded deferred loader (search ranks the whole registry)."""
         for prefix, meta in list(self._namespaces.items()):
-            if meta.loaded:
-                continue
-            head_tokens = set(self._tokenize(prefix.replace(".", " ").replace("_", " ")))
-            if head_tokens & token_set:
+            if not meta.loaded:
                 self._maybe_load_namespace(prefix)

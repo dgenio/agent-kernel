@@ -285,13 +285,44 @@ class Kernel:
         ):
             yield frame
 
-    def expand(self, handle: Handle, *, query: dict[str, Any]) -> Frame:
-        """Expand a handle with pagination, field selection, or filtering."""
+    def expand(
+        self,
+        handle: Handle,
+        *,
+        query: dict[str, Any],
+        principal: Principal | None = None,
+    ) -> Frame:
+        """Expand a handle with pagination, field selection, or filtering.
+
+        Args:
+            handle: The :class:`Handle` to expand.
+            query: Query parameters (``offset``, ``limit``, ``fields``, ``filter``).
+            principal: The principal performing the expansion. **Required**
+                when the handle was created with a non-empty ``principal_id``:
+                an omitted principal is treated as a mismatch and raises
+                :class:`HandleConstraintViolation` (handle IDs are not bearer
+                credentials). Optional for handles that were not principal-bound.
+
+        Raises:
+            HandleNotFound: If the handle is unknown.
+            HandleExpired: If the handle has expired.
+            HandleConstraintViolation: If the requested expansion exceeds the
+                grant's persisted constraints (``max_rows``, ``allowed_fields``,
+                ``scope``) or is requested by a different principal.
+        """
         logger.info(
             "expand",
-            extra={"handle_id": handle.handle_id, "capability_id": handle.capability_id},
+            extra={
+                "handle_id": handle.handle_id,
+                "capability_id": handle.capability_id,
+                "principal_id": principal.principal_id if principal else "",
+            },
         )
-        return self._handle_store.expand(handle, query=query)
+        return self._handle_store.expand(
+            handle,
+            query=query,
+            principal_id=principal.principal_id if principal else "",
+        )
 
     def explain(self, action_id: str) -> ActionTrace:
         """Retrieve the audit trace for a past invocation."""
@@ -383,6 +414,9 @@ class Kernel:
         authorise on our behalf.
 
         Raises:
+            FederationError: If the configured router cannot accept new routes
+                (no ``add_route``), so imported capabilities could not be made
+                invokable. The registry is left untouched.
             TrustPolicyError: If *trust_policy* is unknown.
             ManifestError: If the manifest is malformed.
             CapabilityAlreadyRegistered: If any imported capability ID is
