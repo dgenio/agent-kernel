@@ -8,7 +8,6 @@ import pytest
 
 from agent_kernel import (
     Capability,
-    CapabilityAlreadyRegistered,
     CapabilityDescriptor,
     CapabilityManifest,
     CapabilityRegistry,
@@ -241,13 +240,37 @@ def test_import_manifest_rejects_empty_endpoint() -> None:
         import_manifest(manifest=manifest, registry=CapabilityRegistry(), driver_id="x")
 
 
-def test_import_manifest_duplicate_capability_raises() -> None:
+def test_import_manifest_local_duplicate_raises_and_is_atomic() -> None:
     local = CapabilityRegistry()
     local.register(_make_cap("billing.list_invoices"))
-    remote = _remote_kernel_with(_make_cap("billing.list_invoices"))
+    remote = _remote_kernel_with(
+        _make_cap("crm.new_contact"),
+        _make_cap("billing.list_invoices"),  # collides with the local capability
+    )
     manifest = remote.advertise(endpoint="https://agent-b/k")
-    with pytest.raises(CapabilityAlreadyRegistered):
+    with pytest.raises(ManifestError, match="already registered locally"):
         import_manifest(manifest=manifest, registry=local, driver_id="remote_b")
+    # All-or-nothing: the non-colliding capability must not have been registered.
+    assert "crm.new_contact" not in {c.capability_id for c in local.list_all()}
+
+
+def test_import_manifest_in_manifest_duplicate_raises() -> None:
+    dup = CapabilityDescriptor(
+        capability_id="billing.list_invoices",
+        name="List Invoices",
+        description="List recent invoices",
+        safety_class=SafetyClass.READ,
+    )
+    manifest = CapabilityManifest(
+        kernel_id="agent-b",
+        version=MANIFEST_VERSION,
+        endpoint="https://agent-b/k",
+        capabilities=[dup, dup],
+    )
+    local = CapabilityRegistry()
+    with pytest.raises(ManifestError, match="more than once"):
+        import_manifest(manifest=manifest, registry=local, driver_id="remote_b")
+    assert local.list_all() == []
 
 
 # ── Trust policies ────────────────────────────────────────────────────────────
@@ -298,6 +321,15 @@ def test_merge_sensitivity_picks_strictest() -> None:
     assert merge_sensitivity(SensitivityTag.PII, SensitivityTag.PCI) == SensitivityTag.PCI
     assert merge_sensitivity(SensitivityTag.PCI, SensitivityTag.SECRETS) == SensitivityTag.SECRETS
     assert merge_sensitivity(SensitivityTag.NONE, SensitivityTag.NONE) == SensitivityTag.NONE
+    assert merge_sensitivity(SensitivityTag.NONE, SensitivityTag.MEMORY) == SensitivityTag.MEMORY
+
+
+@pytest.mark.parametrize("tag", [t for t in SensitivityTag if t is not SensitivityTag.NONE])
+def test_every_sensitivity_tag_outranks_none(tag: SensitivityTag) -> None:
+    # Guards against a SensitivityTag being added without a rank: an unranked
+    # tag would default to NONE's rank and be silently downgraded on merge.
+    assert merge_sensitivity(SensitivityTag.NONE, tag) == tag
+    assert merge_sensitivity(tag, SensitivityTag.NONE) == tag
 
 
 # ── Kernel.advertise() / Kernel.import_remote() ───────────────────────────────

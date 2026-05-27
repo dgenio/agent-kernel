@@ -275,6 +275,44 @@ def test_namespace_loader_out_of_namespace_capability_raises() -> None:
     assert reg.list_all() == []
 
 
+def test_namespace_loader_failure_stays_retryable() -> None:
+    """A failed load resets the loaded flag so a later access can retry."""
+    from agent_kernel import FederationError
+
+    calls: list[int] = []
+
+    def loader() -> list[Capability]:
+        calls.append(1)
+        if len(calls) == 1:
+            return [_make_cap("crm.contacts.list")]  # outside 'billing' → raises
+        return [_make_cap("billing.invoices.list")]
+
+    reg = CapabilityRegistry()
+    reg.register_namespace("billing", loader=loader)
+    with pytest.raises(FederationError, match="does not live under the namespace"):
+        reg.list_namespace("billing")
+    # The first failure did not permanently disable the namespace.
+    caps = reg.list_namespace("billing")
+    assert [c.capability_id for c in caps] == ["billing.invoices.list"]
+    assert len(calls) == 2
+
+
+def test_search_loads_deferred_namespace_without_token_overlap() -> None:
+    """Search triggers every deferred loader, even with no prefix-token overlap (#45)."""
+    call_count = {"n": 0}
+
+    def loader() -> list[Capability]:
+        call_count["n"] += 1
+        return [_make_cap("billing.list_invoices", description="list customer invoices")]
+
+    reg = CapabilityRegistry()
+    reg.register_namespace("billing", loader=loader)
+    # "invoices" shares no token with the prefix "billing", yet the loader runs.
+    results = reg.search("list invoices")
+    assert "billing.list_invoices" in [r.capability_id for r in results]
+    assert call_count["n"] == 1
+
+
 def test_search_negative_offset_is_clamped() -> None:
     reg = CapabilityRegistry()
     for i in range(5):

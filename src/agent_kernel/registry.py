@@ -208,8 +208,8 @@ class CapabilityRegistry:
         ``description``. Capabilities tied on score are returned in
         ``capability_id`` order for determinism.
 
-        Triggers any deferred namespace loader whose prefix overlaps the goal
-        tokens before scoring.
+        Triggers every not-yet-loaded deferred namespace loader before scoring,
+        so results span the full registry. Each loader runs at most once.
 
         Args:
             goal: Free-text description of the user's intent.
@@ -228,7 +228,7 @@ class CapabilityRegistry:
         if not tokens:
             return []
 
-        self._load_namespaces_overlapping(tokens)
+        self._load_all_deferred_namespaces()
 
         ranked = self._index.ranked(self._store, tokens)
         if offset:
@@ -263,8 +263,8 @@ class CapabilityRegistry:
         """Invoke the deferred loader for *prefix* if it has not run yet.
 
         The batch is validated before anything registers: every returned
-        ``capability_id`` must equal *prefix* or start with ``prefix + "."`` (as
-        promised by :meth:`register_namespace`). On violation, none registers.
+        ``capability_id`` must equal *prefix* or start with ``prefix + "."``. On
+        violation nothing registers and the loaded flag resets for retry.
 
         Raises:
             FederationError: If the loader returns a capability whose
@@ -276,10 +276,10 @@ class CapabilityRegistry:
         loader = meta.loader
         # Mark as loaded *before* calling so a recursive load doesn't re-enter.
         meta.loaded = True
-        loaded = list(loader())
-        for cap in loaded:
+        for cap in (loaded := list(loader())):
             cap_id = cap.capability_id
             if cap_id != prefix and not cap_id.startswith(prefix + "."):
+                meta.loaded = False
                 raise FederationError(
                     f"Namespace loader for '{prefix}' returned capability "
                     f"'{cap_id}', which does not live under the namespace. "
@@ -289,12 +289,8 @@ class CapabilityRegistry:
         for cap in loaded:
             self.register(cap)
 
-    def _load_namespaces_overlapping(self, tokens: list[str]) -> None:
-        """Load any deferred namespace whose prefix shares a token with *tokens*."""
-        token_set = set(tokens)
+    def _load_all_deferred_namespaces(self) -> None:
+        """Trigger every not-yet-loaded deferred loader (search ranks the whole registry)."""
         for prefix, meta in list(self._namespaces.items()):
-            if meta.loaded:
-                continue
-            head_tokens = set(tokenize(prefix.replace(".", " ").replace("_", " ")))
-            if head_tokens & token_set:
+            if not meta.loaded:
                 self._maybe_load_namespace(prefix)

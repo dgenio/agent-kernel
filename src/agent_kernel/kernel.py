@@ -726,10 +726,9 @@ class Kernel:
                 (no ``add_route``), so imported capabilities could not be made
                 invokable.
             TrustPolicyError: If *trust_policy* is unknown.
-            ManifestError: If the manifest is malformed or contains a
-                capability ID that conflicts with an existing local one.
-            CapabilityAlreadyRegistered: If any imported capability ID is
-                already registered locally.
+            ManifestError: If the manifest is malformed, or contains a
+                capability ID that is already registered locally or duplicated
+                within the manifest. The registry is left untouched on failure.
         """
         # Imported capabilities must be routable. Require a mutable router up
         # front so we fail clean instead of registering capabilities that can

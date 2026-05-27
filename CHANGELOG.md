@@ -35,6 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protocol and a namespace section in
   [`docs/capabilities.md`](docs/capabilities.md).
 
+### Fixed
+- `merge_sensitivity()` (and `most_restrictive` imports) now ranks the `MEMORY`
+  sensitivity tag instead of silently treating it as `NONE`. (#52)
+- `import_manifest()` is now atomic: a manifest whose capability ID is already
+  registered locally — or that lists the same ID more than once — raises
+  `ManifestError` and registers nothing, instead of leaving a partial,
+  unrouted import behind. (#52)
+- `CapabilityRegistry.search()` now triggers every pending deferred namespace
+  loader before ranking, so matches are no longer missed when the query shares
+  no token with a namespace prefix. (#45)
+- A deferred namespace loader that fails (by raising or returning an
+  out-of-namespace capability) no longer permanently disables the namespace —
+  the load is retried on a later access. (#45)
+
 ## [0.8.0] - 2026-05-22
 
 ### Added
