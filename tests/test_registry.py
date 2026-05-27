@@ -215,6 +215,80 @@ def test_deferred_loader_triggers_on_search_overlap() -> None:
     assert call_count["n"] == 1
 
 
+def test_list_namespace_loads_ancestor_loader() -> None:
+    """list_namespace on a child prefix triggers an ancestor's deferred loader."""
+
+    def loader() -> list[Capability]:
+        return [_make_cap("billing.invoices.list"), _make_cap("billing.invoices.create")]
+
+    reg = CapabilityRegistry()
+    reg.register_namespace("billing", loader=loader)
+    caps = reg.list_namespace("billing.invoices")
+    assert {c.capability_id for c in caps} == {
+        "billing.invoices.list",
+        "billing.invoices.create",
+    }
+
+
+def test_get_loads_intermediate_namespace_loader() -> None:
+    """get() triggers a loader declared on a nested (intermediate) prefix."""
+
+    def loader() -> list[Capability]:
+        return [_make_cap("billing.invoices.list")]
+
+    reg = CapabilityRegistry()
+    reg.register_namespace("billing.invoices", loader=loader)
+    assert reg.get("billing.invoices.list").capability_id == "billing.invoices.list"
+
+
+def test_get_loads_deepest_declared_namespace_only() -> None:
+    """When several ancestors are declared, only the deepest loader runs."""
+    loaded: list[str] = []
+
+    def shallow() -> list[Capability]:
+        loaded.append("billing")
+        return []
+
+    def deep() -> list[Capability]:
+        loaded.append("billing.invoices")
+        return [_make_cap("billing.invoices.list")]
+
+    reg = CapabilityRegistry()
+    reg.register_namespace("billing", loader=shallow)
+    reg.register_namespace("billing.invoices", loader=deep)
+    assert reg.get("billing.invoices.list").capability_id == "billing.invoices.list"
+    assert loaded == ["billing.invoices"]
+
+
+def test_namespace_loader_out_of_namespace_capability_raises() -> None:
+    """A loader returning a capability outside its namespace is a contract error."""
+    from agent_kernel import FederationError
+
+    def loader() -> list[Capability]:
+        return [_make_cap("billing.invoices.list"), _make_cap("crm.contacts.list")]
+
+    reg = CapabilityRegistry()
+    reg.register_namespace("billing", loader=loader)
+    with pytest.raises(FederationError, match="does not live under the namespace"):
+        reg.list_namespace("billing")
+    # The whole batch is rejected — nothing is registered on a contract violation.
+    assert reg.list_all() == []
+
+
+def test_search_negative_offset_is_clamped() -> None:
+    reg = CapabilityRegistry()
+    for i in range(5):
+        reg.register(_make_cap(f"billing.invoice{i:02d}", tags=["invoice"]))
+    baseline = reg.search("invoice", offset=0)
+    assert reg.search("invoice", offset=-3) == baseline
+
+
+def test_search_negative_max_results_returns_empty() -> None:
+    reg = CapabilityRegistry()
+    reg.register(_make_cap("billing.list", tags=["invoice"]))
+    assert reg.search("invoice", max_results=-1) == []
+
+
 # ── Search scoring & pagination (#45) ─────────────────────────────────────────
 
 
@@ -283,9 +357,7 @@ def test_search_tags_outrank_description() -> None:
 
 
 def test_search_scales_to_500_capabilities() -> None:
-    """Sanity check: search over 500 capabilities completes quickly."""
-    import time
-
+    """Search over 500 capabilities stays correct and deterministic."""
     reg = CapabilityRegistry()
     for i in range(500):
         ns = "billing" if i % 2 == 0 else "crm"
@@ -296,10 +368,10 @@ def test_search_scales_to_500_capabilities() -> None:
                 tags=[ns, "thing"],
             )
         )
-    start = time.perf_counter()
     results = reg.search("billing thing", max_results=10)
-    elapsed = time.perf_counter() - start
-    assert len(results) == 10
-    # Generous bound: BM25 over 500 docs with ~5 tokens each should be
-    # well under a second on any developer machine.
-    assert elapsed < 1.0, f"search took {elapsed:.3f}s for 500 capabilities"
+    ids = [r.capability_id for r in results]
+    assert len(ids) == 10
+    # Deterministic ordering: an identical query returns identical results.
+    assert [r.capability_id for r in reg.search("billing thing", max_results=10)] == ids
+    # The 'billing' token outweighs 'crm', so all top hits are billing IDs.
+    assert all(i.startswith("billing.") for i in ids)

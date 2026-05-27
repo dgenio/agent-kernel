@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from .enums import SafetyClass, SensitivityTag
+from .errors import ManifestError
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -464,7 +465,8 @@ class NamespaceMetadata:
     """Dot-notation namespace prefix (e.g. ``"billing"`` or ``"billing.invoices"``)."""
 
     description: str = ""
-    """Optional human-readable description shown by ``list_namespaces``."""
+    """Optional human-readable description of the namespace. Not surfaced by
+    ``CapabilityRegistry.list_namespaces`` (which returns prefixes only)."""
 
     loader: Callable[[], list[Capability]] | None = None
     """Optional zero-arg loader invoked at most once on first access.
@@ -523,13 +525,39 @@ class CapabilityDescriptor:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CapabilityDescriptor:
-        """Reconstruct a descriptor from a dict produced by :meth:`to_dict`."""
+        """Reconstruct a descriptor from a dict produced by :meth:`to_dict`.
+
+        Raises:
+            ManifestError: If a required field is missing or ``safety_class`` /
+                ``sensitivity`` carries an unrecognised value.
+        """
+        try:
+            capability_id = data["capability_id"]
+            name = data["name"]
+            description = data["description"]
+            safety_class_raw = data["safety_class"]
+        except KeyError as exc:
+            raise ManifestError(f"Capability descriptor is missing required field {exc}.") from exc
+        try:
+            safety_class = SafetyClass(safety_class_raw)
+        except ValueError as exc:
+            raise ManifestError(
+                f"Capability descriptor field 'safety_class' has invalid value "
+                f"{safety_class_raw!r}."
+            ) from exc
+        sensitivity_raw = data.get("sensitivity", SensitivityTag.NONE.value)
+        try:
+            sensitivity = SensitivityTag(sensitivity_raw)
+        except ValueError as exc:
+            raise ManifestError(
+                f"Capability descriptor field 'sensitivity' has invalid value {sensitivity_raw!r}."
+            ) from exc
         return cls(
-            capability_id=data["capability_id"],
-            name=data["name"],
-            description=data["description"],
-            safety_class=SafetyClass(data["safety_class"]),
-            sensitivity=SensitivityTag(data.get("sensitivity", SensitivityTag.NONE.value)),
+            capability_id=capability_id,
+            name=name,
+            description=description,
+            safety_class=safety_class,
+            sensitivity=sensitivity,
             tags=list(data.get("tags", [])),
             parameters_schema=data.get("parameters_schema"),
         )
@@ -588,13 +616,37 @@ class CapabilityManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CapabilityManifest:
-        """Reconstruct a manifest from a dict produced by :meth:`to_dict`."""
+        """Reconstruct a manifest from a dict produced by :meth:`to_dict`.
+
+        Raises:
+            ManifestError: If a required field is missing, ``capabilities`` is
+                not a list, or ``trust_level`` is not ``"verified"`` /
+                ``"unverified"``.
+        """
+        try:
+            kernel_id = data["kernel_id"]
+            version = data["version"]
+            endpoint = data["endpoint"]
+            raw_capabilities = data["capabilities"]
+        except KeyError as exc:
+            raise ManifestError(f"Manifest is missing required field {exc}.") from exc
+        if not isinstance(raw_capabilities, list):
+            raise ManifestError(
+                "Manifest field 'capabilities' must be a list, got "
+                f"{type(raw_capabilities).__name__}."
+            )
+        trust_level = data.get("trust_level", "unverified")
+        if trust_level not in ("verified", "unverified"):
+            raise ManifestError(
+                f"Manifest field 'trust_level' has invalid value {trust_level!r}; "
+                "expected 'verified' or 'unverified'."
+            )
         return cls(
-            kernel_id=data["kernel_id"],
-            version=data["version"],
-            endpoint=data["endpoint"],
-            trust_level=data.get("trust_level", "unverified"),
-            capabilities=[CapabilityDescriptor.from_dict(c) for c in data["capabilities"]],
+            kernel_id=kernel_id,
+            version=version,
+            endpoint=endpoint,
+            trust_level=trust_level,
+            capabilities=[CapabilityDescriptor.from_dict(c) for c in raw_capabilities],
         )
 
 

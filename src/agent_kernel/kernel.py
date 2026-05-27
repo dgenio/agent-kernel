@@ -9,7 +9,7 @@ from typing import Any, Literal, overload
 
 from .drivers.base import Driver, ExecutionContext
 from .enums import SafetyClass
-from .errors import AgentKernelError, DriverError
+from .errors import AgentKernelError, DriverError, FederationError
 from .federation import TrustPolicy, build_manifest, import_manifest
 from .firewall.budget_manager import BudgetManager
 from .firewall.transform import Firewall
@@ -671,12 +671,26 @@ class Kernel:
             The list of imported :class:`Capability` objects, in manifest order.
 
         Raises:
+            FederationError: If the configured router cannot accept new routes
+                (no ``add_route``), so imported capabilities could not be made
+                invokable.
             TrustPolicyError: If *trust_policy* is unknown.
             ManifestError: If the manifest is malformed or contains a
                 capability ID that conflicts with an existing local one.
             CapabilityAlreadyRegistered: If any imported capability ID is
                 already registered locally.
         """
+        # Imported capabilities must be routable. Require a mutable router up
+        # front so we fail clean instead of registering capabilities that can
+        # never be invoked.
+        router_add = getattr(self._router, "add_route", None)
+        if router_add is None:
+            raise FederationError(
+                "import_remote() requires a router that supports add_route(); "
+                f"the configured {type(self._router).__name__} does not, so "
+                "imported capabilities would be unroutable. Use a mutable router "
+                "(e.g. StaticRouter) or pre-configure routes for the imported IDs."
+            )
         self.register_driver(driver)
         imported = import_manifest(
             manifest=manifest,
@@ -686,10 +700,8 @@ class Kernel:
         )
         # Route each imported capability to its driver so existing
         # ``Kernel.invoke`` works unchanged.
-        router_add = getattr(self._router, "add_route", None)
-        if router_add is not None:
-            for cap in imported:
-                router_add(cap.capability_id, [driver.driver_id])
+        for cap in imported:
+            router_add(cap.capability_id, [driver.driver_id])
         logger.info(
             "import_remote",
             extra={

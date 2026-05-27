@@ -133,6 +133,55 @@ def test_build_manifest_preserves_registration_order() -> None:
     assert [c.capability_id for c in manifest.capabilities] == ["c.three", "a.one", "b.two"]
 
 
+def test_descriptor_from_dict_missing_field_raises_manifest_error() -> None:
+    with pytest.raises(ManifestError, match="missing required field 'name'"):
+        CapabilityDescriptor.from_dict({"capability_id": "billing.list", "safety_class": "read"})
+
+
+def test_descriptor_from_dict_invalid_safety_class_raises_manifest_error() -> None:
+    with pytest.raises(ManifestError, match="'safety_class' has invalid value"):
+        CapabilityDescriptor.from_dict(
+            {
+                "capability_id": "billing.list",
+                "name": "List",
+                "description": "d",
+                "safety_class": "not-a-class",
+            }
+        )
+
+
+def test_manifest_from_dict_missing_field_raises_manifest_error() -> None:
+    with pytest.raises(ManifestError, match="missing required field 'capabilities'"):
+        CapabilityManifest.from_dict(
+            {"kernel_id": "agent-b", "version": "1", "endpoint": "https://b/k"}
+        )
+
+
+def test_manifest_from_dict_capabilities_not_a_list_raises_manifest_error() -> None:
+    with pytest.raises(ManifestError, match="'capabilities' must be a list"):
+        CapabilityManifest.from_dict(
+            {
+                "kernel_id": "agent-b",
+                "version": "1",
+                "endpoint": "https://b/k",
+                "capabilities": {"not": "a list"},
+            }
+        )
+
+
+def test_manifest_from_dict_invalid_trust_level_raises_manifest_error() -> None:
+    with pytest.raises(ManifestError, match="'trust_level' has invalid value"):
+        CapabilityManifest.from_dict(
+            {
+                "kernel_id": "agent-b",
+                "version": "1",
+                "endpoint": "https://b/k",
+                "trust_level": "super-trusted",
+                "capabilities": [],
+            }
+        )
+
+
 # ── Importing manifests ───────────────────────────────────────────────────────
 
 
@@ -293,6 +342,34 @@ def test_kernel_import_remote_registers_driver_and_route() -> None:
     # The driver-routing wiring is correct.
     plan = local_router.route("billing.list_invoices")
     assert plan.driver_ids == ["remote_b"]
+
+
+def test_import_remote_requires_mutable_router() -> None:
+    """A router without add_route() cannot make imports routable — fail clean."""
+    from agent_kernel import FederationError
+    from agent_kernel.models import RoutePlan
+
+    class _ReadOnlyRouter:
+        """Conforms to the Router Protocol (route only); cannot accept new routes."""
+
+        def route(self, capability_id: str) -> RoutePlan:  # pragma: no cover - never called
+            raise NotImplementedError
+
+    remote = _remote_kernel_with(_make_cap("billing.list_invoices"))
+    manifest = remote.advertise(endpoint="https://agent-b/k")
+
+    local_reg = CapabilityRegistry()
+    local = Kernel(
+        registry=local_reg,
+        token_provider=HMACTokenProvider(secret="local-secret"),
+        router=_ReadOnlyRouter(),
+        kernel_id="agent-a",
+    )
+    driver = InMemoryDriver(driver_id="remote_b")
+    with pytest.raises(FederationError, match="requires a router that supports add_route"):
+        local.import_remote(manifest, driver=driver, trust_policy="local_only")
+    # Failing clean: nothing imported or registered locally.
+    assert local_reg.list_all() == []
 
 
 def test_imported_capability_invokes_through_local_pipeline() -> None:
