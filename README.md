@@ -100,7 +100,9 @@ asyncio.run(main())
 
 > The runnable version of this quickstart lives at
 > [`examples/readme_quickstart.py`](examples/readme_quickstart.py) and is exercised by
-> `make example` / CI, so this snippet cannot silently drift from the working API.
+> `make example` / CI, which fails if the documented flow ever regresses against the
+> API. CI runs that mirror but does not diff this inline snippet against it, so the two
+> are kept in step by hand.
 
 ## Where it fits
 

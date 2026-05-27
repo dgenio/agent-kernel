@@ -56,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without `execute_stream` automatically fall back to a single-chunk stream
   via `execute()`. `Frame` gained an `is_final: bool` field. (#47)
 - `examples/readme_quickstart.py` — a runnable mirror of the README quickstart,
-  wired into `make example` and the CI "Examples" step so the first code a new
-  user runs cannot silently drift from the working API. (#83)
+  wired into `make example` and the CI "Examples" step as a regression guard: CI
+  fails if the documented flow ever stops working against the API. (#83)
 
 ### Changed
 - Tech debt: `policy_dsl.py` decomposed (was 661 lines). Parsing and
