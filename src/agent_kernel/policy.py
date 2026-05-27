@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import logging
-import time
-from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .enums import SafetyClass, SensitivityTag
@@ -22,6 +19,7 @@ from .models import (
     Principal,
 )
 from .policy_reasons import AllowReason, DenialReason
+from .rate_limit import DEFAULT_RATE_LIMITS, SERVICE_RATE_MULTIPLIER, RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -32,65 +30,10 @@ _MIN_JUSTIFICATION = 15
 _MAX_ROWS_USER = 50
 _MAX_ROWS_SERVICE = 500
 
-# Default rate limits per safety class: (invocations, window_seconds).
-_DEFAULT_RATE_LIMITS: dict[SafetyClass, tuple[int, float]] = {
-    SafetyClass.READ: (60, 60.0),
-    SafetyClass.WRITE: (10, 60.0),
-    SafetyClass.DESTRUCTIVE: (2, 60.0),
-}
-
-# Service role multiplier for rate limits.
-_SERVICE_RATE_MULTIPLIER = 10
-
-
-@dataclass(slots=True)
-class _RateEntry:
-    """Timestamps for a single rate-limit key."""
-
-    timestamps: list[float]
-
-
-class RateLimiter:
-    """Sliding-window rate limiter using monotonic clock.
-
-    Args:
-        clock: Callable returning the current time in seconds.
-            Defaults to :func:`time.monotonic`.
-    """
-
-    def __init__(self, clock: Callable[[], float] | None = None) -> None:
-        self._clock = clock or time.monotonic
-        self._windows: dict[str, _RateEntry] = defaultdict(lambda: _RateEntry(timestamps=[]))
-
-    def check(self, key: str, limit: int, window_seconds: float) -> bool:
-        """Return ``True`` if the next invocation would be within the limit.
-
-        Prunes expired timestamps as a side-effect.
-
-        Args:
-            key: Rate-limit key (e.g. ``"principal:capability"``).
-            limit: Maximum allowed invocations per window.
-            window_seconds: Sliding window duration in seconds.
-
-        Returns:
-            ``True`` if under limit, ``False`` if limit would be exceeded.
-        """
-        now = self._clock()
-        cutoff = now - window_seconds
-        entry = self._windows[key]
-        entry.timestamps = [t for t in entry.timestamps if t > cutoff]
-        if not entry.timestamps:
-            del self._windows[key]
-            return True
-        return len(entry.timestamps) < limit
-
-    def record(self, key: str) -> None:
-        """Record an invocation for *key*.
-
-        Args:
-            key: Rate-limit key.
-        """
-        self._windows[key].timestamps.append(self._clock())
+# Backwards-compatible aliases — these used to be defined here. New code
+# should import the names without the leading underscore from ``rate_limit``.
+_DEFAULT_RATE_LIMITS = DEFAULT_RATE_LIMITS
+_SERVICE_RATE_MULTIPLIER = SERVICE_RATE_MULTIPLIER
 
 
 class PolicyEngine(Protocol):

@@ -389,6 +389,14 @@ class Frame:
     raw_data: Any = None
     """Only populated in ``raw`` response mode for admin principals."""
 
+    is_final: bool = False
+    """``True`` when this Frame is the last chunk of a stream.
+
+    Non-streaming :meth:`~agent_kernel.Kernel.invoke` always returns a Frame
+    with ``is_final=True``. For :meth:`~agent_kernel.Kernel.invoke_stream`, only
+    the terminal Frame has it set; intermediate chunks have ``is_final=False``.
+    """
+
 
 # ── Audit trace ───────────────────────────────────────────────────────────────
 

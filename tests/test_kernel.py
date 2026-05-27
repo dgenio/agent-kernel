@@ -799,3 +799,113 @@ async def test_dry_run_policy_decision_has_trace(
     assert result.policy_decision.trace.final_outcome == "allowed"
     assert result.policy_decision.trace.final_reason_code == "token_verified"
     assert result.policy_decision.reason_code == "token_verified"
+
+
+# ── Dry-run with HTTP and MCP drivers (issue #68 part E) ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dry_run_with_http_driver_does_not_call_execute() -> None:
+    """Dry-run short-circuits before driver dispatch — HTTPDriver edition.
+
+    The short-circuit at ``kernel.invoke`` runs before driver lookup, so
+    the mode is provably driver-agnostic. This test pins the contract so
+    a future refactor that moved driver dispatch above the dry-run check
+    cannot land unnoticed (per issue #68 part E acceptance criteria).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from agent_kernel.drivers.http import HTTPDriver, HTTPEndpoint
+    from agent_kernel.models import DryRunResult
+
+    cap = Capability(
+        capability_id="external.fetch_user",
+        name="fetch_user",
+        description="Fetch user from external HTTP API.",
+        safety_class=SafetyClass.READ,
+    )
+    registry = CapabilityRegistry()
+    registry.register(cap)
+
+    http_driver = HTTPDriver(driver_id="http")
+    http_driver.register_endpoint(
+        "external.fetch_user",
+        HTTPEndpoint(method="GET", url="https://example.invalid/u/1"),
+    )
+
+    kernel = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=StaticRouter(routes={"external.fetch_user": ["http"]}),
+    )
+    kernel.register_driver(http_driver)
+
+    principal = Principal(principal_id="alice", roles=["reader"])
+    req = CapabilityRequest(capability_id="external.fetch_user", goal="t")
+    token = kernel.get_token(req, principal, justification="")
+
+    with patch.object(http_driver, "execute", new_callable=AsyncMock) as mock_exec:
+        result = await kernel.invoke(token, principal=principal, args={}, dry_run=True)
+        mock_exec.assert_not_called()
+
+    assert isinstance(result, DryRunResult)
+    assert result.driver_id == "http"
+    assert result.operation == "external.fetch_user"
+    assert result.capability_id == "external.fetch_user"
+    assert result.policy_decision.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_dry_run_with_mcp_driver_does_not_call_execute() -> None:
+    """Dry-run short-circuits before driver dispatch — MCPDriver edition.
+
+    MCPDriver is constructed with a stub session factory so we never
+    open a real subprocess or HTTP connection. The assertion is that
+    ``execute`` is never called regardless — the short-circuit happens
+    before the kernel looks up which driver to dispatch to.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from agent_kernel.drivers.mcp import MCPDriver
+    from agent_kernel.models import DryRunResult
+
+    cap = Capability(
+        capability_id="mcp.echo",
+        name="echo",
+        description="Echo tool from an MCP server.",
+        safety_class=SafetyClass.READ,
+    )
+    registry = CapabilityRegistry()
+    registry.register(cap)
+
+    # Stub session factory — never invoked by dry-run.
+    def _fake_session_factory() -> object:  # pragma: no cover - never called
+        raise AssertionError("session_factory must not run during dry-run")
+
+    mcp_driver = MCPDriver(
+        driver_id="mcp:test",
+        session_factory=_fake_session_factory,  # type: ignore[arg-type]
+        server_name="test",
+        transport="stdio",
+    )
+
+    kernel = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=StaticRouter(routes={"mcp.echo": ["mcp:test"]}),
+    )
+    kernel.register_driver(mcp_driver)
+
+    principal = Principal(principal_id="alice", roles=["reader"])
+    req = CapabilityRequest(capability_id="mcp.echo", goal="t")
+    token = kernel.get_token(req, principal, justification="")
+
+    with patch.object(mcp_driver, "execute", new_callable=AsyncMock) as mock_exec:
+        result = await kernel.invoke(token, principal=principal, args={}, dry_run=True)
+        mock_exec.assert_not_called()
+
+    assert isinstance(result, DryRunResult)
+    assert result.driver_id == "mcp:test"
+    assert result.operation == "mcp.echo"
+    assert result.capability_id == "mcp.echo"
+    assert result.policy_decision.allowed is True

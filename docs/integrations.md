@@ -327,3 +327,38 @@ failures, and hook abort signals are all returned to the LLM as a tool result
 with `error: true` (Anthropic also sets `is_error: true`). Raised exceptions
 would crash the surrounding agent loop; the LLM cannot react to an
 exception.
+
+## OpenTelemetry
+
+`agent_kernel.instrument_kernel(kernel)` wraps `Kernel.invoke` and
+`Kernel.grant_capability` with OTel spans + metrics. The optional
+`[otel]` extra brings in `opentelemetry-api`; everything is a strict
+no-op when the extra is not installed.
+
+```bash
+pip install 'weaver-kernel[otel]'           # api only — for production
+pip install 'weaver-kernel[otel]' opentelemetry-sdk \
+            opentelemetry-exporter-otlp     # also the SDK + exporter
+```
+
+```python
+from agent_kernel import Kernel, instrument_kernel
+
+kernel = Kernel(registry=...)
+instrument_kernel(kernel)
+# Production: rely on global TracerProvider/MeterProvider configured at
+# process start. Tests can pass explicit providers:
+#   instrument_kernel(kernel, tracer_provider=..., meter_provider=...)
+```
+
+| Telemetry | Name | Notes |
+|-----------|------|-------|
+| Span | `agent_kernel.invoke` | attrs: `principal_id`, `capability_id`, `response_mode`, `dry_run` |
+| Span | `agent_kernel.grant` | attrs: `principal_id`, `capability_id` |
+| Counter | `agent_kernel.invocations` | labels: `capability_id`, `status` (`success`/`error`) |
+| Histogram | `agent_kernel.invocation_duration` | unit: ms |
+| Counter | `agent_kernel.policy_denials` | labels: `capability_id`, `reason_code` |
+
+`instrument_kernel` is idempotent — calling twice on the same kernel is a
+no-op. Use `agent_kernel.otel.reset_instrumentation(kernel)` in tests to
+re-instrument with a different provider.
