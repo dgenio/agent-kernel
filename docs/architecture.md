@@ -31,7 +31,7 @@ The central orchestrator. Wires all components together and exposes:
 - `request_capabilities(goal)` — discover relevant capabilities
 - `grant_capability(request, principal, justification)` — policy check + token issuance
 - `invoke(token, principal, args, response_mode, dry_run=False)` — execute + firewall + trace, or short-circuit before driver dispatch when `dry_run=True`
-- `expand(handle, query)` — paginate/filter stored results
+- `expand(handle, *, query, principal=None)` — paginate/filter stored results; `principal` is required for principal-bound handles (see [`docs/security.md`](security.md#handle-expansion-boundary))
 - `explain(action_id)` — retrieve audit trace
 - `explain_denial(request, principal, justification)` — return a structured `DenialExplanation` instead of raising `PolicyDenied`
 

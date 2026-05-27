@@ -39,7 +39,7 @@ The architecture optimizes for:
 | Tokens signed, not encrypted | Simplicity; avoids key management complexity | Payloads are readable — never store secrets in them |
 | Keyword-based capability search | Deterministic; no external service dependency | Less flexible than semantic search; relies on good tagging |
 | Firewall is mandatory | Prevents accidental context blowup and data leakage | All output is bounded; debugging requires admin `raw` mode |
-| Single dep (`httpx` only) | Minimal attack surface for a security kernel | Adding a dependency requires justification |
+| Minimal deps (`httpx` + `pydantic`) | Small attack surface for a security kernel | Adding a dependency requires justification (see `AGENTS.md`) |
 
 ## Things not to simplify
 

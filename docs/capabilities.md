@@ -83,6 +83,10 @@ Each capability should map to a single, auditable action with clear side-effects
 Use `SensitivityTag.PII` when results may contain: name, email, phone, SSN, address.
 Use `SensitivityTag.PCI` when results may contain: card numbers, CVV, bank details.
 Use `SensitivityTag.SECRETS` when results may contain: API keys, passwords, tokens.
+Use `SensitivityTag.MEMORY` when results are durable agent memory (project notes,
+session handoff, learned context). Pair it with the `memory.read` / `memory.write` /
+`memory.forget` capability IDs to activate the policy rules and audit-trace redaction
+described in [`docs/security.md#memory-actions`](security.md#memory-actions).
 
 Always pair sensitivity tags with `allowed_fields` to restrict which fields are returned
 to non-privileged callers.

@@ -50,10 +50,9 @@ import asyncio, os
 os.environ["AGENT_KERNEL_SECRET"] = "my-secret"
 
 from agent_kernel import (
-    Capability, CapabilityRegistry, HMACTokenProvider,
+    Capability, CapabilityRegistry,
     InMemoryDriver, Kernel, Principal, SafetyClass, StaticRouter,
 )
-from agent_kernel.drivers.base import ExecutionContext
 from agent_kernel.models import CapabilityRequest
 
 # 1. Register a capability
@@ -86,7 +85,11 @@ async def main():
     print(frame.facts)           # ['Total rows: 1', 'Top keys: id, title', ...]
     print(frame.handle)          # Handle(handle_id='...', ...)
 
-    expanded = kernel.expand(frame.handle, query={"limit": 1, "fields": ["title"]})
+    # `principal` is required: the handle is bound to the granting principal,
+    # so an omitted principal raises HandleConstraintViolation.
+    expanded = kernel.expand(
+        frame.handle, query={"limit": 1, "fields": ["title"]}, principal=principal
+    )
     print(expanded.table_preview)  # [{'title': 'Buy milk'}]
 
     trace = kernel.explain(frame.action_id)
@@ -94,6 +97,10 @@ async def main():
 
 asyncio.run(main())
 ```
+
+> The runnable version of this quickstart lives at
+> [`examples/readme_quickstart.py`](examples/readme_quickstart.py) and is exercised by
+> `make example` / CI, so this snippet cannot silently drift from the working API.
 
 ## Where it fits
 
