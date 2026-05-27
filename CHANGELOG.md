@@ -35,6 +35,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protocol and a namespace section in
   [`docs/capabilities.md`](docs/capabilities.md).
 
+## [0.8.0] - 2026-05-22
+
+### Added
+- "Secure your first MCP tool in 5 minutes" tutorial: new
+  [`docs/tutorial.md`](docs/tutorial.md) walks a new reader from install to a
+  working invocation, covering registration, principals, grants, the three
+  LLM-safe response modes (`summary` / `table` / `handle_only`), handle
+  expansion, policy denial with stable `reason_code`, and `explain()`
+  audit. The admin-only `raw` mode is described but not exercised by the
+  walkthrough. Companion runnable example
+  [`examples/tutorial.py`](examples/tutorial.py) uses `InMemoryDriver`
+  (offline, zero external deps) and is exercised by `make example` and CI;
+  it now `assert`s that no PII field leaks into the LLM-safe Frame so a
+  firewall regression fails the build. (#46)
+- README "How this relates to neighboring projects" section: a neutral
+  boundaries table covering `AgentFence` (external CLI/proxy gate),
+  `contextweaver` (context compilation library), `ChainWeaver`
+  (deterministic flow orchestrator), and `weaver-spec` (specification +
+  conformance suite), plus a "When *not* to use this" callout. (#71)
+- Grant-constraint enforcement on handle expansion (#76). `Handle` now carries
+  the `principal_id` and `constraints` from the original grant, persisted at
+  handle creation time by `HandleStore.store`. `HandleStore.expand` rechecks
+  these against the requested expand query:
+  - A request `limit` larger than the grant's `max_rows` is rejected with
+    `HandleConstraintViolation` (`reason_code = handle_constraint_violation`).
+  - A request `fields` entry outside `allowed_fields` is rejected; an
+    unscoped expand applies `allowed_fields` as the default projection.
+  - A request filter that disagrees with the grant's `scope` is rejected;
+    the scope filter is otherwise AND-merged so the caller cannot bypass it.
+  - A `principal_id` parameter that does not match the handle's stored
+    principal raises `HandleConstraintViolation`
+    (`reason_code = handle_principal_mismatch`).
+- `SensitivityTag.MEMORY` and memory-action policy rules in
+  `DefaultPolicyEngine` (#75). Project-scoped memory reads are allowed by
+  default; sensitive-scoped reads require the `memory_reader_sensitive` role
+  (or `admin`); writes always require `memory_writer` (or `admin`). The
+  `explain()` path lists the same conditions with stable `reason_code`s.
+- New stable `DenialReason` codes: `HANDLE_CONSTRAINT_VIOLATION`,
+  `HANDLE_PRINCIPAL_MISMATCH`, `MEMORY_WRITE_REQUIRES_WRITER`,
+  `MEMORY_SENSITIVE_READ_DENIED`.
+- `HandleConstraintViolation` error class (subclass of `AgentKernelError`,
+  exported from `agent_kernel`) — carries an optional `reason_code` matching
+  the `DenialReason` vocabulary so handle-side and grant-side denials share
+  one set of stable codes.
+- `Kernel.expand` accepts an optional `principal: Principal` argument that
+  is forwarded to `HandleStore.expand` for principal-mismatch checks.
+- Memory-action input redaction (#75): `ActionTrace.args` for any capability
+  whose ID starts with `memory.` has payload-like keys (`payload`, `content`,
+  `value`, `memory`, `text`, `body`) replaced with `"[REDACTED]"`. Keys are
+  preserved so audit can confirm the action took place without exposing the
+  durable content the agent wrote or read.
+- New `tests/test_firewall_boundary.py` (#74) — focused regression suite that
+  pushes synthetic secret/PII values through the raw → `Frame` boundary
+  end-to-end and asserts those values never appear in summary/table/raw
+  frames, are stripped by `allowed_fields`, never reach `ActionTrace.args`
+  for memory capabilities, and stay quarantined when raw mode is downgraded
+  for non-admin principals.
+
+### Security
+- Closes #76: handle expansion can no longer return data outside the original
+  grant's `max_rows` / `allowed_fields` / `scope`, and handle IDs are no
+  longer bearer credentials that work across principals.
+- Closes #75: memory reads and writes are governed actions with stable
+  denial codes and trace-side redaction of durable payloads.
+- Closes #74: redaction boundary is pinned by negative assertions against
+  fake-secret strings, catching future regressions that drop a redaction
+  step or route raw data through a new path.
+
 ## [0.7.0] - 2026-05-20
 
 ### Added
