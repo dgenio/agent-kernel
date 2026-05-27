@@ -3,8 +3,59 @@
 ## Naming conventions
 
 - Use `domain.verb_noun` format: `billing.list_invoices`, `users.get_profile`.
+- Prefer fully namespaced IDs (`billing.invoices.list`) over flat ones —
+  the registry will infer namespace operations from the dot-segments and
+  large ecosystems benefit from being able to list/search per namespace.
 - Be specific: prefer `billing.cancel_invoice` over `billing.update`.
 - Avoid generic names like `billing.execute` or `api.call`.
+
+## Namespaces and discovery
+
+`CapabilityRegistry` recognises dot-notation namespaces automatically. No
+extra registration step is required — `register(Capability(capability_id=
+"billing.invoices.list", ...))` is enough to populate the `billing` and
+`billing.invoices` namespaces.
+
+```python
+registry.list_namespaces()
+# ['billing', 'crm']
+
+registry.list_namespace("billing")
+# [Capability('billing.invoices.list'), Capability('billing.payments.refund'), …]
+```
+
+For large tool ecosystems where eagerly registering hundreds of
+capabilities is wasteful, declare a deferred loader. The loader runs at
+most once, the first time the namespace is searched, listed, or any
+capability under it is fetched via `get()`:
+
+```python
+def load_billing() -> list[Capability]:
+    return [
+        Capability(capability_id="billing.invoices.list", …),
+        Capability(capability_id="billing.invoices.create", …),
+        Capability(capability_id="billing.payments.refund", …),
+    ]
+
+registry.register_namespace(
+    "billing",
+    description="Billing and invoicing tools",
+    loader=load_billing,
+)
+```
+
+Search ranks matches with a BM25-flavoured scorer that weights
+`capability_id` and `tags` higher than `description`, strips a small
+stop-word set (`a`, `the`, `please`, …), and offers `offset` for
+pagination:
+
+```python
+results = registry.search("list invoices", max_results=10, offset=0)
+```
+
+Search is deterministic — equal-scoring capabilities are returned in
+`capability_id` order — and trips any deferred namespace loader whose
+prefix shares a token with the query.
 
 ## Granularity
 

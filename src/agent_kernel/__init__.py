@@ -31,6 +31,11 @@ LLM tool-format adapters::
 
     from agent_kernel import OpenAIMiddleware, AnthropicMiddleware
 
+Federation (capability marketplace)::
+
+    from agent_kernel import CapabilityManifest, CapabilityDescriptor
+    from agent_kernel import build_manifest, import_manifest, TrustPolicy
+
 Errors::
 
     from agent_kernel import (
@@ -39,6 +44,7 @@ Errors::
         PolicyDenied, PolicyConfigError, DriverError, FirewallError,
         BudgetExhausted, BudgetConfigError,
         CapabilityNotFound, HandleNotFound, HandleExpired,
+        NamespaceNotFound, FederationError, ManifestError, TrustPolicyError,
     )
 """
 
@@ -56,16 +62,27 @@ from .errors import (
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
     DriverError,
+    FederationError,
     FirewallError,
     HandleConstraintViolation,
     HandleExpired,
     HandleNotFound,
+    ManifestError,
+    NamespaceNotFound,
     PolicyConfigError,
     PolicyDenied,
     TokenExpired,
     TokenInvalid,
     TokenRevoked,
     TokenScopeError,
+    TrustPolicyError,
+)
+from .federation import (
+    MANIFEST_VERSION,
+    TrustPolicy,
+    build_manifest,
+    import_manifest,
+    merge_sensitivity,
 )
 from .firewall.budget_manager import BudgetManager
 from .firewall.budgets import Budgets
@@ -76,7 +93,9 @@ from .kernel import Kernel
 from .models import (
     ActionTrace,
     Capability,
+    CapabilityDescriptor,
     CapabilityGrant,
+    CapabilityManifest,
     CapabilityRequest,
     DenialExplanation,
     DryRunResult,
@@ -84,6 +103,7 @@ from .models import (
     Frame,
     Handle,
     ImplementationRef,
+    NamespaceMetadata,
     PolicyDecision,
     PolicyDecisionTrace,
     PolicyTraceStep,
@@ -93,6 +113,7 @@ from .models import (
     ResponseMode,
     RoutePlan,
     ToolHints,
+    TrustLevel,
 )
 from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
 from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
@@ -113,7 +134,9 @@ __all__ = [
     "CapabilityRegistry",
     # models
     "Capability",
+    "CapabilityDescriptor",
     "CapabilityGrant",
+    "CapabilityManifest",
     "CapabilityRequest",
     "CapabilityToken",
     "DenialExplanation",
@@ -122,6 +145,7 @@ __all__ = [
     "Frame",
     "Handle",
     "ImplementationRef",
+    "NamespaceMetadata",
     "PolicyDecision",
     "PolicyDecisionTrace",
     "PolicyTraceStep",
@@ -132,6 +156,7 @@ __all__ = [
     "RoutePlan",
     "ActionTrace",
     "ToolHints",
+    "TrustLevel",
     # enums
     "SafetyClass",
     "SensitivityTag",
@@ -143,16 +168,26 @@ __all__ = [
     "CapabilityAlreadyRegistered",
     "CapabilityNotFound",
     "DriverError",
+    "FederationError",
     "FirewallError",
     "HandleConstraintViolation",
     "HandleExpired",
     "HandleNotFound",
+    "ManifestError",
+    "NamespaceNotFound",
     "PolicyConfigError",
     "PolicyDenied",
     "TokenExpired",
     "TokenInvalid",
     "TokenRevoked",
     "TokenScopeError",
+    "TrustPolicyError",
+    # federation
+    "MANIFEST_VERSION",
+    "TrustPolicy",
+    "build_manifest",
+    "import_manifest",
+    "merge_sensitivity",
     # policy
     "AllowReason",
     "DefaultPolicyEngine",

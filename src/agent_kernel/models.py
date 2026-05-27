@@ -7,10 +7,12 @@ All types use ``dataclasses.dataclass`` with ``slots=True`` where supported
 from __future__ import annotations
 
 import datetime
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from .enums import SafetyClass, SensitivityTag
+from .errors import ManifestError
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -460,6 +462,209 @@ class DenialExplanation:
 
 
 # ── Dry-run ───────────────────────────────────────────────────────────────────
+
+
+# ── Namespaces & federation ───────────────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class NamespaceMetadata:
+    """Describes a capability namespace.
+
+    Namespaces are dot-notation prefixes (``"billing"``, ``"billing.invoices"``)
+    inferred from registered :attr:`Capability.capability_id` values. A
+    :class:`NamespaceMetadata` entry can optionally carry a description and a
+    deferred *loader* — a zero-argument callable that registers additional
+    capabilities the first time the namespace is searched or listed.
+    """
+
+    prefix: str
+    """Dot-notation namespace prefix (e.g. ``"billing"`` or ``"billing.invoices"``)."""
+
+    description: str = ""
+    """Optional human-readable description of the namespace. Not surfaced by
+    ``CapabilityRegistry.list_namespaces`` (which returns prefixes only)."""
+
+    loader: Callable[[], list[Capability]] | None = None
+    """Optional zero-arg loader invoked at most once on first access.
+
+    The loader must return capabilities whose ``capability_id`` starts with
+    :attr:`prefix` (followed by ``.`` or matching the prefix exactly). The
+    registry stores the returned capabilities and marks the namespace as
+    loaded — subsequent searches or list calls will not re-invoke it.
+    """
+
+    loaded: bool = False
+    """``True`` once the deferred loader has been invoked (or no loader exists)."""
+
+
+@dataclass(slots=True)
+class CapabilityDescriptor:
+    """Public-facing capability description for cross-kernel advertising.
+
+    A descriptor is the slice of a :class:`Capability` that is safe to share
+    over the wire: no driver IDs, no operation names, no Python-level
+    references. JSON-serialisable via :meth:`to_dict`.
+    """
+
+    capability_id: str
+    """Stable, namespaced identifier (e.g. ``"billing.invoices.list"``)."""
+
+    name: str
+    """Short human-readable name."""
+
+    description: str
+    """What the capability does."""
+
+    safety_class: SafetyClass
+    """READ / WRITE / DESTRUCTIVE — preserved verbatim from the source capability."""
+
+    sensitivity: SensitivityTag = SensitivityTag.NONE
+    """Optional sensitivity tag — preserved verbatim."""
+
+    tags: list[str] = field(default_factory=list)
+    """Search/keyword tags from the source capability."""
+
+    parameters_schema: dict[str, Any] | None = None
+    """JSON Schema describing the capability's input parameters, if available."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise the descriptor to a JSON-compatible dict."""
+        return {
+            "capability_id": self.capability_id,
+            "name": self.name,
+            "description": self.description,
+            "safety_class": self.safety_class.value,
+            "sensitivity": self.sensitivity.value,
+            "tags": list(self.tags),
+            "parameters_schema": self.parameters_schema,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CapabilityDescriptor:
+        """Reconstruct a descriptor from a dict produced by :meth:`to_dict`.
+
+        Raises:
+            ManifestError: If a required field is missing or ``safety_class`` /
+                ``sensitivity`` carries an unrecognised value.
+        """
+        try:
+            capability_id = data["capability_id"]
+            name = data["name"]
+            description = data["description"]
+            safety_class_raw = data["safety_class"]
+        except KeyError as exc:
+            raise ManifestError(f"Capability descriptor is missing required field {exc}.") from exc
+        try:
+            safety_class = SafetyClass(safety_class_raw)
+        except ValueError as exc:
+            raise ManifestError(
+                f"Capability descriptor field 'safety_class' has invalid value "
+                f"{safety_class_raw!r}."
+            ) from exc
+        sensitivity_raw = data.get("sensitivity", SensitivityTag.NONE.value)
+        try:
+            sensitivity = SensitivityTag(sensitivity_raw)
+        except ValueError as exc:
+            raise ManifestError(
+                f"Capability descriptor field 'sensitivity' has invalid value {sensitivity_raw!r}."
+            ) from exc
+        return cls(
+            capability_id=capability_id,
+            name=name,
+            description=description,
+            safety_class=safety_class,
+            sensitivity=sensitivity,
+            tags=list(data.get("tags", [])),
+            parameters_schema=data.get("parameters_schema"),
+        )
+
+
+TrustLevel = Literal["verified", "unverified"]
+
+
+@dataclass(slots=True)
+class CapabilityManifest:
+    """Serialisable advertisement of a kernel's capabilities.
+
+    A manifest is what one kernel publishes for another to consume. It
+    intentionally omits internal driver IDs, operation names, and any
+    Python references — only the public-facing :class:`CapabilityDescriptor`
+    list, the advertising kernel's identity, and a transport endpoint.
+
+    Manifests are weaver-spec contract artifacts (I-02): the importing kernel
+    must still run the full local pipeline (policy → token → firewall) on every
+    imported capability invocation.
+    """
+
+    kernel_id: str
+    """Stable identifier of the advertising kernel (e.g. ``"agent-a"``)."""
+
+    version: str
+    """Schema version of this manifest payload (e.g. ``"1"``)."""
+
+    capabilities: list[CapabilityDescriptor]
+    """Public-facing descriptors. Ordered by registration on the advertising side."""
+
+    endpoint: str
+    """Transport endpoint at which the advertising kernel can be reached.
+
+    Format is transport-specific (e.g. ``"https://agent-a.example/kernel"``
+    or ``"mcp://stdio:python -m mcp_server"``). The importing kernel uses it
+    purely to construct a local driver — the endpoint is never invoked by
+    federation itself.
+    """
+
+    trust_level: TrustLevel = "unverified"
+    """Trust hint declared by the publisher. ``"verified"`` indicates the
+    publisher claims independent verification (e.g. a signed manifest); the
+    importing kernel still applies its configured trust policy regardless.
+    """
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise the manifest to a JSON-compatible dict."""
+        return {
+            "kernel_id": self.kernel_id,
+            "version": self.version,
+            "endpoint": self.endpoint,
+            "trust_level": self.trust_level,
+            "capabilities": [cap.to_dict() for cap in self.capabilities],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CapabilityManifest:
+        """Reconstruct a manifest from a dict produced by :meth:`to_dict`.
+
+        Raises:
+            ManifestError: If a required field is missing, ``capabilities`` is
+                not a list, or ``trust_level`` is not ``"verified"`` /
+                ``"unverified"``.
+        """
+        try:
+            kernel_id = data["kernel_id"]
+            version = data["version"]
+            endpoint = data["endpoint"]
+            raw_capabilities = data["capabilities"]
+        except KeyError as exc:
+            raise ManifestError(f"Manifest is missing required field {exc}.") from exc
+        if not isinstance(raw_capabilities, list):
+            raise ManifestError(
+                "Manifest field 'capabilities' must be a list, got "
+                f"{type(raw_capabilities).__name__}."
+            )
+        trust_level = data.get("trust_level", "unverified")
+        if trust_level not in ("verified", "unverified"):
+            raise ManifestError(
+                f"Manifest field 'trust_level' has invalid value {trust_level!r}; "
+                "expected 'verified' or 'unverified'."
+            )
+        return cls(
+            kernel_id=kernel_id,
+            version=version,
+            endpoint=endpoint,
+            trust_level=trust_level,
+            capabilities=[CapabilityDescriptor.from_dict(c) for c in raw_capabilities],
+        )
 
 
 @dataclass(slots=True)

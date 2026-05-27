@@ -145,3 +145,33 @@ class HandleConstraintViolation(AgentKernelError):
     def __init__(self, message: str, *, reason_code: str | None = None) -> None:
         super().__init__(message)
         self.reason_code: str | None = reason_code
+
+
+# ── Registry / namespace errors ───────────────────────────────────────────────
+
+
+class NamespaceNotFound(AgentKernelError):
+    """Raised when a namespace prefix is not known to the registry."""
+
+
+# ── Federation errors ─────────────────────────────────────────────────────────
+
+
+class FederationError(AgentKernelError):
+    """Base class for federation / capability marketplace failures."""
+
+
+class TrustPolicyError(FederationError):
+    """Raised when a federation request violates the configured trust policy.
+
+    Examples include an unknown trust policy name, a remote manifest from an
+    untrusted endpoint, or a token that originated outside the importing
+    kernel's HMAC scope.
+    """
+
+
+class ManifestError(FederationError):
+    """Raised when a :class:`~agent_kernel.models.CapabilityManifest` cannot be
+    serialised, parsed, or imported (e.g. missing fields, invalid version,
+    duplicate capability IDs).
+    """

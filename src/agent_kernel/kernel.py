@@ -9,7 +9,8 @@ from typing import Any, Literal, overload
 
 from .drivers.base import Driver, ExecutionContext
 from .enums import SafetyClass
-from .errors import AgentKernelError, DriverError
+from .errors import AgentKernelError, DriverError, FederationError
+from .federation import TrustPolicy, build_manifest, import_manifest
 from .firewall.budget_manager import BudgetManager
 from .firewall.transform import Firewall
 from .handles import HandleStore
@@ -17,6 +18,7 @@ from .models import (
     ActionTrace,
     Capability,
     CapabilityGrant,
+    CapabilityManifest,
     CapabilityRequest,
     DenialExplanation,
     DryRunResult,
@@ -113,6 +115,7 @@ class Kernel:
         handle_store: HandleStore | None = None,
         trace_store: TraceStore | None = None,
         budget_manager: BudgetManager | None = None,
+        kernel_id: str = "agent-kernel",
     ) -> None:
         self._registry = registry
         self._policy: PolicyEngine = policy or DefaultPolicyEngine()
@@ -123,6 +126,17 @@ class Kernel:
         self._trace_store = trace_store or TraceStore()
         self._budget_manager = budget_manager
         self._drivers: dict[str, Driver] = {}
+        self._kernel_id = kernel_id
+
+    @property
+    def kernel_id(self) -> str:
+        """Stable identifier used when this kernel advertises its capabilities.
+
+        Defaults to ``"agent-kernel"`` — override at construction time when
+        running multiple kernels in the same process or across hosts so that
+        manifests carry a meaningful publisher identity.
+        """
+        return self._kernel_id
 
     # ── Budget accessor ────────────────────────────────────────────────────────
 
@@ -630,3 +644,123 @@ class Kernel:
         result = explain_fn(request, capability, principal, justification=justification)
         assert isinstance(result, DenialExplanation)
         return result
+
+    # ── Federation (capability marketplace, part 1) ───────────────────────────
+
+    def advertise(
+        self,
+        *,
+        endpoint: str,
+        trust_level: Literal["verified", "unverified"] = "unverified",
+    ) -> CapabilityManifest:
+        """Build a public-facing :class:`CapabilityManifest` for this kernel.
+
+        Internal implementation details (driver IDs, operation names,
+        ``parameters_model`` Python references) are stripped — only fields
+        safe to share over the wire are emitted.
+
+        Args:
+            endpoint: Transport endpoint at which this kernel can be reached
+                (e.g. ``"https://agent-a.example/kernel"``). Format is
+                transport-specific; importing kernels use it to construct a
+                local driver — the endpoint is never invoked by federation
+                itself.
+            trust_level: Publisher-declared hint. The importing kernel still
+                applies its configured trust policy regardless.
+
+        Returns:
+            A :class:`CapabilityManifest` ready to be serialised with
+            :meth:`CapabilityManifest.to_dict`.
+        """
+        manifest = build_manifest(
+            kernel_id=self._kernel_id,
+            registry=self._registry,
+            endpoint=endpoint,
+            trust_level=trust_level,
+        )
+        logger.info(
+            "advertise",
+            extra={
+                "kernel_id": self._kernel_id,
+                "endpoint": endpoint,
+                "capability_count": len(manifest.capabilities),
+            },
+        )
+        return manifest
+
+    def import_remote(
+        self,
+        manifest: CapabilityManifest,
+        *,
+        driver: Driver,
+        trust_policy: TrustPolicy = "most_restrictive",
+    ) -> list[Capability]:
+        """Register a remote manifest's capabilities into this kernel.
+
+        Imported capabilities are routed to *driver* — typically an
+        :class:`~agent_kernel.drivers.http.HTTPDriver` or
+        :class:`~agent_kernel.drivers.mcp.MCPDriver` configured against the
+        manifest's endpoint. Invocation still flows through this kernel's
+        local policy → token → firewall pipeline; the remote endpoint is
+        never trusted to authorise on our behalf.
+
+        Tokens are kernel-scoped: imported capabilities are signed by *this*
+        kernel's :class:`HMACTokenProvider`, so a token issued by another
+        kernel cannot be replayed against this one.
+
+        Args:
+            manifest: The remote :class:`CapabilityManifest` to import.
+            driver: A driver that will execute imported capabilities. The
+                driver is registered on this kernel automatically; its
+                ``driver_id`` is recorded on each imported
+                :class:`Capability` so the router can find it.
+            trust_policy: How the importer weighs the manifest's sensitivity
+                metadata. See
+                :data:`~agent_kernel.federation.TrustPolicy`.
+
+        Returns:
+            The list of imported :class:`Capability` objects, in manifest order.
+
+        Raises:
+            FederationError: If the configured router cannot accept new routes
+                (no ``add_route``), so imported capabilities could not be made
+                invokable.
+            TrustPolicyError: If *trust_policy* is unknown.
+            ManifestError: If the manifest is malformed, or contains a
+                capability ID that is already registered locally or duplicated
+                within the manifest. The registry is left untouched on failure.
+        """
+        # Imported capabilities must be routable. Require a mutable router up
+        # front so we fail clean instead of registering capabilities that can
+        # never be invoked.
+        router_add = getattr(self._router, "add_route", None)
+        if router_add is None:
+            raise FederationError(
+                "import_remote() requires a router that supports add_route(); "
+                f"the configured {type(self._router).__name__} does not, so "
+                "imported capabilities would be unroutable. Use a mutable router "
+                "(e.g. StaticRouter) or pre-configure routes for the imported IDs."
+            )
+        self.register_driver(driver)
+        imported = import_manifest(
+            manifest=manifest,
+            registry=self._registry,
+            driver_id=driver.driver_id,
+            trust_policy=trust_policy,
+        )
+        # Route each imported capability to its driver so existing
+        # ``Kernel.invoke`` works unchanged.
+        for cap in imported:
+            router_add(cap.capability_id, [driver.driver_id])
+        logger.info(
+            "import_remote",
+            extra={
+                "kernel_id": self._kernel_id,
+                "remote_kernel_id": manifest.kernel_id,
+                "endpoint": manifest.endpoint,
+                "capability_count": len(imported),
+                "trust_policy": trust_policy,
+                "driver_id": driver.driver_id,
+            },
+        )
+        return imported
