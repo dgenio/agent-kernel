@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import logging
 import time
+import weakref
 from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
@@ -91,8 +92,11 @@ ATTR_DRIVER_ID = "agent_kernel.driver_id"
 ATTR_REASON_CODE = "agent_kernel.reason_code"
 
 # Module-level cache so repeat :func:`instrument_kernel` calls are
-# cheap idempotent no-ops on the same instance.
-_INSTRUMENTED: set[int] = set()
+# cheap idempotent no-ops on the same instance. A WeakSet keys on the
+# kernel object itself (not ``id()``, which a later object can reuse
+# after the original is garbage-collected) and drops entries
+# automatically when a kernel is collected.
+_INSTRUMENTED: weakref.WeakSet[Kernel] = weakref.WeakSet()
 
 
 def instrument_kernel(
@@ -121,9 +125,9 @@ def instrument_kernel(
             extra={"reason": "opentelemetry-api not installed"},
         )
         return
-    if id(kernel) in _INSTRUMENTED:
+    if kernel in _INSTRUMENTED:
         return
-    _INSTRUMENTED.add(id(kernel))
+    _INSTRUMENTED.add(kernel)
 
     if tracer_provider is not None:
         tracer = tracer_provider.get_tracer("agent_kernel")
@@ -178,14 +182,19 @@ def instrument_kernel(
                     dry_run=dry_run,
                 )
                 elapsed_ms = (time.monotonic() - start) * 1000.0
-                duration_hist.record(elapsed_ms, attributes=attributes)
-                invocations.add(1, {ATTR_CAPABILITY: token.capability_id, "status": "success"})
+                # Metrics carry only low-cardinality labels; principal_id and
+                # other per-call detail stay on the span to avoid metric
+                # time-series explosion.
+                metric_attrs = {ATTR_CAPABILITY: token.capability_id, "status": "success"}
+                duration_hist.record(elapsed_ms, attributes=metric_attrs)
+                invocations.add(1, metric_attrs)
                 span.set_status(Status(StatusCode.OK))
                 return result
             except Exception as exc:
                 elapsed_ms = (time.monotonic() - start) * 1000.0
-                duration_hist.record(elapsed_ms, attributes=attributes)
-                invocations.add(1, {ATTR_CAPABILITY: token.capability_id, "status": "error"})
+                metric_attrs = {ATTR_CAPABILITY: token.capability_id, "status": "error"}
+                duration_hist.record(elapsed_ms, attributes=metric_attrs)
+                invocations.add(1, metric_attrs)
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 raise
@@ -236,7 +245,7 @@ def reset_instrumentation(kernel: Kernel | None = None) -> None:
     if kernel is None:
         _INSTRUMENTED.clear()
     else:
-        _INSTRUMENTED.discard(id(kernel))
+        _INSTRUMENTED.discard(kernel)
 
 
 __all__ = [

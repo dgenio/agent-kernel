@@ -6,6 +6,7 @@ import datetime
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from ..models import (
@@ -272,8 +273,6 @@ class Firewall:
                 constraints=constraints,
             )
             if is_final:
-                from dataclasses import replace
-
                 frame = replace(frame, is_final=True)
             yield frame
 

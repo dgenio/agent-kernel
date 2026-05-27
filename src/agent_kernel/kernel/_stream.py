@@ -30,7 +30,6 @@ from ..models import (
     Frame,
     Handle,
     Principal,
-    RawResult,
     ResponseMode,
     RoutePlan,
 )
@@ -177,60 +176,40 @@ async def _stream_chunks(
 ) -> AsyncIterator[Frame]:
     """Yield firewalled frames for each chunk the driver produces.
 
-    Each chunk is wrapped in a synthetic :class:`RawResult` and passed
-    through :meth:`Firewall.transform` so PII redaction applies to
-    every chunk. Mode escalation happens before each chunk when a
-    :class:`BudgetManager` is attached.
+    Delegates per-chunk redaction to :meth:`Firewall.apply_stream`, so the
+    streaming path shares a single firewall implementation with the
+    single-shot path (no second copy of the wrap-and-redact loop to drift).
+    The effective response mode is resolved once up front — no budget is
+    consumed mid-stream, so it is stable across chunks — and passed through,
+    honouring ``apply_stream``'s stateless contract. If the driver ends
+    without an explicit ``__is_final__`` marker, a final sentinel chunk is
+    injected so consumers can detect end-of-stream uniformly.
     """
-    final_marker_seen = False
-    async for chunk in driver.execute_stream(ctx):
-        is_final = bool(chunk.get("__is_final__", False))
-        # Strip the synthetic marker before passing to the firewall.
-        payload = {k: v for k, v in chunk.items() if k != "__is_final__"}
-        synthetic_raw = RawResult(
-            capability_id=token.capability_id,
-            data=payload,
-            metadata={"action_id": action_id, "streaming": True},
-        )
-        effective_mode = resolve_effective_mode(
-            response_mode=response_mode,
-            principal=principal,
-            budget_manager=kernel.budget,
-        )
-        frame = kernel._fw.transform(
-            synthetic_raw,
-            action_id=action_id,
-            principal_id=principal.principal_id,
-            principal_roles=list(principal.roles),
-            response_mode=effective_mode,
-            constraints=token.constraints,
-        )
-        if is_final:
-            final_marker_seen = True
-            frame = replace(frame, is_final=True)
+    effective_mode = resolve_effective_mode(
+        response_mode=response_mode,
+        principal=principal,
+        budget_manager=kernel.budget,
+    )
+
+    async def _raw_chunks() -> AsyncIterator[dict[str, Any]]:
+        saw_final = False
+        async for chunk in driver.execute_stream(ctx):
+            if chunk.get("__is_final__"):
+                saw_final = True
+            yield chunk
+        if not saw_final:
+            yield {"__is_final__": True}
+
+    async for frame in kernel._fw.apply_stream(
+        _raw_chunks(),
+        action_id=action_id,
+        capability_id=token.capability_id,
+        principal_id=principal.principal_id,
+        principal_roles=list(principal.roles),
+        response_mode=effective_mode,
+        constraints=token.constraints,
+    ):
         yield frame
-    if not final_marker_seen:
-        # Driver ended without an explicit final marker — emit a final
-        # sentinel frame so consumers can detect end-of-stream uniformly.
-        yield replace(
-            kernel._fw.transform(
-                RawResult(
-                    capability_id=token.capability_id,
-                    data={},
-                    metadata={
-                        "action_id": action_id,
-                        "streaming": True,
-                        "sentinel": True,
-                    },
-                ),
-                action_id=action_id,
-                principal_id=principal.principal_id,
-                principal_roles=list(principal.roles),
-                response_mode=response_mode,
-                constraints=token.constraints,
-            ),
-            is_final=True,
-        )
 
 
 __all__ = ["invoke_stream_impl"]
