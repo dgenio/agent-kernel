@@ -98,11 +98,11 @@ async def main():
 asyncio.run(main())
 ```
 
-> The runnable version of this quickstart lives at
-> [`examples/readme_quickstart.py`](examples/readme_quickstart.py) and is exercised by
-> `make example` / CI, which fails if the documented flow ever regresses against the
-> API. CI runs that mirror but does not diff this inline snippet against it, so the two
-> are kept in step by hand.
+> This snippet is extracted and executed by CI (`tests/test_readme_quickstart.py`), and
+> a standalone runnable mirror lives at
+> [`examples/readme_quickstart.py`](examples/readme_quickstart.py) (run by `make example`).
+> CI fails if either stops producing the documented output, so this quickstart cannot
+> silently drift from the working API.
 
 ## Where it fits
 

@@ -56,8 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without `execute_stream` automatically fall back to a single-chunk stream
   via `execute()`. `Frame` gained an `is_final: bool` field. (#47)
 - `examples/readme_quickstart.py` — a runnable mirror of the README quickstart,
-  wired into `make example` and the CI "Examples" step as a regression guard: CI
-  fails if the documented flow ever stops working against the API. (#83)
+  wired into `make example` and the CI "Examples" step. Together with
+  `tests/test_readme_quickstart.py` (which extracts and runs the inline README
+  snippet itself), CI fails if the documented quickstart stops producing the
+  expected output. (#83)
 
 ### Changed
 - Tech debt: `policy_dsl.py` decomposed (was 661 lines). Parsing and
@@ -100,6 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_public_api.py` — asserts every error class exported via `__all__`
   appears in the `agent_kernel` module docstring, preventing public-API
   docstring drift. (#91)
+- `tests/test_readme_quickstart.py` — extracts the README quickstart code block
+  and executes it, asserting the documented output so the inline snippet cannot
+  silently drift from the working API. (#83)
 
 ### Fixed
 - `merge_sensitivity()` (and `most_restrictive` imports) now ranks the `MEMORY`
