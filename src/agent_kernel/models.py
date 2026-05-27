@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from .enums import SafetyClass, SensitivityTag
+from .errors import ManifestError
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -533,16 +534,30 @@ class CapabilityDescriptor:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CapabilityDescriptor:
-        """Reconstruct a descriptor from a dict produced by :meth:`to_dict`."""
-        return cls(
-            capability_id=data["capability_id"],
-            name=data["name"],
-            description=data["description"],
-            safety_class=SafetyClass(data["safety_class"]),
-            sensitivity=SensitivityTag(data.get("sensitivity", SensitivityTag.NONE.value)),
-            tags=list(data.get("tags", [])),
-            parameters_schema=data.get("parameters_schema"),
-        )
+        """Reconstruct a descriptor from a dict produced by :meth:`to_dict`.
+
+        Raises:
+            ManifestError: If *data* is not a dict, is missing a required key,
+                or carries an invalid field value (e.g. an unknown safety class).
+        """
+        if not isinstance(data, dict):
+            raise ManifestError(
+                f"CapabilityDescriptor must be a JSON object, got {type(data).__name__}."
+            )
+        try:
+            return cls(
+                capability_id=data["capability_id"],
+                name=data["name"],
+                description=data["description"],
+                safety_class=SafetyClass(data["safety_class"]),
+                sensitivity=SensitivityTag(data.get("sensitivity", SensitivityTag.NONE.value)),
+                tags=list(data.get("tags", [])),
+                parameters_schema=data.get("parameters_schema"),
+            )
+        except KeyError as exc:
+            raise ManifestError(f"CapabilityDescriptor missing required key {exc}.") from exc
+        except (ValueError, TypeError) as exc:
+            raise ManifestError(f"CapabilityDescriptor has an invalid field value: {exc}") from exc
 
 
 TrustLevel = Literal["verified", "unverified"]
@@ -598,13 +613,34 @@ class CapabilityManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CapabilityManifest:
-        """Reconstruct a manifest from a dict produced by :meth:`to_dict`."""
+        """Reconstruct a manifest from a dict produced by :meth:`to_dict`.
+
+        Raises:
+            ManifestError: If *data* is not a dict, is missing a required key,
+                or ``capabilities`` is not a list of valid descriptors.
+        """
+        if not isinstance(data, dict):
+            raise ManifestError(
+                f"CapabilityManifest must be a JSON object, got {type(data).__name__}."
+            )
+        try:
+            kernel_id = data["kernel_id"]
+            version = data["version"]
+            endpoint = data["endpoint"]
+            capabilities_raw = data["capabilities"]
+        except KeyError as exc:
+            raise ManifestError(f"CapabilityManifest missing required key {exc}.") from exc
+        if not isinstance(capabilities_raw, list):
+            raise ManifestError(
+                "CapabilityManifest 'capabilities' must be a list, got "
+                f"{type(capabilities_raw).__name__}."
+            )
         return cls(
-            kernel_id=data["kernel_id"],
-            version=data["version"],
-            endpoint=data["endpoint"],
+            kernel_id=kernel_id,
+            version=version,
+            endpoint=endpoint,
             trust_level=data.get("trust_level", "unverified"),
-            capabilities=[CapabilityDescriptor.from_dict(c) for c in data["capabilities"]],
+            capabilities=[CapabilityDescriptor.from_dict(c) for c in capabilities_raw],
         )
 
 

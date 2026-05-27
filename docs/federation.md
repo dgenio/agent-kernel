@@ -1,10 +1,13 @@
-# Capability Federation — Marketplace Part 1
+# Capability Federation — Local Marketplace + Network Discovery
 
 > Issue [#52](https://github.com/dgenio/agent-kernel/issues/52) (manifest
-> format & local registry) is implemented here. Discovery over a network
-> (issue [#51](https://github.com/dgenio/agent-kernel/issues/51)) is **not**
-> part of this milestone — `agent-kernel` does not fetch manifests over
-> HTTP or sign them on your behalf yet. Bring your own transport for now.
+> format & local registry) **and** issue
+> [#51](https://github.com/dgenio/agent-kernel/issues/51) (network discovery
+> & signed manifests) are both implemented here. `agent-kernel` can build and
+> import local manifests *and* fetch manifests over HTTP
+> (`discover_peers`) and sign/verify them (`sign_manifest` /
+> `verify_manifest`). See [Federated discovery](#federated-discovery-part-2-issue-51)
+> below for the network layer.
 
 ## What this gives you
 
@@ -129,17 +132,16 @@ their own capability records and want the canonical strictest-wins union.
 
 ## What is *not* covered yet
 
-- **No network transport.** `agent-kernel` does not fetch, sign, or
-  authenticate manifests over HTTP — bring your own transport. Part 2
-  (issue #51) adds an opt-in manifest endpoint and a discovery protocol.
 - **No remote policy delegation.** `"remote_deferred"` currently behaves
   identically to `"most_restrictive"`. The full "remote policy decides
-  first" semantics need part 2.
+  first" semantics are still future work.
 - **No automatic re-import.** Manifests are imported once. If the publisher
   adds capabilities, the importer must re-fetch and re-import.
-- **No identity verification.** `trust_level` is a publisher-declared hint;
-  it does not authenticate the publisher. Signature verification arrives
-  with part 2.
+- **`trust_level` is not identity.** `trust_level` remains a
+  publisher-declared hint and does not by itself authenticate the publisher.
+  Cryptographic authentication is available via signed manifests
+  (`sign_manifest` / `verify_manifest`); see [Federated
+  discovery](#federated-discovery-part-2-issue-51).
 
 ## Reference
 

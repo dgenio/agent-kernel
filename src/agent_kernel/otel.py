@@ -1,8 +1,7 @@
 """OpenTelemetry instrumentation for the :class:`Kernel`.
 
 Calling :func:`instrument_kernel(kernel)` wraps the kernel's
-``invoke``, ``invoke_stream``, ``grant_capability``, ``expand``,
-``advertise``, and ``import_remote`` methods with OTel spans + metric
+``invoke`` and ``grant_capability`` methods with OTel spans + metric
 emission.
 
 When ``opentelemetry-api`` is not installed, :func:`instrument_kernel`

@@ -45,11 +45,6 @@ _DEFAULT_TIMEOUT_SECONDS = 5.0
 """Default per-request timeout used by :func:`discover_peers`."""
 
 
-def _hash_payload(payload: bytes) -> bytes:
-    """Return the SHA-256 digest of *payload* for signing."""
-    return hashlib.sha256(payload).digest()
-
-
 def sign_manifest(manifest: CapabilityManifest, *, secret: str) -> dict[str, Any]:
     """Wrap *manifest* in a signed envelope ready for transport.
 
@@ -103,7 +98,10 @@ def verify_manifest(envelope: dict[str, Any], *, secret: str) -> CapabilityManif
             f"expected '{SIGNATURE_ALGORITHM}'."
         )
 
-    payload_bytes = envelope["payload"].encode("utf-8")
+    payload = envelope["payload"]
+    if not isinstance(payload, str):
+        raise ManifestError(f"Envelope 'payload' must be a string, got {type(payload).__name__}.")
+    payload_bytes = payload.encode("utf-8")
     expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected_sig, envelope["signature"]):
         raise ManifestSignatureError(
@@ -111,7 +109,10 @@ def verify_manifest(envelope: dict[str, Any], *, secret: str) -> CapabilityManif
             "verification secret does not match the publisher's signing secret."
         )
 
-    payload_data = json.loads(envelope["payload"])
+    try:
+        payload_data = json.loads(payload)
+    except ValueError as exc:
+        raise ManifestError(f"Envelope payload is not valid JSON: {exc}") from exc
     return CapabilityManifest.from_dict(payload_data)
 
 
@@ -203,7 +204,14 @@ async def _fetch_manifest(
             f"with a verification secret — refusing to trust an unsigned "
             f"manifest when signing is expected."
         )
-    return CapabilityManifest.from_dict(body)
+    if not isinstance(body, dict):
+        raise DiscoveryError(
+            f"Manifest at '{url}' must be a JSON object, got {type(body).__name__}."
+        )
+    try:
+        return CapabilityManifest.from_dict(body)
+    except ManifestError as exc:
+        raise DiscoveryError(f"Malformed manifest at '{url}': {exc}") from exc
 
 
 async def discover_peers(

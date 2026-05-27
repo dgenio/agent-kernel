@@ -14,6 +14,7 @@ import re
 from collections.abc import Callable
 
 from .errors import (
+    AgentKernelError,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
     NamespaceNotFound,
@@ -229,7 +230,15 @@ class CapabilityRegistry:
             NamespaceNotFound: If no declared namespace or registered capability
                 lives under *prefix*.
         """
-        self._maybe_load_namespace(prefix)
+        # Load the deepest declared namespace that is `prefix` itself or an
+        # ancestor of it, so a loader registered at e.g. "billing" still fires
+        # for list_namespace("billing.invoices").
+        segments = prefix.split(".")
+        for depth in range(len(segments), 0, -1):
+            ancestor = ".".join(segments[:depth])
+            if ancestor in self._namespaces:
+                self._maybe_load_namespace(ancestor)
+                break
         results = [
             cap
             for cap_id, cap in self._store.items()
@@ -270,7 +279,15 @@ class CapabilityRegistry:
 
         Returns:
             Ordered list (highest score first) of :class:`CapabilityRequest`.
+
+        Raises:
+            AgentKernelError: If ``offset`` or ``max_results`` is negative.
         """
+        if offset < 0:
+            raise AgentKernelError(f"search() offset must be >= 0, got {offset}.")
+        if max_results < 0:
+            raise AgentKernelError(f"search() max_results must be >= 0, got {max_results}.")
+
         tokens = self._tokenize(goal)
         if not tokens:
             return []
@@ -376,6 +393,11 @@ class CapabilityRegistry:
         # Mark as loaded *before* calling so a recursive load doesn't re-enter.
         meta.loaded = True
         for cap in loader():
+            if not (cap.capability_id == prefix or cap.capability_id.startswith(prefix + ".")):
+                raise AgentKernelError(
+                    f"Namespace loader for '{prefix}' returned capability "
+                    f"'{cap.capability_id}', which is outside the declared namespace."
+                )
             self.register(cap)
 
     def _load_namespaces_overlapping(self, tokens: list[str]) -> None:
