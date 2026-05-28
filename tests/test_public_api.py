@@ -8,6 +8,8 @@ class, not a stale subset (issue #91).
 
 from __future__ import annotations
 
+import re
+
 import agent_kernel
 from agent_kernel.errors import AgentKernelError
 
@@ -25,7 +27,12 @@ def _exported_error_names() -> list[str]:
 def test_all_exported_errors_listed_in_module_docstring() -> None:
     """Every exported error class appears in the module docstring."""
     doc = agent_kernel.__doc__ or ""
-    missing = [name for name in _exported_error_names() if name not in doc]
+    # Use word-boundary matching so a shorter name (e.g. ``ManifestError``) is
+    # not falsely considered present merely because it is a contiguous
+    # substring of a longer listed name (e.g. ``ManifestSomethingError``).
+    missing = [
+        name for name in _exported_error_names() if not re.search(rf"\b{re.escape(name)}\b", doc)
+    ]
     assert missing == [], (
         f"Error classes exported in __all__ but absent from the agent_kernel "
         f"module docstring's 'Errors::' block: {missing}. Add them in "
