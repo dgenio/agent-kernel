@@ -46,7 +46,7 @@ Use these terms consistently. Never substitute synonyms:
 
 ## Quality bar
 
-- `make ci` must pass before every push. It runs: `fmt → lint → type → test → example`.
+- `make ci` must pass before every push. It runs: `fmt-check → lint → type → test → example`. Use `make fmt` to auto-fix formatting before re-running `make ci`.
 - All public interfaces need type hints and docstrings.
 - Never raise bare `ValueError` or `KeyError` to callers. Use custom exceptions from `errors.py`. Catching stdlib exceptions internally to remap them is fine.
 - Error messages are part of the contract — tests must assert both exception type and message.

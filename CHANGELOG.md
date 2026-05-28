@@ -119,6 +119,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A deferred namespace loader that fails (by raising or returning an
   out-of-namespace capability) no longer permanently disables the namespace —
   the load is retried on a later access. (#45)
+- `Makefile` now invokes every tool via `python -m <tool>` (matching the
+  existing `test` target) so `make ci` uses the active interpreter's
+  site-packages instead of whatever `ruff` / `mypy` resolves first on
+  `PATH`. Fixes spurious `import-not-found` / `no-redef` errors on machines
+  where `mypy` or `ruff` is provided by an isolated installer such as
+  `uv tool` or `pipx`. (#86)
+- `make ci` now runs the non-mutating `fmt-check` target (`ruff format
+  --check`) instead of the file-mutating `fmt` target. Local `make ci`
+  now fails on unformatted code exactly like `.github/workflows/ci.yml`
+  does, instead of silently auto-fixing the working tree and letting an
+  unfixed commit be pushed. `make fmt` remains available for manual
+  auto-formatting. `AGENTS.md`, `docs/agent-context/workflows.md`,
+  `docs/agent-context/review-checklist.md`, and the `README.md` development
+  section are updated to describe the new chain. (#88)
 
 ## [0.8.0] - 2026-05-22
 

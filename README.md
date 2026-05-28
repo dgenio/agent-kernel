@@ -196,7 +196,7 @@ See [docs/agent-context/invariants.md](docs/agent-context/invariants.md) for the
 git clone https://github.com/dgenio/agent-kernel
 cd agent-kernel
 pip install -e ".[dev]"
-make ci      # fmt + lint + type + test + examples
+make ci      # fmt-check + lint + type + test + examples
 ```
 
 ## License

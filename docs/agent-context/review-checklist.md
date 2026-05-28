@@ -10,7 +10,7 @@
 Run before every PR submission.
 
 ### CI gate
-- [ ] `make ci` passes (fmt → lint → type → test → example).
+- [ ] `make ci` passes (fmt-check → lint → type → test → example).
 
 ### Correctness
 - [ ] Every changed docstring matches the actual implementation.
