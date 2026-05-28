@@ -131,8 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does, instead of silently auto-fixing the working tree and letting an
   unfixed commit be pushed. `make fmt` remains available for manual
   auto-formatting. `AGENTS.md`, `docs/agent-context/workflows.md`,
-  `docs/agent-context/review-checklist.md`, and the `README.md` development
-  section are updated to describe the new chain. (#88)
+  `docs/agent-context/review-checklist.md`, `CONTRIBUTING.md`, and the
+  `README.md` development section are updated to describe the new chain. (#88)
 
 ## [0.8.0] - 2026-05-22
 
