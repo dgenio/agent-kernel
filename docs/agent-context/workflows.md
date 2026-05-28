@@ -16,9 +16,10 @@
 | `make example` | Run all example scripts | After changing examples or core APIs |
 
 `make ci` is the **single authoritative pre-push command**. It runs all five targets
-in sequence and matches what `.github/workflows/ci.yml` runs: the format step is the
-non-mutating `fmt-check` (equivalent to CI's `ruff format --check`), and
-lint/type/test/example exercise the same tools and inputs CI does. The Makefile
+in sequence and mirrors the checks in the `test` job of `.github/workflows/ci.yml`: the
+format step is the non-mutating `fmt-check` (equivalent to CI's `ruff format --check`),
+and lint/type/test/example run the same tools CI does. (CI's separate `conformance_stub`
+job is a no-op placeholder and is not part of the local gate.) The Makefile
 additionally invokes every tool via `python -m <tool>` — a local hardening over CI
 that uses the active interpreter's site-packages, preventing spurious failures when
 `ruff` or `mypy` are provided by isolated installers such as `uv tool` or `pipx`. If
