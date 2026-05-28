@@ -17,5 +17,6 @@ example:
 	python examples/billing_demo.py
 	python examples/http_driver_demo.py
 	python examples/tutorial.py
+	python examples/readme_quickstart.py
 
 ci: fmt lint type test example

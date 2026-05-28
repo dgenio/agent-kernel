@@ -40,11 +40,14 @@ Errors::
 
     from agent_kernel import (
         AgentKernelError,
-        TokenExpired, TokenInvalid, TokenScopeError,
-        PolicyDenied, PolicyConfigError, DriverError, FirewallError,
+        TokenExpired, TokenInvalid, TokenScopeError, TokenRevoked,
+        PolicyDenied, PolicyConfigError,
+        DriverError, FirewallError, AdapterParseError,
         BudgetExhausted, BudgetConfigError,
-        CapabilityNotFound, HandleNotFound, HandleExpired,
-        NamespaceNotFound, FederationError, ManifestError, TrustPolicyError,
+        CapabilityNotFound, CapabilityAlreadyRegistered,
+        HandleNotFound, HandleExpired, HandleConstraintViolation,
+        NamespaceNotFound, FederationError, ManifestError, ManifestSignatureError,
+        TrustPolicyError, DiscoveryError,
     )
 """
 

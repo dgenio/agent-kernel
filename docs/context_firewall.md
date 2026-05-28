@@ -32,18 +32,23 @@ Budgets(
 
 A `Handle` is an opaque reference to the full dataset stored server-side.
 
+A handle is bound to the principal it was granted to, so `expand()` requires that
+same `principal` — an omitted or mismatched principal raises
+`HandleConstraintViolation` (handle IDs are not bearer credentials). See
+[`docs/security.md#handle-expansion-boundary`](security.md#handle-expansion-boundary).
+
 ```python
 # Stored automatically on every invoke()
 handle = frame.handle
 
 # Expand with pagination
-expanded = kernel.expand(handle, query={"offset": 10, "limit": 5})
+expanded = kernel.expand(handle, query={"offset": 10, "limit": 5}, principal=principal)
 
 # Field selection
-expanded = kernel.expand(handle, query={"fields": ["id", "name"]})
+expanded = kernel.expand(handle, query={"fields": ["id", "name"]}, principal=principal)
 
 # Basic filtering
-expanded = kernel.expand(handle, query={"filter": {"status": "unpaid"}})
+expanded = kernel.expand(handle, query={"filter": {"status": "unpaid"}}, principal=principal)
 ```
 
 ## Redaction

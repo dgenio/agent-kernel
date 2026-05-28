@@ -40,7 +40,8 @@ These constraints are non-negotiable. Violating any one silently degrades securi
    derived keys must stay out of logs, error messages, and traces.
 
 6. **Never add dependencies without justification.** The dependency list is intentionally
-   minimal (`httpx` only). Every new dependency expands the attack surface.
+   minimal (`httpx` + `pydantic` — see [`AGENTS.md`](../../AGENTS.md) for the canonical
+   dependency policy). Every new dependency expands the attack surface.
 
 7. **Never register duplicate capability IDs.** The registry raises
    `CapabilityAlreadyRegistered`. Duplicates cause ambiguous routing and policy
