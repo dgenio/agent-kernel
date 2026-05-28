@@ -7,18 +7,24 @@
 
 | Command | Purpose | When to run |
 |---------|---------|-------------|
-| `make ci` | Full pre-push gate: fmt → lint → type → test → example | Before every push |
-| `make fmt` | Auto-format with ruff | During development |
+| `make ci` | Full pre-push gate: fmt-check → lint → type → test → example | Before every push |
+| `make fmt` | Auto-format with ruff (mutates files) | During development |
+| `make fmt-check` | Verify formatting with `ruff format --check` (no mutation) | Used by `make ci`; matches what CI runs |
 | `make lint` | Lint check with ruff | Isolated lint verification |
 | `make type` | mypy type check | After changing type annotations |
 | `make test` | pytest with coverage | After changing code |
 | `make example` | Run all example scripts | After changing examples or core APIs |
 
 `make ci` is the **single authoritative pre-push command**. It runs all five targets
-in sequence. If `make ci` passes, the PR is ready for review.
-
-**Note:** `make fmt` auto-formats locally, but CI runs `ruff format --check` and fails
-on unformatted code. Always run `make ci` to catch this asymmetry.
+in sequence and mirrors the checks in the `test` job of `.github/workflows/ci.yml`: the
+format step is the non-mutating `fmt-check` (equivalent to CI's `ruff format --check`),
+and lint/type/test/example run the same tools CI does. (CI's separate `conformance_stub`
+job is a no-op placeholder and is not part of the local gate.) The Makefile
+additionally invokes every tool via `python -m <tool>` — a local hardening over CI
+that uses the active interpreter's site-packages, preventing spurious failures when
+`ruff` or `mypy` are provided by isolated installers such as `uv tool` or `pipx`. If
+`make ci` passes locally, the same checks will pass in CI. Use `make fmt` (the
+mutating target) when you want to auto-fix formatting before re-running `make ci`.
 
 ## PR conventions
 

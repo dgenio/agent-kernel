@@ -15,11 +15,12 @@ pip install -e ".[dev]"
 ## Running checks
 
 ```bash
-make fmt    # auto-format with ruff
-make lint   # lint with ruff
-make type   # type-check with mypy
-make test   # run pytest with coverage
-make ci     # all of the above + examples
+make fmt        # auto-format with ruff (not run by `make ci`)
+make fmt-check  # verify formatting with `ruff format --check` (no mutation)
+make lint       # lint with ruff
+make type       # type-check with mypy
+make test       # run pytest with coverage
+make ci         # fmt-check + lint + type + test + example
 ```
 
 ## Pull request guidelines
