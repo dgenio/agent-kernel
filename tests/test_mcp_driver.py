@@ -84,6 +84,24 @@ def test_from_http_missing_dependency_raises_helpful_import_error() -> None:
             MCPDriver.from_http("http://localhost:8080/mcp")
 
 
+def test_load_mcp_error_returns_type_when_mcp_available() -> None:
+    """_load_mcp_error resolves the real McpError type when mcp is installed."""
+    from mcp.shared.exceptions import McpError
+
+    from agent_kernel.drivers.mcp import _load_mcp_error
+
+    assert _load_mcp_error() is McpError
+
+
+def test_load_mcp_error_returns_none_when_mcp_unavailable() -> None:
+    """_load_mcp_error returns None when the optional mcp dep is missing (issue #87)."""
+    from agent_kernel.drivers.mcp import _load_mcp_error
+
+    with patch("agent_kernel.drivers.mcp.importlib.import_module") as import_module:
+        import_module.side_effect = ImportError("No module named 'mcp'")
+        assert _load_mcp_error() is None
+
+
 @pytest.mark.asyncio
 async def test_discover_converts_tools_to_capabilities() -> None:
     session = _FakeSession(

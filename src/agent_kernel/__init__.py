@@ -51,6 +51,9 @@ Errors::
     )
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
 from .adapters import AnthropicMiddleware, OpenAIMiddleware
 from .drivers.base import Driver, ExecutionContext
 from .drivers.http import HTTPDriver
@@ -139,7 +142,13 @@ from .router import StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider
 from .trace import TraceStore
 
-__version__ = "0.5.0"
+# Single source of truth: read the version from the installed distribution
+# metadata (the PyPI dist name is ``weaver-kernel``, distinct from the import
+# name ``agent_kernel``) so it never drifts from ``pyproject.toml``.
+try:
+    __version__ = _pkg_version("weaver-kernel")
+except PackageNotFoundError:  # pragma: no cover - source tree without dist metadata
+    __version__ = "0.0.0+local"
 
 __all__ = [
     # version

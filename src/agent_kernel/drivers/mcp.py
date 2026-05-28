@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -19,15 +20,29 @@ from .mcp_support import (
     normalize_call_result,
 )
 
-# Lazy import of McpError — only available when the mcp optional dep is installed.
-# If mcp is absent, factory methods raise ImportError before any session is created,
-# so _McpError will never be None on a live driver instance. The explicit annotation
-# keeps mypy --strict happy across the try/except branches.
-_McpError: type[BaseException] | None
-try:
-    from mcp.shared.exceptions import McpError as _McpError
-except ImportError:  # pragma: no cover
-    _McpError = None
+
+def _load_mcp_error() -> type[BaseException] | None:
+    """Return the ``McpError`` type, or ``None`` when ``mcp`` is unavailable.
+
+    Imported via ``importlib`` (matching ``mcp_support.import_optional``) so the
+    optional-dependency branch is testable. Resolving the type into a separate,
+    explicitly annotated module global avoids the mypy ``[no-redef]`` that the
+    old ``import ... as _McpError`` pattern produced when ``mcp`` was absent and
+    the import resolved to ``Any`` under ``ignore_missing_imports``.
+    """
+    try:
+        exceptions = importlib.import_module("mcp.shared.exceptions")
+    except ImportError:
+        return None
+    error_type: type[BaseException] = exceptions.McpError
+    return error_type
+
+
+# Resolved once at import time and used in _run_with_retries to classify
+# protocol-level rejections as non-retryable. None when the optional ``mcp``
+# dependency is not installed (factory methods raise ImportError first, so this
+# is never None on a live driver instance).
+_McpError: type[BaseException] | None = _load_mcp_error()
 
 
 def _infer_safety_class(spec: ToolSpec) -> SafetyClass:
