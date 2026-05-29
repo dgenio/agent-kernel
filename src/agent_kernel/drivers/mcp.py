@@ -34,8 +34,14 @@ def _load_mcp_error() -> type[BaseException] | None:
         exceptions = importlib.import_module("mcp.shared.exceptions")
     except ImportError:
         return None
-    error_type: type[BaseException] = exceptions.McpError
-    return error_type
+    # Guard attribute access too: if the module imports but ``McpError`` is
+    # missing or renamed, degrade to ``None`` (matching the old
+    # ``from ... import McpError`` ImportError fallback) rather than raising
+    # AttributeError at import time and breaking the whole driver module.
+    error_type = getattr(exceptions, "McpError", None)
+    if isinstance(error_type, type) and issubclass(error_type, BaseException):
+        return error_type
+    return None
 
 
 # Resolved once at import time and used in _run_with_retries to classify
