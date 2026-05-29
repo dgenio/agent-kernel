@@ -187,6 +187,8 @@ See [docs/agent-context/invariants.md](docs/agent-context/invariants.md) for the
 - [Architecture](docs/architecture.md)
 - [Security model](docs/security.md)
 - [Integrations (MCP, HTTPDriver)](docs/integrations.md)
+  - [contextweaver: policy before action](docs/integrations/contextweaver.md)
+  - [Repository safety checks as a capability](docs/integrations/repository_safety_check.md)
 - [Designing capabilities](docs/capabilities.md)
 - [Context Firewall](docs/context_firewall.md)
 
