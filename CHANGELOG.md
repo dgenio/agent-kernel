@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-29
+
 ### Added
 - Capability namespaces and hierarchical discovery in `CapabilityRegistry`:
   dot-notation `capability_id`s now expose `list_namespaces()` /
