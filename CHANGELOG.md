@@ -135,6 +135,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   auto-formatting. `AGENTS.md`, `docs/agent-context/workflows.md`,
   `docs/agent-context/review-checklist.md`, `CONTRIBUTING.md`, and the
   `README.md` development section are updated to describe the new chain. (#88)
+- `agent_kernel.__version__` is now derived from the installed distribution
+  metadata (`importlib.metadata.version("weaver-kernel")`) instead of a
+  hand-maintained literal, so it can no longer drift from `pyproject.toml`
+  (it previously reported `0.5.0` while the package shipped `0.7.0`/`0.8.0`).
+  Falls back to `0.0.0+local` in a source tree without dist metadata. (#85)
+- The `mcp.shared.exceptions.McpError` optional import in `drivers/mcp.py`
+  no longer triggers a mypy `[no-redef]` error when the `mcp` extra is not
+  installed. The lazy import is resolved through a `_load_mcp_error()` helper
+  (mirroring `mcp_support.import_optional`), declaring the `_McpError` global
+  exactly once. (#87)
 
 ## [0.8.0] - 2026-05-22
 
