@@ -21,5 +21,7 @@ example:
 	python examples/http_driver_demo.py
 	python examples/tutorial.py
 	python examples/readme_quickstart.py
+	python examples/contextweaver_policy_flow.py
+	python examples/repository_safety_check.py
 
 ci: fmt-check lint type test example

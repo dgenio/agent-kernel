@@ -362,3 +362,18 @@ instrument_kernel(kernel)
 `instrument_kernel` is idempotent — calling twice on the same kernel is a
 no-op. Use `agent_kernel.otel.reset_instrumentation(kernel)` in tests to
 re-instrument with a different provider.
+
+## Ecosystem integration patterns
+
+These reference flows show how agent-kernel composes with neighboring Weaver
+projects and external checkers. Each has a runnable, offline companion under
+`examples/`.
+
+- [contextweaver + agent-kernel: policy before action](integrations/contextweaver.md)
+  — context routing is advisory; selection is not permission. Demonstrates the
+  `allow` / `ask`-confirm / `deny` outcomes.
+  Companion: [`examples/contextweaver_policy_flow.py`](../examples/contextweaver_policy_flow.py).
+- [Repository safety checks as a policy-controlled capability](integrations/repository_safety_check.md)
+  — gate a high-impact action behind a deterministic check that shells out to a
+  local command (e.g. VibeGuard), with the result recorded in the audit trace.
+  Companion: [`examples/repository_safety_check.py`](../examples/repository_safety_check.py).

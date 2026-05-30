@@ -56,3 +56,10 @@ def test_explain_returns_consistent_data() -> None:
     assert result.principal_id == "u1"
     assert result.driver_id == "memory"
     assert result.args == {"a": 1}
+
+
+def test_result_summary_defaults_none() -> None:
+    # Backward-compatible: traces built without an explicit result_summary
+    # (e.g. failure traces, or callers constructing ActionTrace directly) keep
+    # it unset rather than fabricating a summary.
+    assert _trace("act-default").result_summary is None

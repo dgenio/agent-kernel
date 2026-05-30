@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ActionTrace.result_summary` (#93): successful invocations now record a
+  redaction-safe summary of the firewalled `Frame` (`fact_count`, `row_count`,
+  `warning_count`, `has_handle` — counts/flags only, never raw driver data), so
+  an invocation's outcome is auditable directly via `Kernel.explain`. A
+  repository safety check's pass/block decision is now recorded in the audit
+  trail (`result_summary["row_count"] == 0` ⇒ passed), not merely inferred from
+  whether a later publish occurred. Failed runs keep `result_summary == None`.
+- Ecosystem integration cookbook: a new `docs/integrations/` section with two
+  reference flows and runnable, offline companions.
+  - **contextweaver — policy before action** (#92): documents that context
+    routing is advisory and policy enforcement still happens before execution.
+    New [`docs/integrations/contextweaver.md`](docs/integrations/contextweaver.md)
+    and [`examples/contextweaver_policy_flow.py`](examples/contextweaver_policy_flow.py)
+    demonstrate the `allow` / `ask`-confirm / `deny` outcomes (the `ask` outcome
+    is derived from the recoverable `insufficient_justification` denial code).
+  - **Repository safety check as a policy-controlled capability** (#93): a
+    `RepositoryCheckDriver` that shells out to a local checker (e.g. VibeGuard)
+    gates a high-impact `repo.publish_artifact` action behind a passing
+    `repo.code_safety_check`, with both steps recorded in the audit trace. New
+    [`docs/integrations/repository_safety_check.md`](docs/integrations/repository_safety_check.md)
+    and [`examples/repository_safety_check.py`](examples/repository_safety_check.py).
+  - Both examples run in `make ci`; `docs/integrations.md` and the README link
+    the new pages.
+
 ## [0.9.0] - 2026-05-29
 
 ### Added

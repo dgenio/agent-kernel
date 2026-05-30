@@ -415,6 +415,17 @@ class ActionTrace:
     driver_id: str
     handle_id: str | None = None
     error: str | None = None
+    result_summary: dict[str, Any] | None = None
+    """Redaction-safe summary of the firewalled :class:`Frame` this invocation
+    produced (``None`` for failed runs, which have no Frame).
+
+    Derived **only** from the post-Firewall Frame — counts and flags, never raw
+    driver data — so recording it cannot widen the I-01 boundary or leak
+    sensitive payloads into the audit trail. It lets a reviewer reconstruct an
+    invocation's outcome directly from :meth:`~agent_kernel.Kernel.explain`; for
+    example, a repository safety check passed iff ``result_summary["row_count"]
+    == 0``.
+    """
 
 
 # ── Policy explanation ────────────────────────────────────────────────────────

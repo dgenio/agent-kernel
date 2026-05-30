@@ -66,6 +66,24 @@ def _redact_args_for_trace(capability_id: str, args: dict[str, Any]) -> dict[str
     }
 
 
+def _frame_result_summary(frame: Frame) -> dict[str, Any]:
+    """Build a redaction-safe result summary from a *firewalled* Frame.
+
+    Records only counts and flags taken from the already-transformed Frame —
+    never raw driver data — so it preserves the I-01 boundary the Firewall
+    enforces and keeps sensitive payloads out of the audit trail. Stored on
+    :attr:`~agent_kernel.models.ActionTrace.result_summary` so an invocation's
+    outcome (e.g. a safety check's pass/block decision) is auditable via
+    :meth:`~agent_kernel.Kernel.explain`.
+    """
+    return {
+        "fact_count": len(frame.facts),
+        "row_count": len(frame.table_preview),
+        "warning_count": len(frame.warnings),
+        "has_handle": frame.handle is not None,
+    }
+
+
 def resolve_effective_mode(
     *,
     response_mode: ResponseMode,
@@ -159,6 +177,7 @@ def record_success_trace(
     response_mode: ResponseMode,
     driver_id: str,
     handle_id: str | None,
+    result_summary: dict[str, Any] | None,
     trace_store: TraceStore,
 ) -> None:
     """Persist an :class:`ActionTrace` for a successful invocation."""
@@ -173,6 +192,7 @@ def record_success_trace(
             response_mode=response_mode,
             driver_id=driver_id,
             handle_id=handle_id,
+            result_summary=result_summary,
         )
     )
 
@@ -294,6 +314,7 @@ async def perform_invoke(
         response_mode=frame.response_mode,
         driver_id=used_driver_id,
         handle_id=handle.handle_id if handle else None,
+        result_summary=_frame_result_summary(frame),
         trace_store=kernel._traces,
     )
     logger.info(
