@@ -377,3 +377,14 @@ projects and external checkers. Each has a runnable, offline companion under
   — gate a high-impact action behind a deterministic check that shells out to a
   local command (e.g. VibeGuard), with the result recorded in the audit trace.
   Companion: [`examples/repository_safety_check.py`](../examples/repository_safety_check.py).
+- [ChainWeaver compiled flows as policy-controlled capabilities](integrations/chainweaver.md)
+  — wrap a ChainWeaver compiled flow behind the `Driver` protocol so it runs
+  through the normal policy/audit pipeline; step failures surface as a
+  `DriverError` that preserves the flow id and failing step. ChainWeaver stays
+  an optional dependency.
+  Companion: [`examples/chainweaver_flow.py`](../examples/chainweaver_flow.py).
+- [Policy guardrails for statistical evaluation artifacts](integrations/evaluation_artifacts.md)
+  — let an agent summarize an evaluation artifact while gating deployment/rollout
+  recommendations on its support diagnostics; the downgrade reason is recorded in
+  the audit trace. Producer-agnostic; no statistical estimation in agent-kernel.
+  Companion: [`examples/evaluation_artifact_policy.py`](../examples/evaluation_artifact_policy.py).
