@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `ActionTrace.result_summary` (#93): successful invocations now record a
+  redaction-safe summary of the firewalled `Frame` (`fact_count`, `row_count`,
+  `warning_count`, `has_handle` — counts/flags only, never raw driver data), so
+  an invocation's outcome is auditable directly via `Kernel.explain`. A
+  repository safety check's pass/block decision is now recorded in the audit
+  trail (`result_summary["row_count"] == 0` ⇒ passed), not merely inferred from
+  whether a later publish occurred. Failed runs keep `result_summary == None`.
 - Ecosystem integration cookbook: a new `docs/integrations/` section with two
   reference flows and runnable, offline companions.
   - **contextweaver — policy before action** (#92): documents that context

@@ -32,8 +32,6 @@ import os
 import sys
 import tempfile
 
-os.environ.setdefault("AGENT_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
-
 from agent_kernel import (
     Capability,
     CapabilityRegistry,
@@ -250,8 +248,20 @@ async def attempt_publish(kernel: Kernel, principal: Principal, label: str, snip
                 f"    • line {finding.get('line')}: {finding.get('rule')} — {finding.get('message')}"
             )
         # The safety check is always auditable, whether it passed or blocked.
+        # The trace records a redaction-safe result summary derived from the
+        # firewalled Frame, so the pass/block *decision* — not just the fact a
+        # check ran — is reconstructable from the audit trail alone.
         check_trace = kernel.explain(check_action)
-        print(f"  audited check: action_id={check_trace.action_id} driver={check_trace.driver_id}")
+        summary = check_trace.result_summary or {}
+        audited_block = summary.get("row_count", 0) > 0
+        print(
+            f"  audited check: action_id={check_trace.action_id} "
+            f"driver={check_trace.driver_id} result_summary={summary}"
+        )
+        assert audited_block == (not passed), (
+            "the audit trace must record the check decision: a blocked check has "
+            "findings rows in result_summary, a passing one has zero"
+        )
 
         if not passed:
             # Policy-controlled gate: do NOT grant the publish capability when

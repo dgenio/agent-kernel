@@ -34,7 +34,7 @@ from ..models import (
     RoutePlan,
 )
 from ..tokens import CapabilityToken
-from ._invoke import _redact_args_for_trace, resolve_effective_mode
+from ._invoke import _frame_result_summary, _redact_args_for_trace, resolve_effective_mode
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
@@ -151,6 +151,7 @@ async def invoke_stream_impl(
                 response_mode=(last_frame.response_mode if last_frame else initial_mode),
                 driver_id=fallback_driver_id,
                 handle_id=handle.handle_id if handle else None,
+                result_summary=(_frame_result_summary(last_frame) if last_frame else None),
                 error=None if yielded_any else "stream produced no chunks",
             )
         )

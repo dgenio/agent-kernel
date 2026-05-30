@@ -134,7 +134,7 @@ Transforms `RawResult → Frame`. Never exposes raw output to the LLM.
 Stores full results by opaque handle ID with TTL. `expand()` supports pagination, field selection, and basic equality filtering.
 
 ### TraceStore
-Records every `ActionTrace`. `explain(action_id)` returns the full audit record.
+Records every `ActionTrace`. `explain(action_id)` returns the full audit record. On a successful invocation the trace also carries a `result_summary` — a redaction-safe dict of counts/flags (`fact_count`, `row_count`, `warning_count`, `has_handle`) derived from the firewalled `Frame`, never from raw driver data — so an invocation's outcome is auditable directly (e.g. a repository safety check passed iff `result_summary["row_count"] == 0`). Failed runs have `result_summary == None`.
 
 ### Adapters (`agent_kernel.adapters`)
 Vendor-specific tool-format adapters that translate between `Capability` objects

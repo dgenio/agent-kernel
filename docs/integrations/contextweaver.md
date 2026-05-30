@@ -58,7 +58,7 @@ stable `reason_code` on a denial:
 | Outcome | How it arises | Stable signal | Host behavior |
 |---|---|---|---|
 | **allow** | The principal satisfies policy. | `grant_capability()` returns a grant; `invoke()` returns a `Frame`. | Proceed; the action is audited. |
-| **ask / confirm** | A WRITE/DESTRUCTIVE action is missing its justification. | `PolicyDenied` with `reason_code == DenialReason.INSUFFICIENT_JUSTIFICATION`. | *Recoverable.* Prompt the human to confirm and supply a justification, then re-grant. |
+| **ask / confirm** | A WRITE action — or a DESTRUCTIVE action the principal is *otherwise authorized for* — is missing its justification. | `PolicyDenied` with `reason_code == DenialReason.INSUFFICIENT_JUSTIFICATION`. | *Recoverable.* Prompt the human to confirm and supply a justification, then re-grant. |
 | **deny** | The principal lacks a required role (or another non-recoverable rule fails). | `PolicyDenied` with e.g. `reason_code == DenialReason.MISSING_ROLE`. | *Terminal.* Do not retry as-is; surface remediation from `Kernel.explain_denial()`. |
 
 Treating a missing justification as `ask` is the natural mapping: the
@@ -66,6 +66,12 @@ Treating a missing justification as `ask` is the natural mapping: the
 for WRITE/DESTRUCTIVE capabilities, so "ask the human to confirm and explain"
 is exactly what unblocks the call. A missing role, by contrast, cannot be
 satisfied by confirmation and is terminal for that principal.
+
+Note the ordering: role checks run **before** the justification check, so the
+`ask` outcome is only reachable once the principal already satisfies the role
+requirement. For the DESTRUCTIVE `tickets.delete` below, the support agent lacks
+`admin`, so it surfaces as a terminal `missing_role` `deny` regardless of
+justification — the example never reaches `ask` for that capability.
 
 ## Why the shortlist is not a grant
 

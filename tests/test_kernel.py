@@ -82,6 +82,35 @@ async def test_invoke_handle_only_mode(kernel: Kernel, reader_principal: Princip
     assert frame.handle is not None
 
 
+@pytest.mark.asyncio
+async def test_trace_records_result_summary(kernel: Kernel, reader_principal: Principal) -> None:
+    """A successful invocation records a redaction-safe result summary.
+
+    The summary is derived from the firewalled Frame (counts/flags only), so the
+    invocation's outcome is auditable directly from ``explain`` without
+    re-introducing raw driver data.
+    """
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="summary")
+    token = kernel.get_token(req, reader_principal, justification="")
+    frame = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices"},
+        response_mode="table",
+    )
+    trace = kernel.explain(frame.action_id)
+    assert trace.result_summary is not None
+    assert set(trace.result_summary) == {
+        "fact_count",
+        "row_count",
+        "warning_count",
+        "has_handle",
+    }
+    # Counts mirror the firewalled Frame the caller received.
+    assert trace.result_summary["row_count"] == len(frame.table_preview)
+    assert trace.result_summary["has_handle"] == (frame.handle is not None)
+
+
 # ── Denial flow ────────────────────────────────────────────────────────────────
 
 

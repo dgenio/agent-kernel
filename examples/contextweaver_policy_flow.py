@@ -29,9 +29,6 @@ Run with: ``python examples/contextweaver_policy_flow.py``
 from __future__ import annotations
 
 import asyncio
-import os
-
-os.environ.setdefault("AGENT_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
 
 from agent_kernel import (
     Capability,

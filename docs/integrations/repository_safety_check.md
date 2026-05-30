@@ -104,8 +104,21 @@ check_trace = kernel.explain(check_action_id)      # always available
 publish_trace = kernel.explain(publish_action_id)  # only when the check passed
 ```
 
-The trace records the capability, principal, driver, and timestamp for each
-step, so a reviewer can see that the publish was preceded by a passing check.
+Each `ActionTrace` records the capability, principal, driver, and timestamp for
+the step. It also carries a redaction-safe `result_summary` derived from the
+firewalled `Frame` (counts and flags only — never raw findings), so the check's
+pass/block **decision** is recorded in the audit trail itself, not merely
+inferred from whether a later publish happened:
+
+```python
+check_trace = kernel.explain(check_action_id)
+blocked = (check_trace.result_summary or {}).get("row_count", 0) > 0
+```
+
+`result_summary` is built only from the post-`Firewall` `Frame`, so recording it
+never widens the I-01 boundary or leaks scanned content into the audit log. A
+reviewer can therefore confirm both that the publish was preceded by a check and
+what that check decided.
 
 ## Non-goals
 
