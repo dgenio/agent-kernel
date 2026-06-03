@@ -257,7 +257,9 @@ async def act_on_artifact(
         return ("eval.recommend_deployment", frame.action_id)
 
     # Downgrade: record the reasons in the audit args so the trace explains why
-    # deployment was denied (ActionTrace.args is preserved for non-memory caps).
+    # deployment was denied. The kernel only redacts args for "memory."-prefixed
+    # capability ids, so these eval.* caps keep their args in ActionTrace.args
+    # (the driver_id="memory" InMemoryDriver above is unrelated to that redaction).
     request = CapabilityRequest(
         capability_id="eval.recommend_manual_review",
         goal="recommend manual review because the evaluation support is weak",

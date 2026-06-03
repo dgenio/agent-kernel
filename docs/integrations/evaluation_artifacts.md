@@ -72,8 +72,9 @@ a good point estimate with poor support is still blocked.
 
 When deployment is denied, the host does not grant `eval.recommend_deployment`;
 instead it invokes `eval.recommend_manual_review` with the reasons in the call
-args. Because `ActionTrace.args` is preserved for non-memory capabilities, the
-audit trace records *why* the action was downgraded:
+args. Because the kernel only redacts args for `memory.`-prefixed capability ids,
+these `eval.*` capabilities keep their args in `ActionTrace.args`, so the audit
+trace records *why* the action was downgraded:
 
 ```python
 capability_id, action_id = await act_on_artifact(kernel, principal, artifact)
