@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Two more ecosystem integration cookbooks under `docs/integrations/`, each with
+  a runnable, offline companion wired into `make ci`:
+  - **ChainWeaver compiled flows as capabilities** (#95): a `ChainWeaverDriver`
+    wraps a compiled flow behind the `Driver` protocol so the flow runs through
+    the normal policy/audit pipeline and produces a kernel-visible `ActionTrace`.
+    A flow-step failure is translated into a `DriverError` that preserves the
+    flow id and failing step. ChainWeaver stays an optional dependency. New
+    [`docs/integrations/chainweaver.md`](docs/integrations/chainweaver.md) and
+    [`examples/chainweaver_flow.py`](examples/chainweaver_flow.py).
+  - **Policy guardrails for statistical evaluation artifacts** (#96): a generic,
+    producer-agnostic `assess_artifact()` layer lets an agent summarize an
+    evaluation artifact while gating deployment/rollout recommendations on its
+    support diagnostics (multi-signal: `support_health`, `decision_stable`,
+    `warnings`, `recommendation.intent`). Denied actions are downgraded to a
+    manual-review recommendation whose reason is recorded in `ActionTrace.args`.
+    No statistical estimation is added and no producer dependency is taken. New
+    [`docs/integrations/evaluation_artifacts.md`](docs/integrations/evaluation_artifacts.md)
+    and [`examples/evaluation_artifact_policy.py`](examples/evaluation_artifact_policy.py).
 - `ActionTrace.result_summary` (#93): successful invocations now record a
   redaction-safe summary of the firewalled `Frame` (`fact_count`, `row_count`,
   `warning_count`, `has_handle` — counts/flags only, never raw driver data), so

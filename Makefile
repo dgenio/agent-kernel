@@ -23,5 +23,7 @@ example:
 	python examples/readme_quickstart.py
 	python examples/contextweaver_policy_flow.py
 	python examples/repository_safety_check.py
+	python examples/chainweaver_flow.py
+	python examples/evaluation_artifact_policy.py
 
 ci: fmt-check lint type test example
