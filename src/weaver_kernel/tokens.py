@@ -29,16 +29,16 @@ def _get_secret() -> str:
     the fallback secret.
     """
     global _DEV_SECRET
-    secret = os.environ.get("AGENT_KERNEL_SECRET")
+    secret = os.environ.get("WEAVER_KERNEL_SECRET")
     if secret:
         return secret
     with _DEV_SECRET_LOCK:
         if _DEV_SECRET is None:
             _DEV_SECRET = secrets.token_hex(32)
             logger.warning(
-                "AGENT_KERNEL_SECRET is not set. "
+                "WEAVER_KERNEL_SECRET is not set. "
                 "Using a random development secret — tokens will not survive restarts. "
-                "Set AGENT_KERNEL_SECRET in production."
+                "Set WEAVER_KERNEL_SECRET in production."
             )
     return _DEV_SECRET
 
@@ -185,7 +185,7 @@ class TokenProvider(Protocol):
 class HMACTokenProvider:
     """Issues and verifies HMAC-SHA256 capability tokens.
 
-    The signing secret is read from the ``AGENT_KERNEL_SECRET`` environment
+    The signing secret is read from the ``WEAVER_KERNEL_SECRET`` environment
     variable.  If the variable is absent a random development secret is
     generated and a warning is logged.
     """

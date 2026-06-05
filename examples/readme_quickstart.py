@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncio
 import os
 
-os.environ.setdefault("AGENT_KERNEL_SECRET", "readme-quickstart-secret-not-for-prod")
+os.environ.setdefault("WEAVER_KERNEL_SECRET", "readme-quickstart-secret-not-for-prod")
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     InMemoryDriver,
@@ -24,7 +24,7 @@ from agent_kernel import (
     SafetyClass,
     StaticRouter,
 )
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.models import CapabilityRequest
 
 # 1. Register a capability
 registry = CapabilityRegistry()

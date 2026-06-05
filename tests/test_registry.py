@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityAlreadyRegistered,
     CapabilityNotFound,
@@ -66,7 +66,7 @@ def test_search_basic(registry: CapabilityRegistry) -> None:
 
 
 def test_search_returns_capabilityrequest(registry: CapabilityRegistry) -> None:
-    from agent_kernel.models import CapabilityRequest
+    from weaver_kernel.models import CapabilityRequest
 
     results = registry.search("billing invoice")
     assert all(isinstance(r, CapabilityRequest) for r in results)
@@ -155,7 +155,7 @@ def test_list_namespace_exact_match_is_included() -> None:
 
 
 def test_list_namespace_unknown_prefix_raises() -> None:
-    from agent_kernel import NamespaceNotFound
+    from weaver_kernel import NamespaceNotFound
 
     reg = CapabilityRegistry()
     reg.register(_make_cap("billing.invoices.list"))
@@ -262,7 +262,7 @@ def test_get_loads_deepest_declared_namespace_only() -> None:
 
 def test_namespace_loader_out_of_namespace_capability_raises() -> None:
     """A loader returning a capability outside its namespace is a contract error."""
-    from agent_kernel import FederationError
+    from weaver_kernel import FederationError
 
     def loader() -> list[Capability]:
         return [_make_cap("billing.invoices.list"), _make_cap("crm.contacts.list")]
@@ -277,7 +277,7 @@ def test_namespace_loader_out_of_namespace_capability_raises() -> None:
 
 def test_namespace_loader_failure_stays_retryable() -> None:
     """A failed load resets the loaded flag so a later access can retry."""
-    from agent_kernel import FederationError
+    from weaver_kernel import FederationError
 
     calls: list[int] = []
 

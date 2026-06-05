@@ -9,7 +9,7 @@ transforms every `RawResult` into a bounded `Frame` before the LLM sees it.
 ## Budgets
 
 ```python
-from agent_kernel.firewall.budgets import Budgets
+from weaver_kernel.firewall.budgets import Budgets
 
 Budgets(
     max_rows=50,    # max rows in table_preview
@@ -76,7 +76,7 @@ session. It is optional — if you don't attach one, kernel behavior is
 unchanged.
 
 ```python
-from agent_kernel import BudgetManager, Kernel
+from weaver_kernel import BudgetManager, Kernel
 
 manager = BudgetManager(total_budget=100_000)
 kernel = Kernel(registry, budget_manager=manager)
@@ -133,7 +133,7 @@ caps apply on every yielded Frame — secrets cannot leak just because they
 arrived in chunk N rather than the final aggregate.
 
 ```python
-from agent_kernel.drivers.base import ExecutionContext, StreamingDriver
+from weaver_kernel.drivers.base import ExecutionContext, StreamingDriver
 
 class MyStreamingDriver:
     driver_id = "stream"
@@ -164,18 +164,18 @@ one `ActionTrace` covering the whole stream.
 
 ## Observability
 
-`agent_kernel.instrument_kernel(kernel)` installs OpenTelemetry spans and
+`weaver_kernel.instrument_kernel(kernel)` installs OpenTelemetry spans and
 metric emission on `Kernel.invoke` and `Kernel.grant_capability`:
 
 ```python
-from agent_kernel import Kernel, instrument_kernel, OTEL_AVAILABLE
+from weaver_kernel import Kernel, instrument_kernel, OTEL_AVAILABLE
 
 kernel = Kernel(registry=...)
 if OTEL_AVAILABLE:
     instrument_kernel(kernel)  # no-op when [otel] extra not installed
 ```
 
-Spans: `agent_kernel.invoke`, `agent_kernel.grant`. Metrics:
-`agent_kernel.invocations` (counter), `agent_kernel.invocation_duration`
-(histogram, ms), `agent_kernel.policy_denials` (counter). The call is
+Spans: `weaver_kernel.invoke`, `weaver_kernel.grant`. Metrics:
+`weaver_kernel.invocations` (counter), `weaver_kernel.invocation_duration`
+(histogram, ms), `weaver_kernel.policy_denials` (counter). The call is
 idempotent — repeat invocations on the same kernel are no-ops.

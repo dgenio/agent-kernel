@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import datetime
 
-from agent_kernel.enums import SafetyClass, SensitivityTag
-from agent_kernel.firewall.budgets import Budgets
-from agent_kernel.models import (
+from weaver_kernel.enums import SafetyClass, SensitivityTag
+from weaver_kernel.firewall.budgets import Budgets
+from weaver_kernel.models import (
     ActionTrace,
     Capability,
     CapabilityRequest,
@@ -18,7 +18,7 @@ from agent_kernel.models import (
     RawResult,
     RoutePlan,
 )
-from agent_kernel.tokens import CapabilityToken
+from weaver_kernel.tokens import CapabilityToken
 
 
 def test_capability_construction() -> None:
@@ -190,7 +190,7 @@ def test_capability_request_scope_is_independent_per_instance() -> None:
 
 
 def test_policy_decision_trace_defaults() -> None:
-    from agent_kernel.models import PolicyDecisionTrace
+    from weaver_kernel.models import PolicyDecisionTrace
 
     trace = PolicyDecisionTrace(
         engine="X",
@@ -206,7 +206,7 @@ def test_policy_decision_trace_defaults() -> None:
 
 def test_policy_trace_step_uses_slots() -> None:
     """PolicyTraceStep is a slotted dataclass; new attributes must not be settable."""
-    from agent_kernel.models import PolicyTraceStep
+    from weaver_kernel.models import PolicyTraceStep
 
     step = PolicyTraceStep(name="x", outcome="allowed")
     import pytest
@@ -228,7 +228,7 @@ def test_policy_decision_trace_is_optional_on_decision() -> None:
 
 
 def test_policy_decision_reason_code_round_trip() -> None:
-    from agent_kernel import DenialReason
+    from weaver_kernel import DenialReason
 
     dec = PolicyDecision(allowed=False, reason="nope", reason_code=DenialReason.MISSING_ROLE)
     assert dec.reason_code == DenialReason.MISSING_ROLE
@@ -237,7 +237,7 @@ def test_policy_decision_reason_code_round_trip() -> None:
 
 
 def test_failed_condition_default_reason_code_is_none() -> None:
-    from agent_kernel.models import FailedCondition
+    from weaver_kernel.models import FailedCondition
 
     fc = FailedCondition(condition="x", required=1, actual=0, suggestion="bump x")
     assert fc.reason_code is None

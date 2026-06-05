@@ -9,9 +9,9 @@ import asyncio
 import os
 
 # Use a stable test secret so the example is reproducible.
-os.environ.setdefault("AGENT_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
+os.environ.setdefault("WEAVER_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -22,8 +22,8 @@ from agent_kernel import (
     SensitivityTag,
     StaticRouter,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.models import CapabilityRequest, ImplementationRef
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.models import CapabilityRequest, ImplementationRef
 
 
 def build_registry() -> CapabilityRegistry:

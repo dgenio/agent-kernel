@@ -8,9 +8,9 @@ from __future__ import annotations
 import asyncio
 import os
 
-os.environ.setdefault("AGENT_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
+os.environ.setdefault("WEAVER_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     Firewall,
@@ -22,8 +22,8 @@ from agent_kernel import (
     StaticRouter,
     make_billing_driver,
 )
-from agent_kernel.firewall.budgets import Budgets
-from agent_kernel.models import CapabilityRequest, ImplementationRef
+from weaver_kernel.firewall.budgets import Budgets
+from weaver_kernel.models import CapabilityRequest, ImplementationRef
 
 
 def build_registry() -> CapabilityRegistry:

@@ -7,16 +7,16 @@ from typing import Any
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     BudgetConfigError,
     BudgetExhausted,
     BudgetManager,
     Firewall,
     default_token_counter,
 )
-from agent_kernel.firewall.budgets import Budgets
-from agent_kernel.firewall.summarize import summarize
-from agent_kernel.models import Handle, RawResult
+from weaver_kernel.firewall.budgets import Budgets
+from weaver_kernel.firewall.summarize import summarize
+from weaver_kernel.models import Handle, RawResult
 
 
 def _handle() -> Handle:
@@ -434,9 +434,9 @@ async def test_release_rejects_negative() -> None:
         await bm.release(-1)
 
 
-def test_budget_config_error_is_agent_kernel_error() -> None:
+def test_budget_config_error_is_weaver_kernel_error() -> None:
     """``BudgetConfigError`` is part of the public exception hierarchy."""
-    from agent_kernel import AgentKernelError
+    from weaver_kernel import AgentKernelError
 
     assert issubclass(BudgetConfigError, AgentKernelError)
 

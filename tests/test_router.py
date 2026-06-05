@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent_kernel import StaticRouter
+from weaver_kernel import StaticRouter
 
 
 def test_explicit_route() -> None:

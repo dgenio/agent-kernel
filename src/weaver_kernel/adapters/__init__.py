@@ -1,6 +1,6 @@
 """LLM tool-format adapters and middleware.
 
-The adapter layer translates between :class:`~agent_kernel.Capability` objects
+The adapter layer translates between :class:`~weaver_kernel.Capability` objects
 and vendor-specific tool shapes (OpenAI Responses / Chat Completions,
 Anthropic Messages) without depending on the vendor SDKs at runtime. The
 middleware classes also route a vendor's tool-call objects through the full

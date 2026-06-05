@@ -2,12 +2,12 @@
 
 This module implements *part 1* of the capability marketplace protocol
 (issue #52): one kernel can advertise its capabilities as a
-:class:`~agent_kernel.models.CapabilityManifest`, and a second kernel can
+:class:`~weaver_kernel.models.CapabilityManifest`, and a second kernel can
 import that manifest to extend its own registry. Remote invocation is then
 performed by routing imported capabilities to a caller-supplied
-:class:`~agent_kernel.drivers.base.Driver` (typically an
-:class:`~agent_kernel.drivers.http.HTTPDriver` or
-:class:`~agent_kernel.drivers.mcp.MCPDriver`) — every imported call still
+:class:`~weaver_kernel.drivers.base.Driver` (typically an
+:class:`~weaver_kernel.drivers.http.HTTPDriver` or
+:class:`~weaver_kernel.drivers.mcp.MCPDriver`) — every imported call still
 flows through the *local* policy → token → firewall pipeline, satisfying
 weaver-spec I-01 / I-02 / I-06.
 
@@ -45,7 +45,7 @@ TrustPolicy = Literal["most_restrictive", "local_only", "remote_deferred"]
   Required by use cases that span trust boundaries.
 - ``"local_only"``: the importing kernel ignores the descriptor's
   sensitivity tag and registers the imported capability with
-  :attr:`~agent_kernel.enums.SensitivityTag.NONE`. Use when the importer
+  :attr:`~weaver_kernel.enums.SensitivityTag.NONE`. Use when the importer
   owns both kernels and has a single canonical policy.
 - ``"remote_deferred"``: the descriptor's sensitivity tag is preserved
   verbatim and treated as the remote policy's input; the importing kernel
@@ -137,7 +137,7 @@ def import_manifest(
     Each descriptor becomes a regular :class:`Capability` whose
     :class:`ImplementationRef` points at the caller-supplied *driver_id*.
     The importing kernel must register a matching driver with
-    :meth:`~agent_kernel.Kernel.register_driver`. Invocations on the
+    :meth:`~weaver_kernel.Kernel.register_driver`. Invocations on the
     resulting capability flow through the full local pipeline — the remote
     endpoint is never trusted to perform policy, token verification, or
     firewall transformation on behalf of the importer.
@@ -147,8 +147,8 @@ def import_manifest(
         registry: The local :class:`CapabilityRegistry` to extend.
         driver_id: The local driver ID that will execute imported capabilities.
             The caller is responsible for registering a driver with that ID
-            (typically an :class:`~agent_kernel.drivers.http.HTTPDriver` or
-            :class:`~agent_kernel.drivers.mcp.MCPDriver` configured for
+            (typically an :class:`~weaver_kernel.drivers.http.HTTPDriver` or
+            :class:`~weaver_kernel.drivers.mcp.MCPDriver` configured for
             ``manifest.endpoint``).
         trust_policy: How the importer weighs the manifest's sensitivity
             metadata. See :data:`TrustPolicy`.

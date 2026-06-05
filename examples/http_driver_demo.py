@@ -14,9 +14,9 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-os.environ.setdefault("AGENT_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
+os.environ.setdefault("WEAVER_KERNEL_SECRET", "example-secret-do-not-use-in-prod")
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -25,8 +25,8 @@ from agent_kernel import (
     SafetyClass,
     StaticRouter,
 )
-from agent_kernel.drivers.http import HTTPDriver, HTTPEndpoint
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.drivers.http import HTTPDriver, HTTPEndpoint
+from weaver_kernel.models import CapabilityRequest
 
 # ── Tiny HTTP server ────────────────────────────────────────────────────────────
 

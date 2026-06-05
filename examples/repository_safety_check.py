@@ -32,7 +32,7 @@ import os
 import sys
 import tempfile
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -42,9 +42,9 @@ from agent_kernel import (
     SafetyClass,
     StaticRouter,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.errors import DriverError
-from agent_kernel.models import CapabilityRequest, ImplementationRef, RawResult
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.errors import DriverError
+from weaver_kernel.models import CapabilityRequest, ImplementationRef, RawResult
 
 _SECRET = "example-secret-do-not-use-in-prod"
 

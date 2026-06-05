@@ -55,7 +55,7 @@ policy = [
 tiktoken = ["tiktoken>=0.6"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_kernel"]
+packages = ["src/weaver_kernel"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

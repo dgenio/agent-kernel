@@ -7,7 +7,7 @@ remaining budget drains, and a single :class:`ActionTrace` covering the
 whole stream.
 
 When the resolved driver does not implement
-:class:`~agent_kernel.drivers.base.StreamingDriver`, this helper falls
+:class:`~weaver_kernel.drivers.base.StreamingDriver`, this helper falls
 back to a single :meth:`Driver.execute` call and yields one ``Frame``
 with ``is_final=True``. The fallback preserves the same firewall +
 trace guarantees as the streaming path.
@@ -39,7 +39,7 @@ from ._invoke import _frame_result_summary, _redact_args_for_trace, resolve_effe
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
 
-logger = logging.getLogger("agent_kernel.kernel")
+logger = logging.getLogger("weaver_kernel.kernel")
 
 
 async def invoke_stream_impl(

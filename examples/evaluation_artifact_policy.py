@@ -30,7 +30,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -40,8 +40,8 @@ from agent_kernel import (
     SafetyClass,
     StaticRouter,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.models import CapabilityRequest, ImplementationRef
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.models import CapabilityRequest, ImplementationRef
 
 _SECRET = "example-secret-do-not-use-in-prod"
 

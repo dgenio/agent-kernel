@@ -36,7 +36,7 @@ These constraints are non-negotiable. Violating any one silently degrades securi
 4. **Never store secrets in token payloads.** Tokens are HMAC-signed but not encrypted.
    Payload contents are readable by anyone who holds the token.
 
-5. **Never log or print secret key material.** The `AGENT_KERNEL_SECRET` and any
+5. **Never log or print secret key material.** The `WEAVER_KERNEL_SECRET` and any
    derived keys must stay out of logs, error messages, and traces.
 
 6. **Never add dependencies without justification.** The dependency list is intentionally

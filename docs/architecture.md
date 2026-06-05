@@ -55,7 +55,7 @@ Both built-in engines satisfy `ExplainingPolicyEngine`:
   6. **MEMORY** — `memory.read` with `scope.memory_scope == "sensitive"` requires role `memory_reader_sensitive|admin`; `memory.write` / DESTRUCTIVE memory requires role `memory_writer|admin`. Project-scoped memory reads are allowed by default. The kernel also redacts `payload`/`content`/`value`/`memory`/`text`/`body` keys from `ActionTrace.args` for any capability whose ID starts with `memory.`
   7. **max_rows** — 50 (user), 500 (service)
   8. **Rate limiting** — sliding-window per `(principal_id, capability_id)` (60 READ / 10 WRITE / 2 DESTRUCTIVE per 60s; service role gets 10×)
-- **`DeclarativePolicyEngine`** — loads rules from a YAML or TOML file (or a plain dict). Supports `safety_class`, `sensitivity`, `roles`, `attributes`, `min_justification`, `intent`, and `scope` match conditions; `allow`/`deny` actions; per-rule `constraints` merged into the resulting `PolicyDecision`; configurable `default` action. Rules are evaluated top-down with first-match-wins. `pyyaml` and `tomli` are optional dependencies — `import agent_kernel` works without them; calling `from_yaml`/`from_toml` without the parser raises `PolicyConfigError` with an install hint.
+- **`DeclarativePolicyEngine`** — loads rules from a YAML or TOML file (or a plain dict). Supports `safety_class`, `sensitivity`, `roles`, `attributes`, `min_justification`, `intent`, and `scope` match conditions; `allow`/`deny` actions; per-rule `constraints` merged into the resulting `PolicyDecision`; configurable `default` action. Rules are evaluated top-down with first-match-wins. `pyyaml` and `tomli` are optional dependencies — `import weaver_kernel` works without them; calling `from_yaml`/`from_toml` without the parser raises `PolicyConfigError` with an install hint.
 
 #### Intent and scope on requests
 
@@ -136,7 +136,7 @@ Stores full results by opaque handle ID with TTL. `expand()` supports pagination
 ### TraceStore
 Records every `ActionTrace`. `explain(action_id)` returns the full audit record. On a successful invocation the trace also carries a `result_summary` — a redaction-safe dict of counts/flags (`fact_count`, `row_count`, `warning_count`, `has_handle`) derived from the firewalled `Frame`, never from raw driver data — so an invocation's outcome is auditable directly (e.g. a repository safety check passed iff `result_summary["row_count"] == 0`). Failed runs have `result_summary == None`.
 
-### Adapters (`agent_kernel.adapters`)
+### Adapters (`weaver_kernel.adapters`)
 Vendor-specific tool-format adapters that translate between `Capability` objects
 and the tool shapes used by LLM provider APIs:
 

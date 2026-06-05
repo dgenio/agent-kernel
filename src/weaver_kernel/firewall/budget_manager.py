@@ -1,9 +1,9 @@
 """Cross-invocation session-level budget manager.
 
 A :class:`BudgetManager` tracks cumulative token usage across multiple
-:meth:`~agent_kernel.Kernel.invoke` calls and suggests
-:class:`~agent_kernel.models.ResponseMode` escalation as the remaining budget
-shrinks. The manager is optional — a :class:`~agent_kernel.Kernel`
+:meth:`~weaver_kernel.Kernel.invoke` calls and suggests
+:class:`~weaver_kernel.models.ResponseMode` escalation as the remaining budget
+shrinks. The manager is optional — a :class:`~weaver_kernel.Kernel`
 constructed without one behaves identically to earlier versions of the
 library.
 
@@ -36,7 +36,7 @@ class _BudgetState:
 class BudgetManager:
     """Tracks cumulative token usage across invocations within a session.
 
-    When attached to a :class:`~agent_kernel.Kernel` via the
+    When attached to a :class:`~weaver_kernel.Kernel` via the
     ``budget_manager`` constructor parameter, the kernel calls
     :meth:`allocate` before every invocation to reserve a slice of the
     remaining budget and :meth:`record_usage` after the firewall has
@@ -197,7 +197,7 @@ class BudgetManager:
         """Release a reservation without recording any usage.
 
         Called when an invocation fails before the firewall runs (for
-        example the driver raised :class:`~agent_kernel.errors.DriverError`
+        example the driver raised :class:`~weaver_kernel.errors.DriverError`
         or the firewall itself raised).
 
         Args:

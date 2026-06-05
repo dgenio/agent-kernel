@@ -2,7 +2,7 @@
 
 The :class:`TokenCounter` protocol lets callers plug in vendor-specific
 token counters (for example, a ``tiktoken``-based one) into the
-:class:`~agent_kernel.firewall.budget_manager.BudgetManager`. The default
+:class:`~weaver_kernel.firewall.budget_manager.BudgetManager`. The default
 implementation, :func:`default_token_counter`, uses
 ``len(json.dumps(value, default=str)) // 4`` and has no extra dependencies.
 """

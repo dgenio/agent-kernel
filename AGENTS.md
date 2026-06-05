@@ -7,7 +7,7 @@ reference this file and add only tool-specific guidance.
 ## Repo layout
 
 ```
-src/agent_kernel/        — library source (one module per concern, ≤300 lines each)
+src/weaver_kernel/        — library source (one module per concern, ≤300 lines each)
   drivers/               — capability drivers (one file per driver)
   firewall/              — context firewall (redaction, summarization, budgets)
 tests/                   — pytest suite (one test file per module)
@@ -57,7 +57,7 @@ Use these terms consistently. Never substitute synonyms:
 ## Security rules
 
 - Never log or print secret key material.
-- HMAC secrets come from `AGENT_KERNEL_SECRET` env var; fallback to a random dev secret with a logged warning.
+- HMAC secrets come from `WEAVER_KERNEL_SECRET` env var; fallback to a random dev secret with a logged warning.
 - Tokens are HMAC-signed but **not encrypted**. Never store secrets in token payloads.
 - Confused-deputy prevention: tokens bind `principal_id + capability_id + constraints`.
 - Never bypass token verification before capability invocation.
@@ -69,7 +69,7 @@ See [docs/agent-context/invariants.md](docs/agent-context/invariants.md) for the
 
 ## Code conventions
 
-**All modules (`src/agent_kernel/`):**
+**All modules (`src/weaver_kernel/`):**
 Relative imports. Dataclasses with `slots=True`. Protocols for interfaces.
 `__all__` in every `__init__.py`. Google-style docstrings.
 `CamelCase` for classes, `snake_case` for functions. Error classes end with `Error`.
@@ -100,7 +100,7 @@ See [docs/agent-context/workflows.md](docs/agent-context/workflows.md) for full 
 
 ## Adding a capability driver
 
-1. Implement the `Driver` protocol in `src/agent_kernel/drivers/`.
+1. Implement the `Driver` protocol in `src/weaver_kernel/drivers/`.
 2. Register it with `StaticRouter` or implement a custom `Router`.
 3. Add integration tests in `tests/test_drivers.py`.
 

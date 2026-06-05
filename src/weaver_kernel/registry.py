@@ -2,7 +2,7 @@
 
 Supports dot-notation namespaces (``"billing.invoices.list"``) and deferred
 namespace loaders for large tool ecosystems; ranked search is delegated to
-:mod:`agent_kernel.search_index`. Flat capability IDs continue to work — they
+:mod:`weaver_kernel.search_index`. Flat capability IDs continue to work — they
 live in a single-segment namespace named after themselves.
 """
 

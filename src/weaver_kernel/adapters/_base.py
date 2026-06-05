@@ -1,10 +1,10 @@
 """Shared plumbing for LLM tool-format adapters.
 
 This module is private. Stable adapter API is exported from
-:mod:`agent_kernel.adapters` (and re-exported from :mod:`agent_kernel`).
+:mod:`weaver_kernel.adapters` (and re-exported from :mod:`weaver_kernel`).
 
-Both :class:`~agent_kernel.adapters.openai.OpenAIMiddleware` and
-:class:`~agent_kernel.adapters.anthropic.AnthropicMiddleware` build on top of
+Both :class:`~weaver_kernel.adapters.openai.OpenAIMiddleware` and
+:class:`~weaver_kernel.adapters.anthropic.AnthropicMiddleware` build on top of
 :class:`BaseToolMiddleware`, which owns:
 
 - hook registration and dispatch (sync or async callables)
@@ -440,7 +440,7 @@ class BaseToolMiddleware:
             await value
 
 
-# Public re-exports so ``from agent_kernel.adapters import X`` resolves
+# Public re-exports so ``from weaver_kernel.adapters import X`` resolves
 # cleanly even for internals subclasses lean on.
 __all__ = [
     "BaseToolMiddleware",

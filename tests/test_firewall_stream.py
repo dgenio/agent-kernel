@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Budgets,
     Capability,
     CapabilityRegistry,
@@ -31,8 +31,8 @@ from agent_kernel import (
     StaticRouter,
     StreamingDriver,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.models import CapabilityRequest, RawResult
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.models import CapabilityRequest, RawResult
 
 
 class _FakeStreamingDriver:

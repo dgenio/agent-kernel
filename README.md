@@ -41,19 +41,19 @@ graph LR
 pip install weaver-kernel
 ```
 
-> **Note:** The PyPI package is `weaver-kernel` (Weaver ecosystem), but the Python import remains `agent_kernel`.
+> **Note:** The PyPI package is `weaver-kernel` (Weaver ecosystem), but the Python import remains `weaver_kernel`.
 
 > **New here?** [docs/tutorial.md](docs/tutorial.md) walks through register → grant → invoke → expand → explain in five minutes.
 
 ```python
 import asyncio, os
-os.environ["AGENT_KERNEL_SECRET"] = "my-secret"
+os.environ["WEAVER_KERNEL_SECRET"] = "my-secret"
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability, CapabilityRegistry,
     InMemoryDriver, Kernel, Principal, SafetyClass, StaticRouter,
 )
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.models import CapabilityRequest
 
 # 1. Register a capability
 registry = CapabilityRegistry()
@@ -178,7 +178,7 @@ See [docs/agent-context/invariants.md](docs/agent-context/invariants.md) for the
 > **v0.1 is not production-hardened for real authentication.**
 
 - HMAC tokens are tamper-evident (SHA-256) but **not encrypted**. Do not put sensitive data in token fields.
-- Set `AGENT_KERNEL_SECRET` to a strong random value in production. If unset, a random dev secret is generated per-process with a warning.
+- Set `WEAVER_KERNEL_SECRET` to a strong random value in production. If unset, a random dev secret is generated per-process with a warning.
 - PII redaction is heuristic (regex). It is not a substitute for proper data governance.
 - See [docs/security.md](docs/security.md) for the full threat model.
 

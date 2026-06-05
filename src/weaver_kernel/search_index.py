@@ -1,6 +1,6 @@
 """BM25-flavoured scoring index for capability search.
 
-Extracted from :mod:`agent_kernel.registry` to keep both modules within the
+Extracted from :mod:`weaver_kernel.registry` to keep both modules within the
 AGENTS.md 300-line budget. Scoring is pure and deterministic — no randomness is
 used in matching (AGENTS.md). Matches on ``capability_id`` and ``tags`` are
 weighted above ``description``.

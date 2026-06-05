@@ -31,7 +31,7 @@ class PolicyDenied(AgentKernelError):
     """Raised when the policy engine rejects a capability request.
 
     Carries an optional ``reason_code`` attribute holding a stable
-    :class:`~agent_kernel.policy_reasons.DenialReason` value so callers can
+    :class:`~weaver_kernel.policy_reasons.DenialReason` value so callers can
     branch on it without matching the human-readable message:
 
     .. code-block:: python
@@ -67,7 +67,7 @@ class FirewallError(AgentKernelError):
 
 
 class BudgetExhausted(AgentKernelError):
-    """Raised when a :class:`~agent_kernel.firewall.budget_manager.BudgetManager` has
+    """Raised when a :class:`~weaver_kernel.firewall.budget_manager.BudgetManager` has
     no remaining cross-invocation context budget.
 
     Distinct from :class:`FirewallError`: this error fires *before* the
@@ -78,7 +78,7 @@ class BudgetExhausted(AgentKernelError):
 
 
 class BudgetConfigError(AgentKernelError):
-    """Raised when a :class:`~agent_kernel.firewall.budget_manager.BudgetManager` is
+    """Raised when a :class:`~weaver_kernel.firewall.budget_manager.BudgetManager` is
     constructed with invalid parameters, or asked to allocate/record/release
     a negative amount.
 
@@ -132,7 +132,7 @@ class HandleConstraintViolation(AgentKernelError):
     """Raised when a handle expansion request violates the grant's constraints.
 
     Handles persist the constraints attached to the original
-    :class:`~agent_kernel.models.PolicyDecision` (e.g. ``max_rows``,
+    :class:`~weaver_kernel.models.PolicyDecision` (e.g. ``max_rows``,
     ``allowed_fields``). :meth:`HandleStore.expand` rechecks the requested
     query against those constraints; expansions that would exceed the row
     cap, request disallowed fields, or violate scope raise this error so
@@ -171,7 +171,7 @@ class TrustPolicyError(FederationError):
 
 
 class ManifestError(FederationError):
-    """Raised when a :class:`~agent_kernel.models.CapabilityManifest` cannot be
+    """Raised when a :class:`~weaver_kernel.models.CapabilityManifest` cannot be
     serialised, parsed, or imported (e.g. missing fields, invalid version,
     duplicate capability IDs).
     """

@@ -1,10 +1,10 @@
 """Version-consistency tests.
 
-Pins the contract that ``agent_kernel.__version__`` is derived from the
+Pins the contract that ``weaver_kernel.__version__`` is derived from the
 installed distribution metadata rather than a hand-maintained literal, so it
 can never drift from ``pyproject.toml`` again (issue #85). The PyPI
 distribution name is ``weaver-kernel``, distinct from the import name
-``agent_kernel``.
+``weaver_kernel``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-import agent_kernel
+import weaver_kernel
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
@@ -44,7 +44,7 @@ def test_version_matches_distribution_metadata() -> None:
     Pins that ``__version__`` is *derived from* dist metadata (not a literal);
     cross-checking against ``pyproject.toml`` is done separately below.
     """
-    assert agent_kernel.__version__ == pkg_version("weaver-kernel")
+    assert weaver_kernel.__version__ == pkg_version("weaver-kernel")
 
 
 def test_version_matches_pyproject_declaration() -> None:
@@ -58,9 +58,9 @@ def test_version_matches_pyproject_declaration() -> None:
     declared = _declared_pyproject_version()
     if declared is None:
         pytest.skip("pyproject.toml not present (installed without source tree)")
-    assert agent_kernel.__version__ == declared
+    assert weaver_kernel.__version__ == declared
 
 
 def test_version_is_exported() -> None:
     """``__version__`` stays part of the public API surface."""
-    assert "__version__" in agent_kernel.__all__
+    assert "__version__" in weaver_kernel.__all__

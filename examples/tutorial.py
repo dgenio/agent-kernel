@@ -24,9 +24,9 @@ from __future__ import annotations
 import asyncio
 import os
 
-os.environ.setdefault("AGENT_KERNEL_SECRET", "tutorial-secret-do-not-use-in-prod")
+os.environ.setdefault("WEAVER_KERNEL_SECRET", "tutorial-secret-do-not-use-in-prod")
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -37,9 +37,9 @@ from agent_kernel import (
     SensitivityTag,
     StaticRouter,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.errors import HandleConstraintViolation, PolicyDenied
-from agent_kernel.models import CapabilityRequest, ImplementationRef
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.errors import HandleConstraintViolation, PolicyDenied
+from weaver_kernel.models import CapabilityRequest, ImplementationRef
 
 # A tiny, deterministic dataset that mixes safe and PII-bearing fields.
 # Email is present on purpose: the firewall must keep it out of the LLM-safe

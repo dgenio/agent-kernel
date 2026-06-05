@@ -40,7 +40,7 @@ class ImplementationRef:
 class ToolHints:
     """Vendor-specific tool-definition hints for LLM adapters.
 
-    Consumed by ``agent_kernel.adapters`` when emitting tool schemas.
+    Consumed by ``weaver_kernel.adapters`` when emitting tool schemas.
     Engines that don't recognise a hint silently ignore it; setting a hint
     never changes how the kernel itself behaves.
     """
@@ -194,8 +194,8 @@ class PolicyTraceStep:
     """Human-readable detail, e.g. ``"role 'writer' required, principal had ['reader']"``."""
 
     reason_code: str | None = None
-    """For ``"denied"`` steps, the :class:`~agent_kernel.policy_reasons.DenialReason`.
-    For ``"allowed"`` steps, the :class:`~agent_kernel.policy_reasons.AllowReason`.
+    """For ``"denied"`` steps, the :class:`~weaver_kernel.policy_reasons.DenialReason`.
+    For ``"allowed"`` steps, the :class:`~weaver_kernel.policy_reasons.AllowReason`.
     ``None`` for ``"matched"``, ``"skipped"``, and ``"constraint_applied"`` steps.
     """
 
@@ -233,8 +233,8 @@ class PolicyDecisionTrace:
     """The decision the engine reached."""
 
     final_reason_code: str | None = None
-    """The :class:`~agent_kernel.policy_reasons.AllowReason` or
-    :class:`~agent_kernel.policy_reasons.DenialReason` for the final outcome.
+    """The :class:`~weaver_kernel.policy_reasons.AllowReason` or
+    :class:`~weaver_kernel.policy_reasons.DenialReason` for the final outcome.
     """
 
 
@@ -253,8 +253,8 @@ class PolicyDecision:
     """Any additional constraints imposed by the policy (e.g. ``max_rows``)."""
 
     reason_code: str | None = None
-    """Stable machine-readable code (typically a :class:`~agent_kernel.policy_reasons.AllowReason`
-    or :class:`~agent_kernel.policy_reasons.DenialReason` value).
+    """Stable machine-readable code (typically a :class:`~weaver_kernel.policy_reasons.AllowReason`
+    or :class:`~weaver_kernel.policy_reasons.DenialReason` value).
 
     Use this for assertions, metrics, and UI mapping. ``None`` only when an
     out-of-tree policy engine has not populated it.
@@ -321,7 +321,7 @@ class Handle:
     Handles carry the grant constraints persisted at creation time. The
     :class:`HandleStore` rechecks those constraints when the handle is
     expanded, so an over-broad expand query is denied with a stable
-    :class:`~agent_kernel.errors.HandleConstraintViolation` rather than
+    :class:`~weaver_kernel.errors.HandleConstraintViolation` rather than
     silently returning data the original grant never authorised.
     """
 
@@ -392,8 +392,8 @@ class Frame:
     is_final: bool = False
     """``True`` when this Frame is the last chunk of a stream.
 
-    Non-streaming :meth:`~agent_kernel.Kernel.invoke` always returns a Frame
-    with ``is_final=True``. For :meth:`~agent_kernel.Kernel.invoke_stream`, only
+    Non-streaming :meth:`~weaver_kernel.Kernel.invoke` always returns a Frame
+    with ``is_final=True``. For :meth:`~weaver_kernel.Kernel.invoke_stream`, only
     the terminal Frame has it set; intermediate chunks have ``is_final=False``.
     """
 
@@ -422,7 +422,7 @@ class ActionTrace:
     Derived **only** from the post-Firewall Frame — counts and flags, never raw
     driver data — so recording it cannot widen the I-01 boundary or leak
     sensitive payloads into the audit trail. It lets a reviewer reconstruct an
-    invocation's outcome directly from :meth:`~agent_kernel.Kernel.explain`; for
+    invocation's outcome directly from :meth:`~weaver_kernel.Kernel.explain`; for
     example, a repository safety check passed iff ``result_summary["row_count"]
     == 0``.
     """
@@ -448,7 +448,7 @@ class FailedCondition:
     """Actionable remediation hint."""
 
     reason_code: str | None = None
-    """Stable machine-readable code (a :class:`~agent_kernel.policy_reasons.DenialReason` value).
+    """Stable machine-readable code (a :class:`~weaver_kernel.policy_reasons.DenialReason` value).
     Use this for assertions instead of matching the human-readable
     :attr:`suggestion` string.
     """
@@ -474,7 +474,7 @@ class DenialExplanation:
     """Human-readable single-sentence summary."""
 
     reason_code: str | None = None
-    """Primary :class:`~agent_kernel.policy_reasons.DenialReason` for the denial
+    """Primary :class:`~weaver_kernel.policy_reasons.DenialReason` for the denial
     (typically the code of the first :class:`FailedCondition`). ``None`` on the
     allow path (``denied=False``).
     """
@@ -690,7 +690,7 @@ class CapabilityManifest:
 class DryRunResult:
     """Result of a dry-run invocation — driver is never called.
 
-    Returned by :meth:`~agent_kernel.Kernel.invoke` when ``dry_run=True``.
+    Returned by :meth:`~weaver_kernel.Kernel.invoke` when ``dry_run=True``.
     """
 
     capability_id: str

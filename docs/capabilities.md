@@ -164,7 +164,7 @@ applies (`"deny"` unless overridden).
 
 ```python
 from pathlib import Path
-from agent_kernel import DeclarativePolicyEngine, Kernel
+from weaver_kernel import DeclarativePolicyEngine, Kernel
 
 # YAML or TOML — both formats are interchangeable.
 policy = DeclarativePolicyEngine.from_yaml(Path("examples/policies/default.yaml"))
@@ -195,7 +195,7 @@ rule requiring the attribute paired with `default: deny`. See
 worked example.
 
 `pyyaml` and `tomli` are **optional** — they live behind the `[policy]`
-extra. `import agent_kernel` always works; calling `from_yaml` / `from_toml`
+extra. `import weaver_kernel` always works; calling `from_yaml` / `from_toml`
 without the parser installed raises `PolicyConfigError` with an install hint.
 
 ## Denial explanations

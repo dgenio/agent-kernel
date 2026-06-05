@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     DriverError,
@@ -17,7 +17,7 @@ from agent_kernel import (
     StaticRouter,
     TokenExpired,
 )
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.models import CapabilityRequest
 
 # ── Full flow: request → grant → invoke → expand → explain ─────────────────────
 
@@ -238,7 +238,7 @@ async def test_confused_deputy_prevention(kernel: Kernel, reader_principal: Prin
     token = kernel.get_token(req, reader_principal, justification="")
 
     other_principal = Principal(principal_id="attacker-999", roles=["reader"])
-    from agent_kernel import TokenScopeError
+    from weaver_kernel import TokenScopeError
 
     with pytest.raises(TokenScopeError):
         await kernel.invoke(
@@ -254,7 +254,7 @@ async def test_confused_deputy_prevention(kernel: Kernel, reader_principal: Prin
 @pytest.mark.asyncio
 async def test_dry_run_returns_dry_run_result(kernel: Kernel, reader_principal: Principal) -> None:
     """dry_run=True returns DryRunResult, not Frame."""
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.models import DryRunResult
 
     req = CapabilityRequest(capability_id="billing.list_invoices", goal="test")
     token = kernel.get_token(req, reader_principal, justification="")
@@ -283,7 +283,7 @@ async def test_dry_run_driver_not_called(
 @pytest.mark.asyncio
 async def test_dry_run_estimated_cost(kernel: Kernel, admin_principal: Principal) -> None:
     """estimated_cost maps to safety class."""
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.models import DryRunResult
 
     read_req = CapabilityRequest(capability_id="billing.list_invoices", goal="r")
     read_token = kernel.get_token(read_req, admin_principal, justification="")
@@ -310,7 +310,7 @@ async def test_dry_run_operation_uses_args_then_capability_id(
     must mirror that exactly so ``DryRunResult.operation`` matches what a
     driver would actually receive.
     """
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.models import DryRunResult
 
     req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
     token = kernel.get_token(req, reader_principal, justification="")
@@ -346,7 +346,7 @@ async def test_dry_run_downgrades_raw_for_non_admin(
     (see firewall/transform.py); dry-run must downgrade too so callers
     cannot probe/assume raw availability they will never receive.
     """
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.models import DryRunResult
 
     req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
     token = kernel.get_token(req, reader_principal, justification="")
@@ -364,7 +364,7 @@ async def test_dry_run_downgrades_raw_for_non_admin(
 @pytest.mark.asyncio
 async def test_dry_run_preserves_raw_for_admin(kernel: Kernel, admin_principal: Principal) -> None:
     """Admin principals keep raw mode in dry-run (no downgrade)."""
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.models import DryRunResult
 
     req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
     token = kernel.get_token(req, admin_principal, justification="")
@@ -384,7 +384,7 @@ async def test_dry_run_expired_token_still_raises(
     kernel: Kernel, reader_principal: Principal
 ) -> None:
     """Token expiry is enforced even in dry-run mode."""
-    from agent_kernel import HMACTokenProvider, TokenExpired
+    from weaver_kernel import HMACTokenProvider, TokenExpired
 
     provider = HMACTokenProvider(secret="test-secret-do-not-use-in-prod")
     token = provider.issue(
@@ -431,7 +431,7 @@ def test_explain_denial_write_short_justification(
 
 def test_explain_denial_capability_not_found(kernel: Kernel, reader_principal: Principal) -> None:
     """explain_denial raises CapabilityNotFound for unknown capability."""
-    from agent_kernel import CapabilityNotFound
+    from weaver_kernel import CapabilityNotFound
 
     req = CapabilityRequest(capability_id="nonexistent.capability", goal="test")
     with pytest.raises(CapabilityNotFound):
@@ -447,8 +447,8 @@ def test_explain_denial_engine_without_explain_raises(
     don't implement ``explain()`` raise ``AgentKernelError`` from
     ``Kernel.explain_denial`` rather than producing a misleading explanation.
     """
-    from agent_kernel import AgentKernelError, PolicyDenied
-    from agent_kernel.models import PolicyDecision
+    from weaver_kernel import AgentKernelError, PolicyDenied
+    from weaver_kernel.models import PolicyDecision
 
     class EvaluateOnlyEngine:
         """Minimal engine satisfying PolicyEngine but not ExplainingPolicyEngine."""
@@ -484,7 +484,7 @@ def _kernel_with_budget(
     default_request: int = 4_000,
 ) -> Kernel:
     """Helper: construct a kernel wired with a BudgetManager."""
-    from agent_kernel import BudgetManager
+    from weaver_kernel import BudgetManager
 
     router = StaticRouter(
         routes={
@@ -540,7 +540,7 @@ async def test_budget_manager_escalates_mode_when_remaining_under_five_percent(
     reader_principal: Principal,
 ) -> None:
     """When remaining drops below 5%, even ``summary`` escalates to ``handle_only``."""
-    from agent_kernel import BudgetManager
+    from weaver_kernel import BudgetManager
 
     router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
     bm = BudgetManager(total_budget=1000)
@@ -572,7 +572,7 @@ async def test_budget_manager_exhausted_raises_before_driver_runs(
     reader_principal: Principal,
 ) -> None:
     """An exhausted budget surfaces ``BudgetExhausted`` and skips the driver."""
-    from agent_kernel import BudgetExhausted, BudgetManager
+    from weaver_kernel import BudgetExhausted, BudgetManager
 
     router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
     bm = BudgetManager(total_budget=100)
@@ -601,7 +601,7 @@ async def test_budget_manager_releases_reservation_on_driver_failure(
     reader_principal: Principal,
 ) -> None:
     """When all drivers fail, the reserved tokens must return to the pool."""
-    from agent_kernel import BudgetManager
+    from weaver_kernel import BudgetManager
 
     # Construct a kernel with a router pointing at a driver that does not exist.
     router = StaticRouter(routes={"billing.list_invoices": ["nope"]})
@@ -633,7 +633,7 @@ async def test_dry_run_reports_budget_remaining_when_manager_configured(
     reader_principal: Principal,
 ) -> None:
     """DryRunResult.budget_remaining is populated when a BudgetManager is wired."""
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.models import DryRunResult
 
     k = _kernel_with_budget(registry, memory_driver, total_budget=10_000)
     req = CapabilityRequest(capability_id="billing.list_invoices", goal="t")
@@ -655,8 +655,8 @@ async def test_dry_run_reflects_escalated_mode_under_budget_pressure(
     reader_principal: Principal,
 ) -> None:
     """Dry-run mirrors the BudgetManager escalation that a real invoke would apply."""
-    from agent_kernel import BudgetManager
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel import BudgetManager
+    from weaver_kernel.models import DryRunResult
 
     router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
     bm = BudgetManager(total_budget=1000)
@@ -693,7 +693,7 @@ async def test_budget_manager_releases_reservation_on_firewall_failure(
     Without the finally block the reservation would stay locked, permanently
     eroding the cumulative budget on every transform failure.
     """
-    from agent_kernel import BudgetManager, FirewallError
+    from weaver_kernel import BudgetManager, FirewallError
 
     class FailingFirewall:
         def transform(self, *args: object, **kwargs: object) -> object:
@@ -772,7 +772,7 @@ async def test_kernel_without_budget_manager_behaves_identically(
 
 def test_explain_denial_surfaces_reason_code(kernel: Kernel, reader_principal: Principal) -> None:
     """Kernel.explain_denial forwards the engine's reason_code."""
-    from agent_kernel import DenialReason
+    from weaver_kernel import DenialReason
 
     result = kernel.explain_denial(
         CapabilityRequest(capability_id="billing.update_invoice", goal="write"),
@@ -788,7 +788,7 @@ def test_grant_capability_carries_intent_through_request(
     kernel: Kernel, reader_principal: Principal
 ) -> None:
     """A request with intent/scope should be accepted end-to-end and reach the decision trace."""
-    from agent_kernel import AllowReason
+    from weaver_kernel import AllowReason
 
     req = CapabilityRequest(
         capability_id="billing.get_invoice",
@@ -814,7 +814,7 @@ async def test_dry_run_policy_decision_has_trace(
     kernel emits a single-step ``token_verified`` trace so dry-run consumers
     can rely on a uniformly-shaped trace field.
     """
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.models import DryRunResult
 
     token = kernel.get_token(
         CapabilityRequest(capability_id="billing.get_invoice", goal="read"),
@@ -844,8 +844,8 @@ async def test_dry_run_with_http_driver_does_not_call_execute() -> None:
     """
     from unittest.mock import AsyncMock, patch
 
-    from agent_kernel.drivers.http import HTTPDriver, HTTPEndpoint
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.drivers.http import HTTPDriver, HTTPEndpoint
+    from weaver_kernel.models import DryRunResult
 
     cap = Capability(
         capability_id="external.fetch_user",
@@ -895,8 +895,8 @@ async def test_dry_run_with_mcp_driver_does_not_call_execute() -> None:
     """
     from unittest.mock import AsyncMock, patch
 
-    from agent_kernel.drivers.mcp import MCPDriver
-    from agent_kernel.models import DryRunResult
+    from weaver_kernel.drivers.mcp import MCPDriver
+    from weaver_kernel.models import DryRunResult
 
     cap = Capability(
         capability_id="mcp.echo",

@@ -14,7 +14,7 @@ from types import ModuleType
 
 import pytest
 
-from agent_kernel import Principal
+from weaver_kernel import Principal
 
 _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 

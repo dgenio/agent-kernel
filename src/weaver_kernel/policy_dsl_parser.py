@@ -155,7 +155,7 @@ def load_yaml_data(path: Path) -> dict[str, Any]:
     """Read a YAML file into a top-level mapping.
 
     Requires ``pyyaml``: ``pip install 'weaver-kernel[policy]'``. The import is
-    deferred so that ``import agent_kernel`` works without the policy extra.
+    deferred so that ``import weaver_kernel`` works without the policy extra.
 
     Raises:
         PolicyConfigError: If the file is unreadable, malformed, or pyyaml

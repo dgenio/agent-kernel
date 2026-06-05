@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     HMACTokenProvider,
     TokenExpired,
     TokenInvalid,
@@ -71,7 +71,7 @@ def test_token_with_constraints(provider: HMACTokenProvider) -> None:
 def test_token_serialization_roundtrip(provider: HMACTokenProvider) -> None:
     token = provider.issue("cap.x", "user-1", constraints={"foo": "bar"})
     d = token.to_dict()
-    from agent_kernel.tokens import CapabilityToken
+    from weaver_kernel.tokens import CapabilityToken
 
     restored = CapabilityToken.from_dict(d)
     assert restored.token_id == token.token_id
@@ -84,7 +84,7 @@ def test_tamper_constraints_invalidates_token(provider: HMACTokenProvider) -> No
     token = provider.issue("cap.x", "user-1", constraints={"max_rows": 10})
     d = token.to_dict()
     d["constraints"]["max_rows"] = 9999  # tamper
-    from agent_kernel.tokens import CapabilityToken
+    from weaver_kernel.tokens import CapabilityToken
 
     tampered = CapabilityToken.from_dict(d)
     with pytest.raises(TokenInvalid):
@@ -95,16 +95,16 @@ def test_dev_secret_warning(caplog: pytest.LogCaptureFixture) -> None:
     """A provider with no secret should generate a warning."""
     import logging
 
-    import agent_kernel.tokens as tok_mod
+    import weaver_kernel.tokens as tok_mod
 
     # Save and restore _DEV_SECRET to avoid leaking state to other tests
     original = tok_mod._DEV_SECRET
     try:
         tok_mod._DEV_SECRET = None
         provider_no_secret = HMACTokenProvider(secret=None)
-        with caplog.at_level(logging.WARNING, logger="agent_kernel.tokens"):
+        with caplog.at_level(logging.WARNING, logger="weaver_kernel.tokens"):
             token = provider_no_secret.issue("cap.x", "user-1")
-        assert "AGENT_KERNEL_SECRET" in caplog.text
+        assert "WEAVER_KERNEL_SECRET" in caplog.text
         assert token.signature != ""
     finally:
         tok_mod._DEV_SECRET = original

@@ -4,7 +4,7 @@ Parsing and the denial-explanation traversal live in sibling modules
 (:mod:`policy_dsl_parser`, :mod:`policy_dsl_explain`) so each module stays
 ≤ 300 lines per AGENTS.md. :class:`PolicyMatch` and :class:`PolicyRule`
 are re-exported from this module for backwards compatibility with the
-public API surface (``from agent_kernel import PolicyMatch, PolicyRule``).
+public API surface (``from weaver_kernel import PolicyMatch, PolicyRule``).
 """
 
 from __future__ import annotations

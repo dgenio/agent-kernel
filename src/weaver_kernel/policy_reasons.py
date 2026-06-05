@@ -33,7 +33,7 @@ class DenialReason(_StrEnumCompat):
 
     Used as :attr:`PolicyDecision.reason_code`,
     :attr:`DenialExplanation.reason_code`, :attr:`FailedCondition.reason_code`,
-    and :attr:`agent_kernel.PolicyDenied.reason_code`.
+    and :attr:`weaver_kernel.PolicyDenied.reason_code`.
     """
 
     # Role / identity

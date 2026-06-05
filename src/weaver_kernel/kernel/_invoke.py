@@ -39,7 +39,7 @@ from ..trace import TraceStore
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
 
-logger = logging.getLogger("agent_kernel.kernel")
+logger = logging.getLogger("weaver_kernel.kernel")
 
 _MEMORY_CAPABILITY_PREFIX = "memory."
 _MEMORY_SENSITIVE_ARG_KEYS: frozenset[str] = frozenset(
@@ -72,9 +72,9 @@ def _frame_result_summary(frame: Frame) -> dict[str, Any]:
     Records only counts and flags taken from the already-transformed Frame —
     never raw driver data — so it preserves the I-01 boundary the Firewall
     enforces and keeps sensitive payloads out of the audit trail. Stored on
-    :attr:`~agent_kernel.models.ActionTrace.result_summary` so an invocation's
+    :attr:`~weaver_kernel.models.ActionTrace.result_summary` so an invocation's
     outcome (e.g. a safety check's pass/block decision) is auditable via
-    :meth:`~agent_kernel.Kernel.explain`.
+    :meth:`~weaver_kernel.Kernel.explain`.
     """
     return {
         "fact_count": len(frame.facts),
