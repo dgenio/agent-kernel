@@ -6,9 +6,9 @@ import datetime
 
 import pytest
 
-from agent_kernel import TraceStore
-from agent_kernel.errors import AgentKernelError
-from agent_kernel.models import ActionTrace
+from weaver_kernel import TraceStore
+from weaver_kernel.errors import AgentKernelError
+from weaver_kernel.models import ActionTrace
 
 
 def _trace(action_id: str = "act-1") -> ActionTrace:

@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
-from agent_kernel import (
+from weaver_kernel import (
     CapabilityRegistry,
     CapabilityRequest,
     DriverError,
@@ -71,14 +71,14 @@ def _sequence_factory(sessions: list[_FakeSession]) -> Any:
 
 
 def test_from_stdio_missing_dependency_raises_helpful_import_error() -> None:
-    with patch("agent_kernel.drivers.mcp_support.importlib.import_module") as import_module:
+    with patch("weaver_kernel.drivers.mcp_support.importlib.import_module") as import_module:
         import_module.side_effect = ModuleNotFoundError("No module named 'mcp'")
         with pytest.raises(ImportError, match=r"weaver-kernel\[mcp\]"):
             MCPDriver.from_stdio("python", ["server.py"])
 
 
 def test_from_http_missing_dependency_raises_helpful_import_error() -> None:
-    with patch("agent_kernel.drivers.mcp_support.importlib.import_module") as import_module:
+    with patch("weaver_kernel.drivers.mcp_support.importlib.import_module") as import_module:
         import_module.side_effect = ModuleNotFoundError("No module named 'mcp'")
         with pytest.raises(ImportError, match=r"weaver-kernel\[mcp\]"):
             MCPDriver.from_http("http://localhost:8080/mcp")
@@ -88,16 +88,16 @@ def test_load_mcp_error_returns_type_when_mcp_available() -> None:
     """_load_mcp_error resolves the real McpError type when mcp is installed."""
     from mcp.shared.exceptions import McpError
 
-    from agent_kernel.drivers.mcp import _load_mcp_error
+    from weaver_kernel.drivers.mcp import _load_mcp_error
 
     assert _load_mcp_error() is McpError
 
 
 def test_load_mcp_error_returns_none_when_mcp_unavailable() -> None:
     """_load_mcp_error returns None when the optional mcp dep is missing (issue #87)."""
-    from agent_kernel.drivers.mcp import _load_mcp_error
+    from weaver_kernel.drivers.mcp import _load_mcp_error
 
-    with patch("agent_kernel.drivers.mcp.importlib.import_module") as import_module:
+    with patch("weaver_kernel.drivers.mcp.importlib.import_module") as import_module:
         import_module.side_effect = ImportError("No module named 'mcp'")
         assert _load_mcp_error() is None
 
@@ -110,10 +110,10 @@ def test_load_mcp_error_returns_none_when_attribute_missing() -> None:
     """
     from types import ModuleType
 
-    from agent_kernel.drivers.mcp import _load_mcp_error
+    from weaver_kernel.drivers.mcp import _load_mcp_error
 
     empty_module = ModuleType("mcp.shared.exceptions")
-    with patch("agent_kernel.drivers.mcp.importlib.import_module") as import_module:
+    with patch("weaver_kernel.drivers.mcp.importlib.import_module") as import_module:
         import_module.return_value = empty_module
         assert _load_mcp_error() is None
 
@@ -160,7 +160,7 @@ async def test_execute_calls_tool_and_applies_constraints_defaults() -> None:
         transport="stdio",
     )
 
-    from agent_kernel.drivers.base import ExecutionContext
+    from weaver_kernel.drivers.base import ExecutionContext
 
     ctx = ExecutionContext(
         capability_id="fs.list_files",
@@ -194,7 +194,7 @@ async def test_execute_prefers_structured_content_when_available() -> None:
         transport="stdio",
     )
 
-    from agent_kernel.drivers.base import ExecutionContext
+    from weaver_kernel.drivers.base import ExecutionContext
 
     ctx = ExecutionContext(capability_id="math.sum", principal_id="u1")
     result = await driver.execute(ctx)
@@ -220,7 +220,7 @@ async def test_execute_raises_driver_error_on_mcp_is_error() -> None:
         transport="stdio",
     )
 
-    from agent_kernel.drivers.base import ExecutionContext
+    from weaver_kernel.drivers.base import ExecutionContext
 
     ctx = ExecutionContext(capability_id="secrets.read", principal_id="u1")
     with pytest.raises(DriverError, match="permission denied"):
@@ -242,7 +242,7 @@ async def test_http_transport_retries_after_connection_drop() -> None:
         max_http_retries=1,
     )
 
-    from agent_kernel.drivers.base import ExecutionContext
+    from weaver_kernel.drivers.base import ExecutionContext
 
     ctx = ExecutionContext(capability_id="echo", principal_id="u1")
     result = await driver.execute(ctx)
@@ -319,7 +319,7 @@ async def test_real_fastmcp_in_process_discover_and_execute() -> None:
     assert add_cap.impl is not None
     assert add_cap.impl.operation == "add"
 
-    from agent_kernel.drivers.base import ExecutionContext
+    from weaver_kernel.drivers.base import ExecutionContext
 
     ctx = ExecutionContext(
         capability_id="math.add",

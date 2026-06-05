@@ -15,8 +15,8 @@ pip install "weaver-kernel[mcp]"
 ```python
 import asyncio
 
-from agent_kernel import CapabilityRegistry, Kernel, StaticRouter
-from agent_kernel.drivers.mcp import MCPDriver
+from weaver_kernel import CapabilityRegistry, Kernel, StaticRouter
+from weaver_kernel.drivers.mcp import MCPDriver
 
 
 async def main() -> None:
@@ -49,8 +49,8 @@ asyncio.run(main())
 ```python
 import asyncio
 
-from agent_kernel import CapabilityRegistry, Kernel, StaticRouter
-from agent_kernel.drivers.mcp import MCPDriver
+from weaver_kernel import CapabilityRegistry, Kernel, StaticRouter
+from weaver_kernel.drivers.mcp import MCPDriver
 
 
 async def main() -> None:
@@ -95,7 +95,7 @@ asyncio.run(main())
 The built-in `HTTPDriver` supports GET, POST, PUT, DELETE:
 
 ```python
-from agent_kernel.drivers.http import HTTPDriver, HTTPEndpoint
+from weaver_kernel.drivers.http import HTTPDriver, HTTPEndpoint
 
 driver = HTTPDriver(driver_id="my_api")
 driver.register_endpoint("users.list", HTTPEndpoint(
@@ -131,7 +131,7 @@ When mapping MCP tools to capabilities, prefer task-shaped names:
 
 ## LLM tool-format adapters
 
-`agent_kernel.adapters` converts `Capability` objects into the tool shapes
+`weaver_kernel.adapters` converts `Capability` objects into the tool shapes
 expected by OpenAI and Anthropic, and routes the matching tool-call objects
 back through the kernel pipeline (grant → invoke → firewall → trace). The
 adapters are pure dict transforms — there is **no runtime dependency** on the
@@ -154,7 +154,7 @@ firewall — it is *not* used as an input schema source.
 ```python
 from pydantic import BaseModel, Field
 
-from agent_kernel import Capability, SafetyClass
+from weaver_kernel import Capability, SafetyClass
 
 
 class ListInvoicesArgs(BaseModel):
@@ -176,7 +176,7 @@ list_invoices = Capability(
 ```python
 import asyncio
 
-from agent_kernel import Kernel, OpenAIMiddleware, Principal
+from weaver_kernel import Kernel, OpenAIMiddleware, Principal
 
 
 async def main() -> None:
@@ -259,7 +259,7 @@ accepts `null` as a valid value for such fields, so the LLM can effectively
 ```python
 import asyncio
 
-from agent_kernel import AnthropicMiddleware, Kernel, Principal
+from weaver_kernel import AnthropicMiddleware, Kernel, Principal
 
 
 async def main() -> None:
@@ -330,7 +330,7 @@ exception.
 
 ## OpenTelemetry
 
-`agent_kernel.instrument_kernel(kernel)` wraps `Kernel.invoke` and
+`weaver_kernel.instrument_kernel(kernel)` wraps `Kernel.invoke` and
 `Kernel.grant_capability` with OTel spans + metrics. The optional
 `[otel]` extra brings in `opentelemetry-api`; everything is a strict
 no-op when the extra is not installed.
@@ -342,7 +342,7 @@ pip install 'weaver-kernel[otel]' opentelemetry-sdk \
 ```
 
 ```python
-from agent_kernel import Kernel, instrument_kernel
+from weaver_kernel import Kernel, instrument_kernel
 
 kernel = Kernel(registry=...)
 instrument_kernel(kernel)
@@ -353,14 +353,14 @@ instrument_kernel(kernel)
 
 | Telemetry | Name | Notes |
 |-----------|------|-------|
-| Span | `agent_kernel.invoke` | attrs: `principal_id`, `capability_id`, `response_mode`, `dry_run` |
-| Span | `agent_kernel.grant` | attrs: `principal_id`, `capability_id` |
-| Counter | `agent_kernel.invocations` | labels: `capability_id`, `status` (`success`/`error`) |
-| Histogram | `agent_kernel.invocation_duration` | unit: ms |
-| Counter | `agent_kernel.policy_denials` | labels: `capability_id`, `reason_code` |
+| Span | `weaver_kernel.invoke` | attrs: `principal_id`, `capability_id`, `response_mode`, `dry_run` |
+| Span | `weaver_kernel.grant` | attrs: `principal_id`, `capability_id` |
+| Counter | `weaver_kernel.invocations` | labels: `capability_id`, `status` (`success`/`error`) |
+| Histogram | `weaver_kernel.invocation_duration` | unit: ms |
+| Counter | `weaver_kernel.policy_denials` | labels: `capability_id`, `reason_code` |
 
 `instrument_kernel` is idempotent — calling twice on the same kernel is a
-no-op. Use `agent_kernel.otel.reset_instrumentation(kernel)` in tests to
+no-op. Use `weaver_kernel.otel.reset_instrumentation(kernel)` in tests to
 re-instrument with a different provider.
 
 ## Ecosystem integration patterns

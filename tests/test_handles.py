@@ -6,14 +6,14 @@ import datetime
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     HandleConstraintViolation,
     HandleExpired,
     HandleNotFound,
     HandleStore,
 )
-from agent_kernel.models import Handle
-from agent_kernel.policy_reasons import DenialReason
+from weaver_kernel.models import Handle
+from weaver_kernel.policy_reasons import DenialReason
 
 
 @pytest.fixture()

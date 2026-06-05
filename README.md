@@ -4,22 +4,32 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+**Least-privilege, revocable, principal-scoped authorization for agent tool calls — with a tamper-evident audit of everything that ran.**
+
 A capability-based security kernel for AI agents operating in large tool ecosystems (MCP, A2A, 1000+ tools).
+
+Every tool call gets a **capability token** (HMAC-signed, time-bounded, scoped to one principal and one capability) and a **tamper-evident audit trace** (`ActionTrace`) recording who invoked what, under which policy decision, with what result. That **authorization + audit** layer is `agent-kernel`'s unique contribution to the [Weaver stack](#part-of-the-weaver-stack) — neither `contextweaver` nor `AgentFence` provides it.
+
+### Why `agent-kernel` and not `contextweaver` or `AgentFence`?
+
+- **`contextweaver`** decides *what context the LLM sees*. **`agent-kernel`** decides *what the agent is allowed to run, and proves what it ran.*
+- **`AgentFence`** is an external proxy that gates tool calls *at the process boundary*. **`agent-kernel`** is the *in-process* runtime that mints the capability token, enforces policy, firewalls the result, and writes the audit trace — compiled into your agent host.
+- They compose: author policy once and enforce it both embedded (`agent-kernel`) and at the edge (`AgentFence`); produce a `Frame` in `agent-kernel` and let `contextweaver` do budgeted selection over it. See the boundary notes below.
 
 ## 30-second pitch
 
 Modern AI agents face three hard problems when given access to hundreds or thousands of tools:
 
-1. **Context blowup** — raw tool output floods the LLM context window.
+1. **No authorization or audit** — nothing scopes what a tool call may do, and there's no record of what ran, when, and why.
 2. **Tool-space interference** — agents accidentally invoke the wrong tool or escalate privileges.
-3. **No audit trail** — there's no record of what ran, when, and why.
+3. **Context blowup** — raw tool output floods the LLM context window.
 
-`agent-kernel` solves all three with a thin, composable layer that sits above your tool execution layer:
+`agent-kernel` solves all three with a thin, composable layer that sits above your tool execution layer. The first two features are its **unique, non-overlapping contribution**; the last two it *also* provides, with explicit boundaries against its siblings:
 
-- **Capability Tokens** — HMAC-signed, time-bounded, principal-scoped. No token → no execution.
-- **Policy Engine** — READ/WRITE/DESTRUCTIVE safety classes + PII/PCI sensitivity handling.
-- **Context Firewall** — raw driver output is *never* returned to the LLM; always a bounded `Frame`.
-- **Audit Trail** — every invocation creates an `ActionTrace` retrievable via `kernel.explain()`.
+- **Capability Tokens** *(unique to agent-kernel)* — HMAC-signed, time-bounded, principal-scoped. No token → no execution.
+- **Audit Trail** *(unique to agent-kernel)* — every invocation creates an `ActionTrace` retrievable via `kernel.explain()`.
+- **Policy Engine** *(boundary vs AgentFence)* — READ/WRITE/DESTRUCTIVE safety classes + PII/PCI sensitivity handling, enforced **in-process**. `AgentFence` enforces an equivalent gate at the **external boundary**; the goal is to author one policy and enforce it both places (shared-policy contract — [#111](https://github.com/dgenio/agent-kernel/issues/111)).
+- **Context Firewall** *(boundary vs contextweaver)* — raw driver output is *never* returned to the LLM; always a bounded `Frame`. `agent-kernel` is the **producer** of the canonical `Frame` at the execution boundary; `contextweaver` is a **consumer** that does budgeted selection over Frames — deliberate layering, not redundancy (canonical-`Frame` seam — [#110](https://github.com/dgenio/agent-kernel/issues/110)).
 
 ## Architecture
 
@@ -35,25 +45,72 @@ graph LR
     K -->|record| AUD["Audit Trace"]
 ```
 
+## Part of the Weaver Stack
+
+`agent-kernel` is the **execution / authorization runtime** of the **Weaver
+stack** — a set of composable, independently usable projects for building safe
+LLM-agent systems. On the request path:
+
+```
+contextweaver  ─►  ChainWeaver   ─►  agent-kernel        ─►  AgentFence
+(select &          (deterministic     (capability tokens,     (external policy
+ compile context)   tool chains)        policy, firewall,       gate at the edge)
+                                         tamper-evident audit)
+```
+
+| Project | Role in the stack |
+|---|---|
+| [contextweaver](https://github.com/dgenio/contextweaver) | Selects and compiles the context the LLM sees. |
+| ChainWeaver | Orchestrates deterministic multi-step tool chains. |
+| **agent-kernel** *(this repo)* | Authorizes, executes, firewalls, and audits tool calls in-process. |
+| [AgentFence](https://github.com/dgenio/AgentFence) | Enforces a policy gate at the external process boundary. |
+| [weaver-spec](https://github.com/dgenio/weaver-spec) | The shared contracts (invariants; capability/token/`Frame`/policy) the others conform to. |
+
+**Standalone by design.** `agent-kernel` has no hard dependency on any sibling
+project — its only runtime dependencies are `httpx` and `pydantic`. Use it on
+its own, or compose it with the rest of the stack; the siblings interoperate
+through the shared [weaver-spec](https://github.com/dgenio/weaver-spec)
+contracts, not through tight coupling. A deeper, per-project comparison —
+including *when not* to reach for `agent-kernel` — is in
+[How this relates to neighboring projects](#how-this-relates-to-neighboring-projects).
+
 ## Quickstart
 
 ```bash
 pip install weaver-kernel
 ```
 
-> **Note:** The PyPI package is `weaver-kernel` (Weaver ecosystem), but the Python import remains `agent_kernel`.
+```python
+import weaver_kernel
+```
+
+> ### 📦 Repo ↔ package ↔ import — read this once
+>
+> | Where you see it | Name |
+> |---|---|
+> | GitHub repository | `dgenio/agent-kernel` |
+> | PyPI — what you `pip install` | **`weaver-kernel`** |
+> | Python — what you `import` | **`weaver_kernel`** |
+>
+> **Decision (2026-06):** the install name and the import name are unified on
+> **`weaver-kernel` / `weaver_kernel`** — the two names you actually type. There
+> is **no `agent_kernel` import any more**; use `weaver_kernel`. The GitHub repo
+> keeps its historical `agent-kernel` slug for now (GitHub redirects old URLs);
+> the package is part of the [**Weaver stack**](#part-of-the-weaver-stack), which
+> is why the distribution is `weaver-`prefixed. See
+> [docs/architecture.md](docs/architecture.md#naming) for the full rationale.
 
 > **New here?** [docs/tutorial.md](docs/tutorial.md) walks through register → grant → invoke → expand → explain in five minutes.
 
 ```python
 import asyncio, os
-os.environ["AGENT_KERNEL_SECRET"] = "my-secret"
+os.environ["WEAVER_KERNEL_SECRET"] = "my-secret"
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability, CapabilityRegistry,
     InMemoryDriver, Kernel, Principal, SafetyClass, StaticRouter,
 )
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.models import CapabilityRequest
 
 # 1. Register a capability
 registry = CapabilityRegistry()
@@ -178,7 +235,7 @@ See [docs/agent-context/invariants.md](docs/agent-context/invariants.md) for the
 > **v0.1 is not production-hardened for real authentication.**
 
 - HMAC tokens are tamper-evident (SHA-256) but **not encrypted**. Do not put sensitive data in token fields.
-- Set `AGENT_KERNEL_SECRET` to a strong random value in production. If unset, a random dev secret is generated per-process with a warning.
+- Set `WEAVER_KERNEL_SECRET` to a strong random value in production. If unset, a random dev secret is generated per-process with a warning.
 - PII redaction is heuristic (regex). It is not a substitute for proper data governance.
 - See [docs/security.md](docs/security.md) for the full threat model.
 

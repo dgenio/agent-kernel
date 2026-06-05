@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from agent_kernel import DriverError, InMemoryDriver
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.drivers.http import HTTPDriver, HTTPEndpoint
+from weaver_kernel import DriverError, InMemoryDriver
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.drivers.http import HTTPDriver, HTTPEndpoint
 
 # ── InMemoryDriver ─────────────────────────────────────────────────────────────
 
@@ -139,7 +139,7 @@ async def test_httpdriver_execute_get(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=mock_response)
 
-    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",
@@ -174,7 +174,7 @@ async def test_httpdriver_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> 
     error = httpx.HTTPStatusError("Server Error", request=MagicMock(), response=mock_response)
     mock_client.get = AsyncMock(side_effect=error)
 
-    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",
@@ -200,7 +200,7 @@ async def test_httpdriver_execute_post() -> None:
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.post = AsyncMock(return_value=mock_response)
 
-    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",
@@ -227,7 +227,7 @@ async def test_httpdriver_execute_put() -> None:
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.put = AsyncMock(return_value=mock_response)
 
-    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",
@@ -254,7 +254,7 @@ async def test_httpdriver_execute_delete() -> None:
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.delete = AsyncMock(return_value=mock_response)
 
-    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",
@@ -281,7 +281,7 @@ async def test_httpdriver_execute_patch_uses_request() -> None:
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.request = AsyncMock(return_value=mock_response)
 
-    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",
@@ -307,7 +307,7 @@ async def test_httpdriver_request_error_raises() -> None:
         side_effect=httpx.ConnectError("Connection refused", request=MagicMock())
     )
 
-    with patch("agent_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=mock_client):
         ctx = ExecutionContext(
             capability_id="cap.x",
             principal_id="u1",

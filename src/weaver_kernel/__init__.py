@@ -5,40 +5,40 @@ Public API
 
 Core classes::
 
-    from agent_kernel import Kernel, CapabilityRegistry
-    from agent_kernel import Capability, Principal
-    from agent_kernel import SafetyClass, SensitivityTag
+    from weaver_kernel import Kernel, CapabilityRegistry
+    from weaver_kernel import Capability, Principal
+    from weaver_kernel import SafetyClass, SensitivityTag
 
 Token management::
 
-    from agent_kernel import HMACTokenProvider, CapabilityToken
+    from weaver_kernel import HMACTokenProvider, CapabilityToken
 
 Policy::
 
-    from agent_kernel import DefaultPolicyEngine, DeclarativePolicyEngine
-    from agent_kernel import PolicyDecisionTrace, PolicyTraceStep
-    from agent_kernel import DenialReason, AllowReason
+    from weaver_kernel import DefaultPolicyEngine, DeclarativePolicyEngine
+    from weaver_kernel import PolicyDecisionTrace, PolicyTraceStep
+    from weaver_kernel import DenialReason, AllowReason
 
 Firewall::
 
-    from agent_kernel import Firewall, Budgets, BudgetManager
+    from weaver_kernel import Firewall, Budgets, BudgetManager
 
 Handles & traces::
 
-    from agent_kernel import HandleStore, TraceStore
+    from weaver_kernel import HandleStore, TraceStore
 
 LLM tool-format adapters::
 
-    from agent_kernel import OpenAIMiddleware, AnthropicMiddleware
+    from weaver_kernel import OpenAIMiddleware, AnthropicMiddleware
 
 Federation (capability marketplace)::
 
-    from agent_kernel import CapabilityManifest, CapabilityDescriptor
-    from agent_kernel import build_manifest, import_manifest, TrustPolicy
+    from weaver_kernel import CapabilityManifest, CapabilityDescriptor
+    from weaver_kernel import build_manifest, import_manifest, TrustPolicy
 
 Errors::
 
-    from agent_kernel import (
+    from weaver_kernel import (
         AgentKernelError,
         TokenExpired, TokenInvalid, TokenScopeError, TokenRevoked,
         PolicyDenied, PolicyConfigError,
@@ -144,7 +144,7 @@ from .trace import TraceStore
 
 # Single source of truth: read the version from the installed distribution
 # metadata (the PyPI dist name is ``weaver-kernel``, distinct from the import
-# name ``agent_kernel``) so it never drifts from ``pyproject.toml``.
+# name ``weaver_kernel``) so it never drifts from ``pyproject.toml``.
 try:
     __version__ = _pkg_version("weaver-kernel")
 except PackageNotFoundError:  # pragma: no cover - source tree without dist metadata

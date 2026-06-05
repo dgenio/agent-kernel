@@ -1,7 +1,7 @@
 """The :class:`Kernel` — the main entry point for agent-kernel.
 
 The class lives in this package's ``__init__.py`` so existing imports
-(``from agent_kernel.kernel import Kernel``) continue to work after the
+(``from weaver_kernel.kernel import Kernel``) continue to work after the
 split from a single-file module into a sub-package. Heavy
 implementation is delegated to sibling modules (:mod:`._invoke`,
 :mod:`._dry_run`) to honour AGENTS.md's ≤ 300-line module budget.
@@ -249,7 +249,7 @@ class Kernel:
         Yields :class:`Frame` chunks as they arrive from the driver. The last
         yielded frame has ``is_final=True``. Falls back to wrapping a
         single-shot :meth:`Driver.execute` when the resolved driver does not
-        implement :class:`~agent_kernel.drivers.base.StreamingDriver`.
+        implement :class:`~weaver_kernel.drivers.base.StreamingDriver`.
 
         The same security pipeline applies as in :meth:`invoke`: token
         verification, admin-mode gate, budget escalation, firewall

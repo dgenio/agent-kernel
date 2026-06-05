@@ -1,4 +1,4 @@
-"""Tests for OpenTelemetry instrumentation (:func:`agent_kernel.instrument_kernel`).
+"""Tests for OpenTelemetry instrumentation (:func:`weaver_kernel.instrument_kernel`).
 
 These tests use the OpenTelemetry SDK's ``InMemorySpanExporter`` and
 ``InMemoryMetricReader`` so we don't need a running collector. They
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     OTEL_AVAILABLE,
     Capability,
     CapabilityRegistry,
@@ -28,9 +28,9 @@ from agent_kernel import (
     StaticRouter,
     instrument_kernel,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.models import CapabilityRequest
-from agent_kernel.otel import reset_instrumentation
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.models import CapabilityRequest
+from weaver_kernel.otel import reset_instrumentation
 
 if not OTEL_AVAILABLE:  # pragma: no cover - skipped without the [otel] extra
     pytest.skip(
@@ -108,7 +108,7 @@ async def test_instrumented_invoke_emits_span(
         InMemorySpanExporter, InMemoryMetricReader, TracerProvider, MeterProvider
     ],
 ) -> None:
-    """`Kernel.invoke()` produces one ``agent_kernel.invoke`` span."""
+    """`Kernel.invoke()` produces one ``weaver_kernel.invoke`` span."""
     spans, _, tp, mp = otel_exporters
     kernel, principal = _build_kernel()
     instrument_kernel(kernel, tracer_provider=tp, meter_provider=mp)
@@ -118,13 +118,13 @@ async def test_instrumented_invoke_emits_span(
     await kernel.invoke(token, principal=principal, args={})
 
     finished = spans.get_finished_spans()
-    invoke_spans = [s for s in finished if s.name == "agent_kernel.invoke"]
+    invoke_spans = [s for s in finished if s.name == "weaver_kernel.invoke"]
     assert len(invoke_spans) == 1, [s.name for s in finished]
     attrs = invoke_spans[0].attributes or {}
-    assert attrs.get("agent_kernel.principal_id") == "otel-user"
-    assert attrs.get("agent_kernel.capability_id") == "metrics.read"
-    assert attrs.get("agent_kernel.response_mode") == "summary"
-    assert attrs.get("agent_kernel.dry_run") is False
+    assert attrs.get("weaver_kernel.principal_id") == "otel-user"
+    assert attrs.get("weaver_kernel.capability_id") == "metrics.read"
+    assert attrs.get("weaver_kernel.response_mode") == "summary"
+    assert attrs.get("weaver_kernel.dry_run") is False
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_uninstrumented_invoke_emits_no_span(
         InMemorySpanExporter, InMemoryMetricReader, TracerProvider, MeterProvider
     ],
 ) -> None:
-    """A kernel that was never wrapped emits zero ``agent_kernel.*`` spans."""
+    """A kernel that was never wrapped emits zero ``weaver_kernel.*`` spans."""
     spans, _, _, _ = otel_exporters
     kernel, principal = _build_kernel()
     # Deliberately do NOT call instrument_kernel.
@@ -143,7 +143,7 @@ async def test_uninstrumented_invoke_emits_no_span(
     await kernel.invoke(token, principal=principal, args={})
 
     finished = spans.get_finished_spans()
-    invoke_spans = [s for s in finished if s.name.startswith("agent_kernel.")]
+    invoke_spans = [s for s in finished if s.name.startswith("weaver_kernel.")]
     assert invoke_spans == []
 
 
@@ -169,13 +169,13 @@ def test_instrumented_grant_records_denial(
     reader = Principal(principal_id="reader-only", roles=["reader"])
     req = CapabilityRequest(capability_id="metrics.write", goal="t")
 
-    from agent_kernel.errors import PolicyDenied
+    from weaver_kernel.errors import PolicyDenied
 
     with pytest.raises(PolicyDenied):
         kernel.grant_capability(req, reader, justification="too short")
 
     finished = spans.get_finished_spans()
-    grant_spans = [s for s in finished if s.name == "agent_kernel.grant"]
+    grant_spans = [s for s in finished if s.name == "weaver_kernel.grant"]
     assert len(grant_spans) == 1
     assert grant_spans[0].status.status_code.name == "ERROR"
 

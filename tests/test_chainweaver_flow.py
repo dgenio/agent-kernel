@@ -16,8 +16,8 @@ from types import ModuleType
 
 import pytest
 
-from agent_kernel import Principal
-from agent_kernel.errors import DriverError
+from weaver_kernel import Principal
+from weaver_kernel.errors import DriverError
 
 _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 

@@ -17,7 +17,7 @@ import logging
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -27,7 +27,7 @@ from agent_kernel import (
     SafetyClass,
     StaticRouter,
 )
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.models import CapabilityRequest
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ async def test_no_secret_material_in_logs(
     for the HMAC secret and token signatures."""
     req = CapabilityRequest(capability_id="log.read", goal="read log")
 
-    with caplog.at_level(logging.DEBUG, logger="agent_kernel"):
+    with caplog.at_level(logging.DEBUG, logger="weaver_kernel"):
         grant = log_kernel.grant_capability(req, reader, justification="")
         frame = await log_kernel.invoke(
             grant.token,
@@ -162,10 +162,10 @@ def test_grant_capability_emits_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     req = CapabilityRequest(capability_id="log.write", goal="write log")
-    with caplog.at_level(logging.INFO, logger="agent_kernel.kernel"):
+    with caplog.at_level(logging.INFO, logger="weaver_kernel.kernel"):
         log_kernel.grant_capability(req, writer, justification="long enough justification here")
 
-    records = [r for r in caplog.records if r.name == "agent_kernel.kernel"]
+    records = [r for r in caplog.records if r.name == "weaver_kernel.kernel"]
     assert any(r.levelno == logging.INFO for r in records), (
         "Expected INFO record from grant_capability"
     )
@@ -189,10 +189,10 @@ async def test_invoke_emits_info(
     req = CapabilityRequest(capability_id="log.read", goal="read")
     token = log_kernel.get_token(req, reader, justification="")
 
-    with caplog.at_level(logging.INFO, logger="agent_kernel.kernel"):
+    with caplog.at_level(logging.INFO, logger="weaver_kernel.kernel"):
         await log_kernel.invoke(token, principal=reader, args={})
 
-    kernel_records = [r for r in caplog.records if r.name == "agent_kernel.kernel"]
+    kernel_records = [r for r in caplog.records if r.name == "weaver_kernel.kernel"]
     assert any("invoke_start" in r.getMessage() for r in kernel_records), (
         "Expected invoke_start log record"
     )
@@ -215,11 +215,11 @@ async def test_expand_emits_info(
     frame = await log_kernel.invoke(token, principal=reader, args={})
     assert frame.handle is not None
 
-    with caplog.at_level(logging.INFO, logger="agent_kernel.kernel"):
+    with caplog.at_level(logging.INFO, logger="weaver_kernel.kernel"):
         log_kernel.expand(frame.handle, query={}, principal=reader)
 
     assert any(
-        "expand" in r.getMessage() for r in caplog.records if r.name == "agent_kernel.kernel"
+        "expand" in r.getMessage() for r in caplog.records if r.name == "weaver_kernel.kernel"
     ), "Expected 'expand' log record"
 
 
@@ -236,11 +236,11 @@ async def test_explain_emits_info(
     token = log_kernel.get_token(req, reader, justification="")
     frame = await log_kernel.invoke(token, principal=reader, args={})
 
-    with caplog.at_level(logging.INFO, logger="agent_kernel.kernel"):
+    with caplog.at_level(logging.INFO, logger="weaver_kernel.kernel"):
         log_kernel.explain(frame.action_id)
 
     assert any(
-        "explain" in r.getMessage() for r in caplog.records if r.name == "agent_kernel.kernel"
+        "explain" in r.getMessage() for r in caplog.records if r.name == "weaver_kernel.kernel"
     ), "Expected 'explain' log record"
 
 
@@ -251,13 +251,13 @@ def test_request_capabilities_emits_debug(
     log_kernel: Kernel,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.DEBUG, logger="agent_kernel.kernel"):
+    with caplog.at_level(logging.DEBUG, logger="weaver_kernel.kernel"):
         log_kernel.request_capabilities("read log")
 
     assert any(
         "request_capabilities" in r.getMessage()
         for r in caplog.records
-        if r.name == "agent_kernel.kernel"
+        if r.name == "weaver_kernel.kernel"
     ), "Expected 'request_capabilities' DEBUG log record"
 
 
@@ -271,10 +271,10 @@ def test_policy_denial_logged_at_warning(
 ) -> None:
     """A WRITE capability denial should log WARNING with principal_id and capability_id."""
     req = CapabilityRequest(capability_id="log.write", goal="write")
-    from agent_kernel import PolicyDenied
+    from weaver_kernel import PolicyDenied
 
     with (
-        caplog.at_level(logging.WARNING, logger="agent_kernel.policy"),
+        caplog.at_level(logging.WARNING, logger="weaver_kernel.policy"),
         pytest.raises(PolicyDenied),
     ):
         log_kernel.grant_capability(req, reader, justification="short")
@@ -282,7 +282,7 @@ def test_policy_denial_logged_at_warning(
     warning_records = [
         r
         for r in caplog.records
-        if r.name == "agent_kernel.policy" and r.levelno == logging.WARNING
+        if r.name == "weaver_kernel.policy" and r.levelno == logging.WARNING
     ]
     assert warning_records, "Expected WARNING log record for policy denial"
     rec = warning_records[0]
@@ -296,11 +296,11 @@ def test_policy_allow_logged_at_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     req = CapabilityRequest(capability_id="log.read", goal="read")
-    with caplog.at_level(logging.INFO, logger="agent_kernel.policy"):
+    with caplog.at_level(logging.INFO, logger="weaver_kernel.policy"):
         log_kernel.grant_capability(req, reader, justification="")
 
     info_records = [
-        r for r in caplog.records if r.name == "agent_kernel.policy" and r.levelno == logging.INFO
+        r for r in caplog.records if r.name == "weaver_kernel.policy" and r.levelno == logging.INFO
     ]
     assert info_records, "Expected INFO log record for policy approval"
     rec = info_records[0]
@@ -313,11 +313,13 @@ def test_policy_allow_logged_at_info(
 
 def test_token_issuance_logged_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     provider = HMACTokenProvider(secret="test-secret-12345")
-    with caplog.at_level(logging.DEBUG, logger="agent_kernel.tokens"):
+    with caplog.at_level(logging.DEBUG, logger="weaver_kernel.tokens"):
         token = provider.issue("cap.x", "user-1")
 
     debug_records = [
-        r for r in caplog.records if r.name == "agent_kernel.tokens" and r.levelno == logging.DEBUG
+        r
+        for r in caplog.records
+        if r.name == "weaver_kernel.tokens" and r.levelno == logging.DEBUG
     ]
     assert debug_records, "Expected DEBUG record for token issuance"
     rec = debug_records[0]
@@ -334,10 +336,10 @@ def test_token_verification_failure_logged_at_warning(
     provider = HMACTokenProvider(secret="test-secret-12345")
     token = provider.issue("cap.x", "user-1", ttl_seconds=-1)
 
-    from agent_kernel import TokenExpired
+    from weaver_kernel import TokenExpired
 
     with (
-        caplog.at_level(logging.WARNING, logger="agent_kernel.tokens"),
+        caplog.at_level(logging.WARNING, logger="weaver_kernel.tokens"),
         pytest.raises(TokenExpired),
     ):
         provider.verify(
@@ -349,7 +351,7 @@ def test_token_verification_failure_logged_at_warning(
     warning_records = [
         r
         for r in caplog.records
-        if r.name == "agent_kernel.tokens" and r.levelno == logging.WARNING
+        if r.name == "weaver_kernel.tokens" and r.levelno == logging.WARNING
     ]
     assert warning_records, "Expected WARNING record for token verification failure"
     rec = warning_records[0]
@@ -362,11 +364,13 @@ def test_token_verification_failure_logged_at_warning(
 
 def test_router_resolution_logged_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     router = StaticRouter(routes={"cap.x": ["driver-a", "driver-b"]})
-    with caplog.at_level(logging.DEBUG, logger="agent_kernel.router"):
+    with caplog.at_level(logging.DEBUG, logger="weaver_kernel.router"):
         plan = router.route("cap.x")
 
     debug_records = [
-        r for r in caplog.records if r.name == "agent_kernel.router" and r.levelno == logging.DEBUG
+        r
+        for r in caplog.records
+        if r.name == "weaver_kernel.router" and r.levelno == logging.DEBUG
     ]
     assert debug_records, "Expected DEBUG record from router"
     rec = debug_records[0]
@@ -386,10 +390,10 @@ async def test_firewall_transform_logged_at_debug(
     req = CapabilityRequest(capability_id="log.read", goal="read")
     token = log_kernel.get_token(req, reader, justification="")
 
-    with caplog.at_level(logging.DEBUG, logger="agent_kernel.firewall.transform"):
+    with caplog.at_level(logging.DEBUG, logger="weaver_kernel.firewall.transform"):
         await log_kernel.invoke(token, principal=reader, args={})
 
-    fw_records = [r for r in caplog.records if r.name == "agent_kernel.firewall.transform"]
+    fw_records = [r for r in caplog.records if r.name == "weaver_kernel.firewall.transform"]
     assert fw_records, "Expected DEBUG records from firewall transform"
     modes = {r.getMessage() for r in fw_records}
     assert any("firewall_transform" in m or "firewall_redaction" in m for m in modes)
@@ -406,13 +410,13 @@ async def test_destructive_grant_invoke_logging(
 ) -> None:
     """Admin grants DESTRUCTIVE capability; both grant and invoke emit INFO logs."""
     req = CapabilityRequest(capability_id="log.destroy", goal="destroy log")
-    with caplog.at_level(logging.INFO, logger="agent_kernel"):
+    with caplog.at_level(logging.INFO, logger="weaver_kernel"):
         grant = log_kernel.grant_capability(
             req, admin, justification="destroying old logs for compliance cleanup"
         )
         await log_kernel.invoke(grant.token, principal=admin, args={})
 
-    kernel_records = [r for r in caplog.records if r.name == "agent_kernel.kernel"]
+    kernel_records = [r for r in caplog.records if r.name == "weaver_kernel.kernel"]
     assert any("grant_capability" in r.getMessage() for r in kernel_records)
     grant_rec = next(r for r in kernel_records if "grant_capability" in r.getMessage())
     assert grant_rec.capability_id == "log.destroy"  # type: ignore[attr-defined]
@@ -426,11 +430,11 @@ def test_destructive_denial_logging(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A reader denied DESTRUCTIVE capability emits policy_denied WARNING."""
-    from agent_kernel import PolicyDenied
+    from weaver_kernel import PolicyDenied
 
     req = CapabilityRequest(capability_id="log.destroy", goal="destroy log")
     with (
-        caplog.at_level(logging.WARNING, logger="agent_kernel.policy"),
+        caplog.at_level(logging.WARNING, logger="weaver_kernel.policy"),
         pytest.raises(PolicyDenied),
     ):
         log_kernel.grant_capability(req, reader, justification="short")
@@ -438,7 +442,7 @@ def test_destructive_denial_logging(
     warning_records = [
         r
         for r in caplog.records
-        if r.name == "agent_kernel.policy" and r.levelno == logging.WARNING
+        if r.name == "weaver_kernel.policy" and r.levelno == logging.WARNING
     ]
     assert warning_records, "Expected WARNING log for DESTRUCTIVE denial"
     rec = warning_records[0]
@@ -455,11 +459,11 @@ async def test_no_debug_noise_at_info_level(
     reader: Principal,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """At INFO level, no DEBUG records should appear from agent_kernel modules."""
+    """At INFO level, no DEBUG records should appear from weaver_kernel modules."""
     req = CapabilityRequest(capability_id="log.read", goal="read")
     token = log_kernel.get_token(req, reader, justification="")
 
-    with caplog.at_level(logging.INFO, logger="agent_kernel"):
+    with caplog.at_level(logging.INFO, logger="weaver_kernel"):
         await log_kernel.invoke(token, principal=reader, args={})
 
     debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]

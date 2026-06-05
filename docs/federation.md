@@ -14,7 +14,7 @@
 A single kernel can:
 
 1. **Advertise** its capabilities as a JSON-serialisable
-   [`CapabilityManifest`](../src/agent_kernel/models.py).
+   [`CapabilityManifest`](../src/weaver_kernel/models.py).
 2. **Import** another kernel's manifest, registering each capability locally
    and routing invocations through a caller-supplied driver
    (typically [`HTTPDriver`](integrations.md) or
@@ -34,7 +34,7 @@ imported capabilities:
 ## Publishing a manifest
 
 ```python
-from agent_kernel import (
+from weaver_kernel import (
     Capability, CapabilityRegistry, HMACTokenProvider, Kernel,
     SafetyClass, SensitivityTag,
 )
@@ -76,7 +76,7 @@ print(manifest.to_dict())
 
 The manifest deliberately omits internal driver IDs, operation names,
 `parameters_model` Python references, and `tool_hints`. Only the
-[`CapabilityDescriptor`](../src/agent_kernel/models.py) projection of each
+[`CapabilityDescriptor`](../src/weaver_kernel/models.py) projection of each
 capability is published.
 
 ## Importing a manifest
@@ -85,10 +85,10 @@ capability is published.
 import json
 
 import httpx
-from agent_kernel import (
+from weaver_kernel import (
     CapabilityManifest, CapabilityRegistry, HMACTokenProvider, Kernel,
 )
-from agent_kernel.drivers.http import HTTPDriver, HTTPEndpoint
+from weaver_kernel.drivers.http import HTTPDriver, HTTPEndpoint
 
 # 1. Fetch the manifest by whatever transport suits you.
 raw = httpx.get("https://agent-b.example/kernel/manifest").json()
@@ -145,11 +145,11 @@ their own capability records and want the canonical strictest-wins union.
 
 ## Reference
 
-- Models: [`CapabilityDescriptor`](../src/agent_kernel/models.py),
-  [`CapabilityManifest`](../src/agent_kernel/models.py).
-- Functions: [`build_manifest`](../src/agent_kernel/federation.py),
-  [`import_manifest`](../src/agent_kernel/federation.py),
-  [`merge_sensitivity`](../src/agent_kernel/federation.py).
+- Models: [`CapabilityDescriptor`](../src/weaver_kernel/models.py),
+  [`CapabilityManifest`](../src/weaver_kernel/models.py).
+- Functions: [`build_manifest`](../src/weaver_kernel/federation.py),
+  [`import_manifest`](../src/weaver_kernel/federation.py),
+  [`merge_sensitivity`](../src/weaver_kernel/federation.py).
 - Kernel methods: `Kernel.advertise()`, `Kernel.import_remote()`,
   `Kernel.kernel_id`.
 - Errors: `FederationError`, `ManifestError`, `TrustPolicyError`.
@@ -169,7 +169,7 @@ The discovery layer on top of the local marketplace adds two pieces:
    registry URL that returns a JSON list of peer URLs.
 
 ```python
-from agent_kernel import discover_peers, sign_manifest, serve_manifest_payload
+from weaver_kernel import discover_peers, sign_manifest, serve_manifest_payload
 
 # Publisher side — expose the manifest from any ASGI framework.
 @app.get("/kernel/manifest")
@@ -210,9 +210,9 @@ authority.
 
 ### Reference
 
-- Functions: [`discover_peers`](../src/agent_kernel/federation_discovery.py),
-  [`sign_manifest`](../src/agent_kernel/federation_discovery.py),
-  [`verify_manifest`](../src/agent_kernel/federation_discovery.py),
-  [`serve_manifest_payload`](../src/agent_kernel/federation_discovery.py).
+- Functions: [`discover_peers`](../src/weaver_kernel/federation_discovery.py),
+  [`sign_manifest`](../src/weaver_kernel/federation_discovery.py),
+  [`verify_manifest`](../src/weaver_kernel/federation_discovery.py),
+  [`serve_manifest_payload`](../src/weaver_kernel/federation_discovery.py).
 - Kernel methods: `Kernel.discover_peers()`.
 - New errors: `ManifestSignatureError`, `DiscoveryError`.

@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING — import renamed `agent_kernel` → `weaver_kernel` (#106).** The
+  package you `import` now matches the package you `pip install`
+  (`weaver-kernel`). Update imports from `agent_kernel...` to `weaver_kernel...`.
+  The `AGENT_KERNEL_SECRET` environment variable is likewise renamed to
+  `WEAVER_KERNEL_SECRET`. The OpenTelemetry span, metric, and attribute names
+  (`agent_kernel.*` → `weaver_kernel.*`) and the library's logger namespaces are
+  likewise renamed — update any dashboards, alerts, or log filters keyed on the
+  old names. No behavioral change beyond the rename. The GitHub
+  repository keeps its `agent-kernel` slug for now (GitHub redirects old URLs);
+  a settings rename to `weaver-kernel` is the optional final step.
+
 ### Added
+- README repositioned to lead with the unique **capability-token + tamper-evident
+  audit** value, with explicit boundary framing for the policy engine (vs
+  `AgentFence`, #111) and the context firewall (vs `contextweaver`, #110) so a
+  fresh reader can tell why `agent-kernel` exists alongside its siblings (#102).
+- Standardized **"Part of the Weaver Stack"** README section with the shared
+  request-path diagram (contextweaver → ChainWeaver → agent-kernel → AgentFence)
+  and an explicit standalone-use / no-hard-sibling-dependency statement (#109).
+  *(Setting the `weaver-stack` GitHub topic is a repo-settings action outside
+  this PR.)*
+- A prominent repo↔package↔import explainer at the install step in the README
+  (also the PyPI long description) plus a `## Naming` section in
+  [`docs/architecture.md`](docs/architecture.md) documenting the unification
+  decision; PyPI keywords now carry both `weaver-kernel` and `agent-kernel`
+  (#106).
 - Two more ecosystem integration cookbooks under `docs/integrations/`, each with
   a runnable, offline companion wired into `make ci`:
   - **ChainWeaver compiled flows as capabilities** (#95): a `ChainWeaverDriver`
@@ -65,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Capability marketplace, part 1 — manifest format & local registry: new
   `CapabilityDescriptor` and `CapabilityManifest` dataclasses (both
   JSON-round-trippable via `to_dict`/`from_dict`), new
-  `agent_kernel.federation` module with `build_manifest()`,
+  `weaver_kernel.federation` module with `build_manifest()`,
   `import_manifest()`, and `merge_sensitivity()`, and new `Kernel.advertise()`
   / `Kernel.import_remote()` methods. `Kernel` gained a `kernel_id`
   argument used as the manifest publisher identity. Three trust policies
@@ -80,14 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protocol and a namespace section in
   [`docs/capabilities.md`](docs/capabilities.md).
 - Capability marketplace, part 2 — federated discovery: new
-  `agent_kernel.federation_discovery` module with `discover_peers()`,
+  `weaver_kernel.federation_discovery` module with `discover_peers()`,
   `sign_manifest()`, `verify_manifest()`, `serve_manifest_payload()`, and
   `DiscoveryRateLimiter`. `Kernel.discover_peers()` fetches one or more
   manifests over HTTP from peer URLs or a registry URL. Signed envelopes
   (HMAC-SHA256) detect tampering and let importers refuse unsigned
   manifests when a verification secret is in play (and vice versa). New
   errors `ManifestSignatureError` and `DiscoveryError`. (#51, closes #49)
-- OpenTelemetry integration: new `agent_kernel.otel` module with
+- OpenTelemetry integration: new `weaver_kernel.otel` module with
   `instrument_kernel(kernel)` that wraps `Kernel.invoke` and
   `Kernel.grant_capability` with OTel spans + metrics (invocation count,
   latency histogram, denial counter). No-op when the optional `[otel]`
@@ -116,11 +142,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RateLimiter` and rate-limit constants extracted from `policy.py` into
   a new `rate_limit.py` module; `policy.py` continues to re-export them
   under their original names. (#68)
-- Tech debt: `kernel.py` split into the `agent_kernel.kernel` sub-package
+- Tech debt: `kernel.py` split into the `weaver_kernel.kernel` sub-package
   to honour AGENTS.md's ≤ 300-line module bar. The `Kernel` class lives
   in `kernel/__init__.py`; heavy methods (invoke pipeline, dry-run,
   federation, streaming) delegate to sibling modules. Existing
-  `from agent_kernel import Kernel` / `from agent_kernel.kernel import Kernel`
+  `from weaver_kernel import Kernel` / `from weaver_kernel.kernel import Kernel`
   imports are unchanged. (#68)
 
 ### Documentation
@@ -136,7 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/agent-context/architecture.md` from "`httpx` only" to
   "`httpx` + `pydantic`", pointing to `AGENTS.md` as the canonical dependency
   policy. (#90)
-- The `agent_kernel` module docstring's `Errors::` block now lists every
+- The `weaver_kernel` module docstring's `Errors::` block now lists every
   exported error class — added `TokenRevoked`, `AdapterParseError`,
   `CapabilityAlreadyRegistered`, `HandleConstraintViolation`,
   `ManifestSignatureError`, and `DiscoveryError`. (#91)
@@ -145,7 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added explicit dry-run regression tests for `HTTPDriver` and `MCPDriver`,
   pinning the kernel's driver-agnostic dry-run short-circuit. (#68)
 - `tests/test_public_api.py` — asserts every error class exported via `__all__`
-  appears in the `agent_kernel` module docstring, preventing public-API
+  appears in the `weaver_kernel` module docstring, preventing public-API
   docstring drift. (#91)
 - `tests/test_readme_quickstart.py` — extracts the README quickstart code block
   and executes it, asserting the documented output so the inline snippet cannot
@@ -178,7 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   auto-formatting. `AGENTS.md`, `docs/agent-context/workflows.md`,
   `docs/agent-context/review-checklist.md`, `CONTRIBUTING.md`, and the
   `README.md` development section are updated to describe the new chain. (#88)
-- `agent_kernel.__version__` is now derived from the installed distribution
+- `weaver_kernel.__version__` is now derived from the installed distribution
   metadata (`importlib.metadata.version("weaver-kernel")`) instead of a
   hand-maintained literal, so it can no longer drift from `pyproject.toml`
   (it previously reported `0.5.0` while the package shipped `0.7.0`/`0.8.0`).
@@ -230,7 +256,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HANDLE_PRINCIPAL_MISMATCH`, `MEMORY_WRITE_REQUIRES_WRITER`,
   `MEMORY_SENSITIVE_READ_DENIED`.
 - `HandleConstraintViolation` error class (subclass of `AgentKernelError`,
-  exported from `agent_kernel`) — carries an optional `reason_code` matching
+  exported from `weaver_kernel`) — carries an optional `reason_code` matching
   the `DenialReason` vocabulary so handle-side and grant-side denials share
   one set of stable codes.
 - `Kernel.expand` accepts an optional `principal: Principal` argument that
@@ -277,8 +303,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no raw argument values. `DryRunResult.policy_decision`
   also carries a synthesized single-step trace. (#73)
 - Stable machine-readable denial reason codes: new `DenialReason` and
-  `AllowReason` enums in `agent_kernel.policy_reasons` (also exported as
-  `from agent_kernel import DenialReason, AllowReason`). Every built-in
+  `AllowReason` enums in `weaver_kernel.policy_reasons` (also exported as
+  `from weaver_kernel import DenialReason, AllowReason`). Every built-in
   denial path on `DefaultPolicyEngine` and `DeclarativePolicyEngine` populates
   `PolicyDecision.reason_code`, `DenialExplanation.reason_code`,
   `FailedCondition.reason_code`, and `PolicyDenied.reason_code`. Tests should
@@ -325,7 +351,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per `AGENTS.md` ("never raise bare ValueError to callers").
 - New public exports: `BudgetManager`, `BudgetExhausted`, `BudgetConfigError`, `TokenCounter`,
   `default_token_counter`, and `Kernel.budget` accessor property.
-- LLM tool-format adapters and middleware (`agent_kernel.adapters`): `OpenAIMiddleware` (OpenAI
+- LLM tool-format adapters and middleware (`weaver_kernel.adapters`): `OpenAIMiddleware` (OpenAI
   Responses API + Chat Completions, auto-detected on input) and `AnthropicMiddleware` (Anthropic
   Messages with `cache_control` support). Both translate `Capability` objects to vendor tool
   schemas, route tool calls through the full kernel pipeline (grant → invoke → firewall → trace),
@@ -360,7 +386,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Kernel.explain_denial()` convenience method that calls the policy engine's `explain()` for a given
   `CapabilityRequest` and `Principal` without requiring a token. Raises `AgentKernelError` when the
   configured engine does not implement `explain()`.
-- New public types exported from `agent_kernel`: `DeclarativePolicyEngine`, `ExplainingPolicyEngine`,
+- New public types exported from `weaver_kernel`: `DeclarativePolicyEngine`, `ExplainingPolicyEngine`,
   `PolicyEngine`, `PolicyMatch`, `PolicyRule`, `DenialExplanation`, `FailedCondition`, `DryRunResult`,
   `PolicyConfigError`.
 - `policy` optional extra (`pip install weaver-kernel[policy]`) pulls in `pyyaml` and `tomli` (Python 3.10).
@@ -368,14 +394,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Runtime dependencies now include `pydantic>=2` in addition to `httpx`. Pydantic is used by the new
-  `agent_kernel.adapters` package for JSON-Schema generation and argument validation when a
+  `weaver_kernel.adapters` package for JSON-Schema generation and argument validation when a
   `Capability` declares a `parameters_model`. Existing kernel behavior is unchanged; pydantic is not
   imported at module load by anything outside the adapters.
 - `PolicyEngine` protocol no longer requires `explain()`. Engines that need to support
   `Kernel.explain_denial()` should implement the new `ExplainingPolicyEngine` protocol. Built-in
   engines satisfy both. This avoids a breaking typing change for downstream implementers.
 - `DeclarativePolicyEngine` now defers `yaml` and `tomllib`/`tomli` imports into the corresponding
-  loaders, so `import agent_kernel` works without the `policy` extra installed. Calling
+  loaders, so `import weaver_kernel` works without the `policy` extra installed. Calling
   `from_yaml`/`from_toml` without the parser surfaces a `PolicyConfigError` with an install hint.
 - `Kernel.invoke(dry_run=True)` resolves `operation` the same way drivers do
   (`args.get("operation", capability_id)`) so `DryRunResult.operation` matches what a driver would

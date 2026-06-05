@@ -9,7 +9,7 @@ from .models import ActionTrace
 class TraceStore:
     """Stores :class:`ActionTrace` records indexed by ``action_id``.
 
-    All invocations recorded by the :class:`~agent_kernel.kernel.Kernel` are
+    All invocations recorded by the :class:`~weaver_kernel.kernel.Kernel` are
     retrievable here for audit and explainability purposes.
     """
 

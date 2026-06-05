@@ -13,7 +13,7 @@ type:
 	python -m mypy src/
 
 test:
-	python -m pytest -q --cov=agent_kernel
+	python -m pytest -q --cov=weaver_kernel
 
 example:
 	python examples/basic_cli.py

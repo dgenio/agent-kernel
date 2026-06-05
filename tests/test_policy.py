@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     AgentKernelError,
     Capability,
     DeclarativePolicyEngine,
@@ -19,8 +19,8 @@ from agent_kernel import (
     SafetyClass,
     SensitivityTag,
 )
-from agent_kernel.models import CapabilityRequest
-from agent_kernel.policy import RateLimiter
+from weaver_kernel.models import CapabilityRequest
+from weaver_kernel.policy import RateLimiter
 
 
 def _req(cap_id: str, **constraints: object) -> CapabilityRequest:
@@ -293,7 +293,7 @@ def test_memory_read_project_scope_allowed(engine: DefaultPolicyEngine) -> None:
 
 def test_memory_read_sensitive_denied_without_role(engine: DefaultPolicyEngine) -> None:
     """Reading sensitive-scoped memory requires memory_reader_sensitive."""
-    from agent_kernel.policy_reasons import DenialReason
+    from weaver_kernel.policy_reasons import DenialReason
 
     p = Principal(principal_id="u1", roles=["reader"])
     cap = _cap("memory.read", SafetyClass.READ, SensitivityTag.MEMORY)
@@ -319,7 +319,7 @@ def test_memory_read_sensitive_allowed_with_admin(engine: DefaultPolicyEngine) -
 def test_memory_write_denied_without_writer_role(engine: DefaultPolicyEngine) -> None:
     """memory.write requires the memory_writer role even when SafetyClass=WRITE
     would otherwise be satisfied by a generic writer."""
-    from agent_kernel.policy_reasons import DenialReason
+    from weaver_kernel.policy_reasons import DenialReason
 
     p = Principal(principal_id="u1", roles=["writer"])
     cap = _cap("memory.write", SafetyClass.WRITE, SensitivityTag.MEMORY)
@@ -349,7 +349,7 @@ def test_memory_write_allowed_with_admin(engine: DefaultPolicyEngine) -> None:
 
 def test_memory_destructive_requires_writer(engine: DefaultPolicyEngine) -> None:
     """DESTRUCTIVE memory (e.g. memory.forget) is treated as write-class."""
-    from agent_kernel.policy_reasons import DenialReason
+    from weaver_kernel.policy_reasons import DenialReason
 
     p = Principal(principal_id="u1", roles=["admin"])
     # admin passes the DESTRUCTIVE safety_class. The MEMORY branch then needs
@@ -370,7 +370,7 @@ def test_memory_destructive_requires_writer(engine: DefaultPolicyEngine) -> None
 
 def test_memory_explain_lists_failed_conditions() -> None:
     """explain() lists the memory denial alongside the FailedCondition reason_code."""
-    from agent_kernel.policy_reasons import DenialReason
+    from weaver_kernel.policy_reasons import DenialReason
 
     eng = DefaultPolicyEngine()
     p = Principal(principal_id="u1", roles=["reader"])
@@ -1379,7 +1379,7 @@ def test_declarative_from_toml_install_hint(monkeypatch: pytest.MonkeyPatch) -> 
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-from agent_kernel import AllowReason, DenialReason  # noqa: E402
+from weaver_kernel import AllowReason, DenialReason  # noqa: E402
 
 
 class TestDefaultEngineReasonCodes:

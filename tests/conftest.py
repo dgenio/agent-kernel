@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -16,8 +16,8 @@ from agent_kernel import (
     StaticRouter,
     make_billing_driver,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.models import ImplementationRef
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.models import ImplementationRef
 
 # ── Capabilities ───────────────────────────────────────────────────────────────
 

@@ -6,7 +6,7 @@ is copy-pasteable; the runnable companion is
 [`examples/tutorial.py`](../examples/tutorial.py) (covered by CI).
 
 > The PyPI package is **`weaver-kernel`** but the Python import is
-> **`agent_kernel`**. We use both names in this document.
+> **`weaver_kernel`**. We use both names in this document.
 
 ## What you'll learn
 
@@ -44,7 +44,7 @@ reproducible:
 
 ```python
 import os
-os.environ["AGENT_KERNEL_SECRET"] = "tutorial-secret-do-not-use-in-prod"
+os.environ["WEAVER_KERNEL_SECRET"] = "tutorial-secret-do-not-use-in-prod"
 ```
 
 ## 1. Register a capability
@@ -55,7 +55,7 @@ firewall how to treat the data. `allowed_fields` is the projection the
 firewall applies before any row reaches the LLM.
 
 ```python
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     ImplementationRef,
@@ -87,8 +87,8 @@ registry.register(
 `HTTPDriver` or `MCPDriver` — see step 8.
 
 ```python
-from agent_kernel import HMACTokenProvider, InMemoryDriver, Kernel, StaticRouter
-from agent_kernel.drivers.base import ExecutionContext
+from weaver_kernel import HMACTokenProvider, InMemoryDriver, Kernel, StaticRouter
+from weaver_kernel.drivers.base import ExecutionContext
 
 INVOICES = [
     {"id": "INV-001", "customer_name": "Alice", "email": "alice@example.com", "amount": 120.0, "status": "paid"},
@@ -114,7 +114,7 @@ for any PII-tagged capability. Without it, the grant is denied with
 `reason_code="missing_tenant_attribute"`.
 
 ```python
-from agent_kernel import Principal
+from weaver_kernel import Principal
 
 alice = Principal(principal_id="alice", roles=["reader"], attributes={"tenant": "acme"})
 ```
@@ -125,7 +125,7 @@ alice = Principal(principal_id="alice", roles=["reader"], attributes={"tenant": 
 `CapabilityToken`. No token, no invocation.
 
 ```python
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.models import CapabilityRequest
 
 request = CapabilityRequest(capability_id="billing.invoices.list", goal="list recent invoices")
 token = kernel.get_token(request, alice, justification="")
@@ -198,7 +198,7 @@ print(expanded.table_preview)
 Asking for a disallowed field is rejected with a stable `reason_code`:
 
 ```python
-from agent_kernel.errors import HandleConstraintViolation
+from weaver_kernel.errors import HandleConstraintViolation
 
 try:
     kernel.expand(handle_frame.handle, query={"fields": ["email"]}, principal=alice)
@@ -218,7 +218,7 @@ denial carries both a human-readable `reason` and a stable
 `reason_code` your code can branch on.
 
 ```python
-from agent_kernel.errors import PolicyDenied
+from weaver_kernel.errors import PolicyDenied
 
 registry.register(
     Capability(
@@ -242,7 +242,7 @@ except PolicyDenied as exc:
     print(str(exc))          # "WRITE capabilities require the 'writer' or 'admin' role..."
 ```
 
-Stable reason codes come from `agent_kernel.policy_reasons.DenialReason`.
+Stable reason codes come from `weaver_kernel.policy_reasons.DenialReason`.
 Tests should assert on the code, not on the human-readable string.
 
 ## 8. Audit with `explain()`
@@ -265,7 +265,7 @@ firewall behave identically. To talk to a real MCP server, replace
 Streamable HTTP, live in [`docs/integrations.md`](integrations.md)):
 
 ```python
-from agent_kernel.drivers.mcp import MCPDriver
+from weaver_kernel.drivers.mcp import MCPDriver
 
 driver = MCPDriver.from_stdio(
     command="python",

@@ -51,7 +51,7 @@ When a change touches one of these areas, verify the related files stay aligned:
 | Policy rules or `SensitivityTag` | `docs/capabilities.md`, `AGENTS.md` security rules |
 | Firewall behavior | `docs/context_firewall.md`, `AGENTS.md` security rules |
 | Driver Protocol | `docs/integrations.md`, `AGENTS.md` driver how-to |
-| `pyproject.toml` version | `src/agent_kernel/__init__.py` `__version__` |
+| `pyproject.toml` version | `src/weaver_kernel/__init__.py` `__version__` |
 | Dependency list | `AGENTS.md` (justification required) |
 | Error classes | `errors.py` naming convention (must end with `Error`) |
 | Review checklist items | `.github/copilot-instructions.md` review checklist |

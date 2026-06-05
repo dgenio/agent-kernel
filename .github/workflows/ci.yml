@@ -38,7 +38,7 @@ jobs:
         run: mypy src/
 
       - name: Test (pytest)
-        run: python -m pytest -q --cov=agent_kernel --cov-report=term-missing
+        run: python -m pytest -q --cov=weaver_kernel --cov-report=term-missing
 
       - name: Examples
         run: |
@@ -71,7 +71,7 @@ jobs:
       # weaver_contracts.conformance does not yet exist (dgenio/weaver-spec#4).
       # Replace this step with:
       #   pip install weaver-contracts          # PyPI dist name uses a hyphen
-      #   python -m weaver_contracts.conformance --target agent_kernel
+      #   python -m weaver_contracts.conformance --target weaver_kernel
       - name: weaver-spec conformance suite (stub)
         run: |
           echo "weaver-contracts 0.2.0 is on PyPI; weaver_contracts.conformance runner not yet available (dgenio/weaver-spec#4)."

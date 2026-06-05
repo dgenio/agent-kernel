@@ -86,7 +86,7 @@ preserved so audit can still confirm an action took place.
 > **v0.1 is not production-hardened for real authentication.**
 
 - HMAC tokens are tamper-evident but **not encrypted**. Do not put sensitive data in token fields.
-- The `AGENT_KERNEL_SECRET` must be kept secret. Rotate it if compromised.
+- The `WEAVER_KERNEL_SECRET` must be kept secret. Rotate it if compromised.
 - The default `InMemoryDriver` has no persistence — suitable for testing only.
 - PII redaction is heuristic (regex-based). It is not a substitute for proper data governance.
 - Rate limiting is enforced per `(principal_id, capability_id)` pair using a sliding window.

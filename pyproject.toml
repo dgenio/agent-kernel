@@ -10,7 +10,20 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "agent-kernel contributors" }]
-keywords = ["ai", "agents", "mcp", "security", "capabilities", "llm"]
+keywords = [
+    "ai",
+    "agents",
+    "mcp",
+    "security",
+    "capabilities",
+    "capability-based-security",
+    "authorization",
+    "audit",
+    "llm",
+    "weaver-stack",
+    "weaver-kernel",
+    "agent-kernel",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -55,7 +68,7 @@ policy = [
 tiktoken = ["tiktoken>=0.6"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_kernel"]
+packages = ["src/weaver_kernel"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

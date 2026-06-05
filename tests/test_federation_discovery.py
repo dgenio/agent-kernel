@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     DiscoveryError,
@@ -34,8 +34,8 @@ from agent_kernel import (
     sign_manifest,
     verify_manifest,
 )
-from agent_kernel.federation import build_manifest
-from agent_kernel.models import CapabilityManifest
+from weaver_kernel.federation import build_manifest
+from weaver_kernel.models import CapabilityManifest
 
 
 def _build_test_manifest() -> CapabilityManifest:
@@ -283,7 +283,7 @@ async def test_kernel_discover_peers_integration() -> None:
 
     # Monkey-patch where the kernel sub-module imported `discover_peers`,
     # not the source module — `_federation.py` already bound a local name.
-    import agent_kernel.kernel._federation as kf
+    import weaver_kernel.kernel._federation as kf
 
     original = kf.discover_peers
 
@@ -337,9 +337,9 @@ def test_kernel_scoped_hmac_isolation_for_imported_capability() -> None:
     kernel_b.import_remote(manifest, driver=InMemoryDriver(driver_id="dummy-b"))
 
     # Mint a token on kernel A.
-    from agent_kernel import Principal
-    from agent_kernel.errors import TokenInvalid
-    from agent_kernel.models import CapabilityRequest
+    from weaver_kernel import Principal
+    from weaver_kernel.errors import TokenInvalid
+    from weaver_kernel.models import CapabilityRequest
 
     principal = Principal(principal_id="alice", roles=["reader"])
     req = CapabilityRequest(capability_id="metrics.read", goal="t")
@@ -367,7 +367,7 @@ async def test_signed_envelope_payload_is_canonical_json() -> None:
 @pytest.mark.asyncio
 async def test_verify_manifest_rejects_malformed_envelope() -> None:
     """Missing keys produce a clear error."""
-    from agent_kernel.errors import ManifestError
+    from weaver_kernel.errors import ManifestError
 
     with pytest.raises(ManifestError, match="missing required key"):
         verify_manifest({"signature": "x"}, secret="s")

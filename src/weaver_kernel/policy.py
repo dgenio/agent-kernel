@@ -77,7 +77,7 @@ class ExplainingPolicyEngine(PolicyEngine, Protocol):
     answer :meth:`Kernel.explain_denial`.
 
     Both built-in engines (:class:`DefaultPolicyEngine` and
-    :class:`agent_kernel.DeclarativePolicyEngine`) satisfy this protocol.
+    :class:`weaver_kernel.DeclarativePolicyEngine`) satisfy this protocol.
     """
 
     def explain(

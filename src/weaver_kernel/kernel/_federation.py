@@ -23,7 +23,7 @@ from ..models import Capability, CapabilityManifest
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
 
-logger = logging.getLogger("agent_kernel.kernel")
+logger = logging.getLogger("weaver_kernel.kernel")
 
 
 def perform_advertise(

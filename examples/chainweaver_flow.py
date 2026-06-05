@@ -34,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HMACTokenProvider,
@@ -43,9 +43,9 @@ from agent_kernel import (
     SafetyClass,
     StaticRouter,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.errors import DriverError
-from agent_kernel.models import CapabilityRequest, ImplementationRef, RawResult
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.errors import DriverError
+from weaver_kernel.models import CapabilityRequest, ImplementationRef, RawResult
 
 _SECRET = "example-secret-do-not-use-in-prod"
 
@@ -58,7 +58,7 @@ class FlowExecutionError(Exception):
 
     Carries the orchestration context a real ChainWeaver error would: which
     flow failed and at which step. The :class:`ChainWeaverDriver` translates
-    this into a kernel :class:`~agent_kernel.errors.DriverError` so the context
+    this into a kernel :class:`~weaver_kernel.errors.DriverError` so the context
     survives into the audit trail instead of leaking a raw stack trace.
     """
 
@@ -110,7 +110,7 @@ class ChainWeaverDriver:
     Operations map to compiled flows. ``execute`` runs the flow named by
     ``ctx.args['operation']`` (falling back to ``ctx.capability_id``) with the
     remaining args as inputs. A :class:`FlowExecutionError` is re-raised as a
-    :class:`~agent_kernel.errors.DriverError` that keeps the flow id and failing
+    :class:`~weaver_kernel.errors.DriverError` that keeps the flow id and failing
     step, so the orchestration context is preserved for the caller and the
     audit trail.
     """

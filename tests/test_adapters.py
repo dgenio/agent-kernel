@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, Field
 
-from agent_kernel import (
+from weaver_kernel import (
     AdapterParseError,
     AnthropicMiddleware,
     Capability,
@@ -25,17 +25,17 @@ from agent_kernel import (
     SensitivityTag,
     ToolHints,
 )
-from agent_kernel.adapters import (
+from weaver_kernel.adapters import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from agent_kernel.adapters import (
+from weaver_kernel.adapters import (
     anthropic as anthropic_mod,
 )
-from agent_kernel.adapters import (
+from weaver_kernel.adapters import (
     openai as openai_mod,
 )
-from agent_kernel.adapters._base import (
+from weaver_kernel.adapters._base import (
     build_input_schema,
     error_to_payload,
     frame_to_payload,
@@ -44,7 +44,7 @@ from agent_kernel.adapters._base import (
     restore_namespace,
     validate_input,
 )
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.models import CapabilityRequest
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -865,8 +865,8 @@ async def test_middleware_input_validation_surfaces_as_tool_error(
     registry = CapabilityRegistry()
     registry.register(cap)
 
-    from agent_kernel import HMACTokenProvider, InMemoryDriver, StaticRouter
-    from agent_kernel.drivers.base import ExecutionContext
+    from weaver_kernel import HMACTokenProvider, InMemoryDriver, StaticRouter
+    from weaver_kernel.drivers.base import ExecutionContext
 
     driver = InMemoryDriver(driver_id="memory")
 
@@ -936,7 +936,7 @@ async def test_post_hook_exception_is_logged_not_raised(
 
     mw = OpenAIMiddleware(kernel, reader_principal)
     mw.intercept_tool_result(bad)
-    with caplog.at_level("WARNING", logger="agent_kernel.adapters._base"):
+    with caplog.at_level("WARNING", logger="weaver_kernel.adapters._base"):
         outputs = await mw.handle_tool_calls(
             [
                 {
@@ -956,9 +956,9 @@ async def test_post_hook_exception_is_logged_not_raised(
 @pytest.mark.asyncio
 async def test_driver_error_surfaces_as_tool_error(reader_principal: Principal) -> None:
     """A DriverError is converted to a tool-result error, not raised."""
-    from agent_kernel import HMACTokenProvider, InMemoryDriver, StaticRouter
-    from agent_kernel.drivers.base import ExecutionContext
-    from agent_kernel.errors import DriverError
+    from weaver_kernel import HMACTokenProvider, InMemoryDriver, StaticRouter
+    from weaver_kernel.drivers.base import ExecutionContext
+    from weaver_kernel.errors import DriverError
 
     registry = CapabilityRegistry()
     registry.register(
@@ -1100,7 +1100,7 @@ def test_frame_to_payload_shape(kernel: Kernel) -> None:
     """frame_to_payload returns the canonical JSON shape both adapters share."""
     import datetime
 
-    from agent_kernel.models import Frame, Handle
+    from weaver_kernel.models import Frame, Handle
 
     handle = Handle(
         handle_id="h-1",

@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityRegistry,
     HandleStore,
@@ -33,8 +33,8 @@ from agent_kernel import (
     StaticRouter,
     TraceStore,
 )
-from agent_kernel.firewall.transform import Firewall
-from agent_kernel.models import CapabilityRequest, Handle, RawResult
+from weaver_kernel.firewall.transform import Firewall
+from weaver_kernel.models import CapabilityRequest, Handle, RawResult
 
 # Fake values — these strings exist nowhere except this test file. Any test
 # failure that prints them is loud about which boundary leaked.

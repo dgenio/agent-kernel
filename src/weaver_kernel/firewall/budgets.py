@@ -1,9 +1,9 @@
 """Per-invocation firewall budget caps.
 
 Defines :class:`Budgets`, the dataclass enforced by the
-:class:`~agent_kernel.firewall.transform.Firewall` when shaping a single
-:class:`~agent_kernel.models.Frame`. Cross-invocation cumulative tracking
-lives in :mod:`agent_kernel.firewall.budget_manager`.
+:class:`~weaver_kernel.firewall.transform.Firewall` when shaping a single
+:class:`~weaver_kernel.models.Frame`. Cross-invocation cumulative tracking
+lives in :mod:`weaver_kernel.firewall.budget_manager`.
 """
 
 from __future__ import annotations

@@ -220,8 +220,8 @@ def format_result(
     """Wrap a payload dict in an OpenAI tool-result envelope.
 
     *payload* should already be the canonical kernel-result body produced by
-    :func:`agent_kernel.adapters._base.frame_to_payload` or
-    :func:`agent_kernel.adapters._base.error_to_payload`.
+    :func:`weaver_kernel.adapters._base.frame_to_payload` or
+    :func:`weaver_kernel.adapters._base.error_to_payload`.
     """
     body = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
     if format == "chat_completions":

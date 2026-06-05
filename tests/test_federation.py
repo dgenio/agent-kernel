@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from agent_kernel import (
+from weaver_kernel import (
     Capability,
     CapabilityDescriptor,
     CapabilityManifest,
@@ -26,9 +26,9 @@ from agent_kernel import (
     import_manifest,
     merge_sensitivity,
 )
-from agent_kernel.drivers.base import ExecutionContext
-from agent_kernel.federation import MANIFEST_VERSION
-from agent_kernel.models import CapabilityRequest
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.federation import MANIFEST_VERSION
+from weaver_kernel.models import CapabilityRequest
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -378,8 +378,8 @@ def test_kernel_import_remote_registers_driver_and_route() -> None:
 
 def test_import_remote_requires_mutable_router() -> None:
     """A router without add_route() cannot make imports routable — fail clean."""
-    from agent_kernel import FederationError
-    from agent_kernel.models import RoutePlan
+    from weaver_kernel import FederationError
+    from weaver_kernel.models import RoutePlan
 
     class _ReadOnlyRouter:
         """Conforms to the Router Protocol (route only); cannot accept new routes."""

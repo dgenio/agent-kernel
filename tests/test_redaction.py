@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_kernel.firewall.redaction import (
+from weaver_kernel.firewall.redaction import (
     _API_KEY_RE,
     _BEARER_RE,
     _CARD_RE,

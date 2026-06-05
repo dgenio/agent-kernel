@@ -14,19 +14,19 @@ Span tree
 
 ``invoke()`` produces::
 
-    agent_kernel.invoke
+    weaver_kernel.invoke
       ├── attributes: principal_id, capability_id, safety_class,
       │              response_mode, dry_run
-      ├── agent_kernel.driver.execute (per driver attempt)
-      └── agent_kernel.firewall.apply
+      ├── weaver_kernel.driver.execute (per driver attempt)
+      └── weaver_kernel.firewall.apply
 
 Metrics
 -------
 
-* ``agent_kernel.invocations`` (counter) — labels:
+* ``weaver_kernel.invocations`` (counter) — labels:
   ``capability_id``, ``status`` (``success``/``error``/``denied``).
-* ``agent_kernel.invocation_duration`` (histogram, milliseconds).
-* ``agent_kernel.policy_denials`` (counter) — labels: ``capability_id``,
+* ``weaver_kernel.invocation_duration`` (histogram, milliseconds).
+* ``weaver_kernel.policy_denials`` (counter) — labels: ``capability_id``,
   ``reason_code``.
 
 Usage
@@ -34,7 +34,7 @@ Usage
 
 .. code-block:: python
 
-    from agent_kernel import Kernel, instrument_kernel
+    from weaver_kernel import Kernel, instrument_kernel
 
     kernel = Kernel(registry=...)
     instrument_kernel(kernel)  # idempotent — calling again is a no-op.
@@ -83,13 +83,13 @@ except ImportError:  # pragma: no cover - exercised in the no-extra environment
 
 # Attribute keys (re-used across spans). Kept as module constants so a
 # downstream search/grep finds every emission site.
-ATTR_PRINCIPAL = "agent_kernel.principal_id"
-ATTR_CAPABILITY = "agent_kernel.capability_id"
-ATTR_SAFETY_CLASS = "agent_kernel.safety_class"
-ATTR_RESPONSE_MODE = "agent_kernel.response_mode"
-ATTR_DRY_RUN = "agent_kernel.dry_run"
-ATTR_DRIVER_ID = "agent_kernel.driver_id"
-ATTR_REASON_CODE = "agent_kernel.reason_code"
+ATTR_PRINCIPAL = "weaver_kernel.principal_id"
+ATTR_CAPABILITY = "weaver_kernel.capability_id"
+ATTR_SAFETY_CLASS = "weaver_kernel.safety_class"
+ATTR_RESPONSE_MODE = "weaver_kernel.response_mode"
+ATTR_DRY_RUN = "weaver_kernel.dry_run"
+ATTR_DRIVER_ID = "weaver_kernel.driver_id"
+ATTR_REASON_CODE = "weaver_kernel.reason_code"
 
 # Module-level cache so repeat :func:`instrument_kernel` calls are
 # cheap idempotent no-ops on the same instance. A WeakSet keys on the
@@ -130,24 +130,24 @@ def instrument_kernel(
     _INSTRUMENTED.add(kernel)
 
     if tracer_provider is not None:
-        tracer = tracer_provider.get_tracer("agent_kernel")
+        tracer = tracer_provider.get_tracer("weaver_kernel")
     else:
-        tracer = trace.get_tracer("agent_kernel")
+        tracer = trace.get_tracer("weaver_kernel")
     if meter_provider is not None:
-        meter = meter_provider.get_meter("agent_kernel")
+        meter = meter_provider.get_meter("weaver_kernel")
     else:
-        meter = metrics.get_meter("agent_kernel")
+        meter = metrics.get_meter("weaver_kernel")
     invocations = meter.create_counter(
-        "agent_kernel.invocations",
+        "weaver_kernel.invocations",
         description="Count of Kernel.invoke calls, labeled by status",
     )
     duration_hist = meter.create_histogram(
-        "agent_kernel.invocation_duration",
+        "weaver_kernel.invocation_duration",
         unit="ms",
         description="Latency of Kernel.invoke (milliseconds)",
     )
     denials = meter.create_counter(
-        "agent_kernel.policy_denials",
+        "weaver_kernel.policy_denials",
         description="Count of policy denials, labeled by reason_code",
     )
 
@@ -169,7 +169,7 @@ def instrument_kernel(
             ATTR_RESPONSE_MODE: response_mode,
             ATTR_DRY_RUN: dry_run,
         }
-        with tracer.start_as_current_span("agent_kernel.invoke", attributes=attributes) as span:
+        with tracer.start_as_current_span("weaver_kernel.invoke", attributes=attributes) as span:
             try:
                 # ``response_mode`` here is a runtime str, so mypy can't pick the
                 # right overload of ``Kernel.invoke``. The wrapper preserves the
@@ -209,7 +209,7 @@ def instrument_kernel(
             ATTR_PRINCIPAL: principal.principal_id,
             ATTR_CAPABILITY: request.capability_id,
         }
-        with tracer.start_as_current_span("agent_kernel.grant", attributes=attributes) as span:
+        with tracer.start_as_current_span("weaver_kernel.grant", attributes=attributes) as span:
             try:
                 return original_grant(request, principal, justification=justification)
             except Exception as exc:
