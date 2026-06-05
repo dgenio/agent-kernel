@@ -1,5 +1,25 @@
 # Architecture
 
+## Naming
+
+This project carries three related names; they are deliberately reconciled:
+
+| Where you see it | Name |
+|---|---|
+| GitHub repository | `dgenio/agent-kernel` |
+| PyPI distribution (`pip install`) | `weaver-kernel` |
+| Python import | `weaver_kernel` |
+
+**Decision (2026-06):** the install name and the import name are unified on
+`weaver-kernel` / `weaver_kernel` — the two strings a user actually types — so
+`pip install weaver-kernel` is followed by `import weaver_kernel` with no
+mismatch. There is no `agent_kernel` import any more. The `weaver-` prefix marks
+membership in the [Weaver stack](../README.md#part-of-the-weaver-stack); the
+GitHub repository keeps its historical `agent-kernel` slug (GitHub redirects old
+URLs), which is the only remaining surface where the legacy name appears. A
+repository-slug rename to `weaver-kernel` is the optional final step and can be
+done in repo settings without code changes.
+
 ## Overview
 
 `agent-kernel` is a capability-based security kernel that sits **above** raw tool execution (MCP, HTTP APIs, internal services) and **below** the LLM context window.

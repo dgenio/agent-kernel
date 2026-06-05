@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING — import renamed `agent_kernel` → `weaver_kernel` (#106).** The
+  package you `import` now matches the package you `pip install`
+  (`weaver-kernel`). Update imports from `agent_kernel...` to `weaver_kernel...`.
+  The `AGENT_KERNEL_SECRET` environment variable is likewise renamed to
+  `WEAVER_KERNEL_SECRET`. No behavioral change beyond the rename. The GitHub
+  repository keeps its `agent-kernel` slug for now (GitHub redirects old URLs);
+  a settings rename to `weaver-kernel` is the optional final step.
+
 ### Added
+- README repositioned to lead with the unique **capability-token + tamper-evident
+  audit** value, with explicit boundary framing for the policy engine (vs
+  `AgentFence`, #111) and the context firewall (vs `contextweaver`, #110) so a
+  fresh reader can tell why `agent-kernel` exists alongside its siblings (#102).
+- Standardized **"Part of the Weaver Stack"** README section with the shared
+  request-path diagram (contextweaver → ChainWeaver → agent-kernel → AgentFence)
+  and an explicit standalone-use / no-hard-sibling-dependency statement (#109).
+  *(Setting the `weaver-stack` GitHub topic is a repo-settings action outside
+  this PR.)*
+- A prominent repo↔package↔import explainer at the install step in the README
+  (also the PyPI long description) plus a `## Naming` section in
+  [`docs/architecture.md`](docs/architecture.md) documenting the unification
+  decision; PyPI keywords now carry both `weaver-kernel` and `agent-kernel`
+  (#106).
 - Two more ecosystem integration cookbooks under `docs/integrations/`, each with
   a runnable, offline companion wired into `make ci`:
   - **ChainWeaver compiled flows as capabilities** (#95): a `ChainWeaverDriver`
