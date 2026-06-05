@@ -138,5 +138,6 @@ envelope = export_action_traces(
 
 `TRACE_EXPORT_VERSION` is bumped only on a **breaking** change to the field
 shape. New optional fields may be added without a bump, so consumers should
-ignore unknown keys. Assert on `status`, `sensitivity`, and `reason`/`error`
-rather than on human-readable strings, which may evolve.
+ignore unknown keys. Assert on `status`, `sensitivity`, and the presence of
+`error` rather than on human-readable strings (the `error` text itself may
+evolve).
