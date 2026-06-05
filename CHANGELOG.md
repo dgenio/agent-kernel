@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package you `import` now matches the package you `pip install`
   (`weaver-kernel`). Update imports from `agent_kernel...` to `weaver_kernel...`.
   The `AGENT_KERNEL_SECRET` environment variable is likewise renamed to
-  `WEAVER_KERNEL_SECRET`. No behavioral change beyond the rename. The GitHub
+  `WEAVER_KERNEL_SECRET`. The OpenTelemetry span, metric, and attribute names
+  (`agent_kernel.*` → `weaver_kernel.*`) and the library's logger namespaces are
+  likewise renamed — update any dashboards, alerts, or log filters keyed on the
+  old names. No behavioral change beyond the rename. The GitHub
   repository keeps its `agent-kernel` slug for now (GitHub redirects old URLs);
   a settings rename to `weaver-kernel` is the optional final step.
 
