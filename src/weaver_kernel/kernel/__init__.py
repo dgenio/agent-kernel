@@ -234,6 +234,7 @@ class Kernel:
             args=args,
             response_mode=response_mode,
             plan=plan,
+            capability=capability,
         )
 
     async def invoke_stream(

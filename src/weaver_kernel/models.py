@@ -413,6 +413,14 @@ class ActionTrace:
     args: dict[str, Any]
     response_mode: ResponseMode
     driver_id: str
+    sensitivity: SensitivityTag = SensitivityTag.NONE
+    """Sensitivity tag of the invoked capability, copied at record time.
+
+    Lets the audit trail (and the :mod:`~weaver_kernel.trace` export contract)
+    flag which invocations touched PII/PCI/SECRETS/MEMORY data without a
+    second registry lookup. Defaults to :attr:`SensitivityTag.NONE` for traces
+    constructed directly (e.g. in tests) or for non-sensitive capabilities.
+    """
     handle_id: str | None = None
     error: str | None = None
     result_summary: dict[str, Any] | None = None

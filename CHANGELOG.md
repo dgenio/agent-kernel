@@ -20,6 +20,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a settings rename to `weaver-kernel` is the optional final step.
 
 ### Added
+- **Action trace export contract (#94).** New `export_action_trace` /
+  `export_action_traces` produce a stable, versioned, JSON-serialisable shape
+  for `ActionTrace` records so downstream tools (e.g. LessonWeaver-style lesson
+  extraction) can consume the audit trail without depending on internals. The
+  export is derived only from already-redaction-safe trace fields — `args`
+  (memory payloads stripped) and `result_summary` (post-firewall counts/flags)
+  — so it cannot widen the I-01 boundary. `ActionTrace` now carries the invoked
+  capability's `sensitivity`, and downstream human-correction metadata can be
+  attached at export time. New [`docs/trace_export.md`](docs/trace_export.md)
+  (including how it differs from the OpenTelemetry export) and
+  [`examples/trace_export_demo.py`](examples/trace_export_demo.py), wired into
+  `make ci`.
+- **Property-based invariant tests (#99).** New `tests/test_policy_properties.py`
+  uses Hypothesis to assert authorization invariants across generated
+  principals, capabilities, scopes, constraints, handles, and tokens: every
+  decision carries a stable reason code, `max_rows` never exceeds the policy
+  cap, handle expansion never exceeds the original grant (indirect-use
+  scenario), tokens never verify outside their scope and tampered/expired
+  tokens are always rejected, policy traces never leak raw scope values, and
+  the trace export is always JSON-serialisable. Adds `hypothesis` as a dev
+  dependency.
 - README repositioned to lead with the unique **capability-token + tamper-evident
   audit** value, with explicit boundary framing for the policy engine (vs
   `AgentFence`, #111) and the context firewall (vs `contextweaver`, #110) so a
