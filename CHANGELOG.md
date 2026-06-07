@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-07
+
 ### Changed
 - **BREAKING — import renamed `agent_kernel` → `weaver_kernel` (#106).** The
   package you `import` now matches the package you `pip install`
