@@ -37,6 +37,7 @@ from ..models import (
 from ..policy import DefaultPolicyEngine, PolicyEngine
 from ..registry import CapabilityRegistry
 from ..router import Router, StaticRouter
+from ..stores import TraceStoreProtocol
 from ..tokens import CapabilityToken, HMACTokenProvider, TokenProvider
 from ..trace import TraceStore
 from ._dry_run import build_dry_run_result
@@ -79,7 +80,7 @@ class Kernel:
         router: Router | None = None,
         firewall: Firewall | None = None,
         handle_store: HandleStore | None = None,
-        trace_store: TraceStore | None = None,
+        trace_store: TraceStoreProtocol | None = None,
         budget_manager: BudgetManager | None = None,
         kernel_id: str = "agent-kernel",
     ) -> None:
@@ -89,7 +90,7 @@ class Kernel:
         self._router: Router = router or StaticRouter()
         self._firewall = firewall or Firewall()
         self._handle_store = handle_store or HandleStore()
-        self._trace_store = trace_store or TraceStore()
+        self._trace_store: TraceStoreProtocol = trace_store or TraceStore()
         self._budget_manager = budget_manager
         self._drivers: dict[str, Driver] = {}
         self._kernel_id = kernel_id
@@ -450,7 +451,7 @@ class Kernel:
         return self._handle_store
 
     @property
-    def _traces(self) -> TraceStore:
+    def _traces(self) -> TraceStoreProtocol:
         return self._trace_store
 
 

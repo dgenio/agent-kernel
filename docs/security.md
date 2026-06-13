@@ -81,6 +81,34 @@ strips payload-like fields (`payload`, `content`, `value`, `memory`, `text`,
 `memory.`. Non-sensitive metadata keys (`key`, `id`, `scope`, ...) are
 preserved so audit can still confirm an action took place.
 
+## Audit-log integrity (hash chain)
+
+When traces are persisted to a durable store (`SQLiteTraceStore`,
+`JsonlTraceStore`), each record is wrapped in a hash chain: `record_hash =
+HMAC-SHA256(secret, {seq, prev_hash, trace})`, where `prev_hash` is the previous
+record's hash (the first record links to a genesis value). `verify_chain()`
+recomputes every hash and checks the linkage, so it detects:
+
+- **mutation** of any persisted record (recomputed hash diverges),
+- **insertion**, **deletion**, or **reordering** (broken `prev_hash` linkage or a
+  non-contiguous `seq`),
+
+and reports the `seq` of the first divergent record. `SQLiteTraceStore.prune()`
+removes old records while preserving verifiability of the retained suffix by
+recording the last pruned record's hash as a checkpoint.
+
+**What this is — and is not.** This is **tamper-evidence**: anyone who does not
+hold `WEAVER_KERNEL_SECRET` cannot alter the log without `verify_chain()`
+detecting it. It is **not non-repudiation**: a host that controls the secret can
+forge a self-consistent chain, and the same secret signs tokens, so the audit
+log is only as trustworthy as secret custody. It does not encrypt trace contents
+at rest, and it does not anchor the chain to an external timestamping authority.
+The chain payload is the redaction-safe export shape — chaining adds no field the
+in-memory trace did not already hold and cannot widen the I-01 boundary.
+
+The CLI exposes verification to operators: `weaver-kernel audit verify --store
+audit.db` exits non-zero on any divergence (see [cli.md](cli.md)).
+
 ## Security disclaimers
 
 > **v0.1 is not production-hardened for real authentication.**
