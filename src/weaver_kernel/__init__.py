@@ -26,6 +26,7 @@ Firewall::
 Handles & traces::
 
     from weaver_kernel import HandleStore, TraceStore
+    from weaver_kernel import export_action_trace, export_action_traces
 
 LLM tool-format adapters::
 
@@ -140,7 +141,13 @@ from .policy_reasons import AllowReason, DenialReason
 from .registry import CapabilityRegistry
 from .router import StaticRouter
 from .tokens import CapabilityToken, HMACTokenProvider
-from .trace import TraceStore
+from .trace import (
+    TRACE_EXPORT_SCHEMA,
+    TRACE_EXPORT_VERSION,
+    TraceStore,
+    export_action_trace,
+    export_action_traces,
+)
 
 # Single source of truth: read the version from the installed distribution
 # metadata (the PyPI dist name is ``weaver-kernel``, distinct from the import
@@ -250,6 +257,11 @@ __all__ = [
     # stores
     "HandleStore",
     "TraceStore",
+    # trace export (issue #94)
+    "TRACE_EXPORT_SCHEMA",
+    "TRACE_EXPORT_VERSION",
+    "export_action_trace",
+    "export_action_traces",
     # adapters
     "AnthropicMiddleware",
     "OpenAIMiddleware",

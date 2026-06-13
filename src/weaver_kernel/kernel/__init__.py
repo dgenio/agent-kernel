@@ -234,6 +234,7 @@ class Kernel:
             args=args,
             response_mode=response_mode,
             plan=plan,
+            capability=capability,
         )
 
     async def invoke_stream(
@@ -328,6 +329,16 @@ class Kernel:
         """Retrieve the audit trace for a past invocation."""
         logger.info("explain", extra={"action_id": action_id})
         return self._trace_store.get(action_id)
+
+    def list_traces(self) -> list[ActionTrace]:
+        """Return every recorded :class:`ActionTrace` in insertion order.
+
+        Public entry point for the trace export contract
+        (:func:`~weaver_kernel.export_action_traces`): downstream tools can
+        serialise the audit trail without reaching into kernel internals. See
+        ``docs/trace_export.md``.
+        """
+        return self._trace_store.list_all()
 
     def explain_denial(
         self,

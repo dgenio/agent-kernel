@@ -53,7 +53,6 @@ async def invoke_stream_impl(
     response_mode: ResponseMode,
 ) -> AsyncIterator[Frame]:
     """Stream Frames for one capability invocation."""
-    del capability  # currently unused; kept in signature for future hooks.
     action_id = str(uuid.uuid4())
     initial_mode = resolve_effective_mode(
         response_mode=response_mode,
@@ -150,6 +149,7 @@ async def invoke_stream_impl(
                 args=_redact_args_for_trace(token.capability_id, args),
                 response_mode=(last_frame.response_mode if last_frame else initial_mode),
                 driver_id=fallback_driver_id,
+                sensitivity=capability.sensitivity,
                 handle_id=handle.handle_id if handle else None,
                 result_summary=(_frame_result_summary(last_frame) if last_frame else None),
                 error=None if yielded_any else "stream produced no chunks",

@@ -138,6 +138,7 @@ See [docs/agent-context/review-checklist.md](docs/agent-context/review-checklist
 | Driver integration patterns | [docs/integrations.md](docs/integrations.md) |
 | Capability design conventions | [docs/capabilities.md](docs/capabilities.md) |
 | Context firewall details | [docs/context_firewall.md](docs/context_firewall.md) |
+| Action trace export contract | [docs/trace_export.md](docs/trace_export.md) |
 
 ## Update policy
 

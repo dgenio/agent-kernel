@@ -22,10 +22,12 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..drivers.base import Driver, ExecutionContext
+from ..enums import SensitivityTag
 from ..errors import DriverError
 from ..firewall.budget_manager import BudgetManager
 from ..models import (
     ActionTrace,
+    Capability,
     Frame,
     Handle,
     Principal,
@@ -150,6 +152,7 @@ def record_failure_trace(
     response_mode: ResponseMode,
     error_message: str,
     trace_store: TraceStore,
+    sensitivity: SensitivityTag = SensitivityTag.NONE,
 ) -> None:
     """Persist an :class:`ActionTrace` for a run where no driver succeeded."""
     trace_store.record(
@@ -162,6 +165,7 @@ def record_failure_trace(
             args=_redact_args_for_trace(capability_id, args),
             response_mode=response_mode,
             driver_id="",
+            sensitivity=sensitivity,
             error=error_message,
         )
     )
@@ -179,6 +183,7 @@ def record_success_trace(
     handle_id: str | None,
     result_summary: dict[str, Any] | None,
     trace_store: TraceStore,
+    sensitivity: SensitivityTag = SensitivityTag.NONE,
 ) -> None:
     """Persist an :class:`ActionTrace` for a successful invocation."""
     trace_store.record(
@@ -191,6 +196,7 @@ def record_success_trace(
             args=_redact_args_for_trace(capability_id, args),
             response_mode=response_mode,
             driver_id=driver_id,
+            sensitivity=sensitivity,
             handle_id=handle_id,
             result_summary=result_summary,
         )
@@ -205,6 +211,7 @@ async def perform_invoke(
     args: dict[str, Any],
     response_mode: ResponseMode,
     plan: RoutePlan,
+    capability: Capability,
 ) -> Frame:
     """Run the non-dry-run invocation pipeline end-to-end.
 
@@ -221,6 +228,9 @@ async def perform_invoke(
         args: Driver arguments.
         response_mode: The caller-requested response mode.
         plan: The router-resolved :class:`RoutePlan` for *token*.
+        capability: The resolved :class:`Capability`; its
+            :attr:`~weaver_kernel.models.Capability.sensitivity` is copied onto
+            the recorded :class:`ActionTrace`.
     """
     action_id = str(uuid.uuid4())
     effective_mode = resolve_effective_mode(
@@ -272,6 +282,7 @@ async def perform_invoke(
             response_mode=response_mode,
             error_message=err_msg,
             trace_store=kernel._traces,
+            sensitivity=capability.sensitivity,
         )
         raise DriverError(
             f"All drivers failed for capability '{token.capability_id}'. Last error: {err_msg}"
@@ -316,6 +327,7 @@ async def perform_invoke(
         handle_id=handle.handle_id if handle else None,
         result_summary=_frame_result_summary(frame),
         trace_store=kernel._traces,
+        sensitivity=capability.sensitivity,
     )
     logger.info(
         "invoke_success",
