@@ -10,7 +10,7 @@ outcomes.
 ```python
 from weaver_kernel import export_action_traces
 
-envelope = export_action_traces(kernel._traces.list_all())
+envelope = export_action_traces(kernel.list_traces())
 ```
 
 Runnable companion: [`examples/trace_export_demo.py`](../examples/trace_export_demo.py).

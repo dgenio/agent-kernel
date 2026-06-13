@@ -115,7 +115,7 @@ async def main() -> None:
     except DriverError as exc:
         print(f"failed:    {exc}")
         # The failure was still recorded; grab the most recent trace's id.
-        failed_action_id = kernel._traces.list_all()[-1].action_id
+        failed_action_id = kernel.list_traces()[-1].action_id
 
     # Export everything. Attach an optional human correction to the failed run.
     corrections = (
@@ -123,7 +123,7 @@ async def main() -> None:
         if failed_action_id
         else None
     )
-    envelope = export_action_traces(kernel._traces.list_all(), corrections=corrections)
+    envelope = export_action_traces(kernel.list_traces(), corrections=corrections)
 
     print("\nExported trace envelope:")
     print(json.dumps(envelope, indent=2))

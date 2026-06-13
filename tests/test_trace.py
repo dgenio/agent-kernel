@@ -182,7 +182,7 @@ async def test_export_redacts_memory_payload_end_to_end() -> None:
     assert trace.sensitivity is SensitivityTag.MEMORY
     assert trace.args["payload"] == "[REDACTED]"
 
-    envelope = export_action_traces(kernel._traces.list_all())
+    envelope = export_action_traces(kernel.list_traces())
     exported = envelope["traces"][0]
     assert exported["sensitivity"] == "MEMORY"
     assert exported["status"] == "succeeded"

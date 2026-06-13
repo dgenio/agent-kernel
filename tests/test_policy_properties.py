@@ -62,6 +62,7 @@ from weaver_kernel import (
     TokenScopeError,
     export_action_traces,
 )
+from weaver_kernel.policy import _MAX_ROWS_SERVICE, _MAX_ROWS_USER
 
 # ── Shared strategies & helpers ─────────────────────────────────────────────
 
@@ -206,7 +207,7 @@ def test_max_rows_never_exceeds_policy_cap(
         capability_id=capability.capability_id, goal="g", constraints=constraints
     )
     decision = engine.evaluate(request, capability, principal, justification="")
-    cap_limit = 500 if "service" in principal.roles else 50
+    cap_limit = _MAX_ROWS_SERVICE if "service" in principal.roles else _MAX_ROWS_USER
     capped = decision.constraints["max_rows"]
     assert 0 <= capped <= cap_limit
     if requested_max_rows is not None and requested_max_rows >= 0:

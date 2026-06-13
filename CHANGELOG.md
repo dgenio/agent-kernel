@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Action trace export contract (#94).** New `export_action_trace` /
   `export_action_traces` produce a stable, versioned, JSON-serialisable shape
   for `ActionTrace` records so downstream tools (e.g. LessonWeaver-style lesson
-  extraction) can consume the audit trail without depending on internals. The
+  extraction) can consume the audit trail without depending on internals.
+  `Kernel.list_traces()` is the public accessor that feeds the export the full
+  audit trail (no reaching into the trace store). The
   export is derived only from already-redaction-safe trace fields — `args`
   (memory payloads stripped) and `result_summary` (post-firewall counts/flags)
   — so it cannot widen the I-01 boundary. `ActionTrace` now carries the invoked
