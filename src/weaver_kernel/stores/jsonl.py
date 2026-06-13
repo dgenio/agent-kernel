@@ -45,19 +45,25 @@ class JsonlTraceStore:
             return []
         records: list[TraceRecord] = []
         with self._path.open(encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
+            for lineno, raw in enumerate(handle, start=1):
+                line = raw.strip()
                 if not line:
                     continue
-                obj = json.loads(line)
-                records.append(
-                    TraceRecord(
+                try:
+                    obj = json.loads(line)
+                    record = TraceRecord(
                         seq=int(obj["seq"]),
                         prev_hash=str(obj["prev_hash"]),
                         record_hash=str(obj["record_hash"]),
                         trace=obj["trace"],
                     )
-                )
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                    # A malformed/tampered line must surface as a typed error the
+                    # CLI can render, not a bare ValueError traceback (AGENTS.md).
+                    raise AgentKernelError(
+                        f"Corrupted trace record at {self._path}:{lineno}: {exc}."
+                    ) from exc
+                records.append(record)
         return records
 
     # ── TraceStoreProtocol ───────────────────────────────────────────────────

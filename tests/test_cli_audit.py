@@ -110,3 +110,10 @@ def test_export_to_file(store_path: str, tmp_path: Path) -> None:
     lines = [ln for ln in out.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert len(lines) == 3
     assert json.loads(lines[0])["action_id"] == "act-a"
+
+
+def test_missing_store_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    missing = str(tmp_path / "nope.db")
+    rc = main(["audit", "verify", "--store", missing, "--secret", SECRET])
+    assert rc == 1
+    assert "does not exist" in capsys.readouterr().err

@@ -17,6 +17,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Any
 
 from .._secrets import resolve_hmac_secret
 from ..errors import AgentKernelError
@@ -31,6 +32,22 @@ from .audit_chain import (
 )
 
 
+def _loads_payload(raw: str, *, context: str) -> dict[str, Any]:
+    """Parse a stored JSON payload, remapping corruption to a typed error.
+
+    A tampered or hand-edited row must surface as :class:`AgentKernelError`
+    (which the CLI renders cleanly), never as a bare ``JSONDecodeError`` /
+    ``ValueError`` escaping to callers (see AGENTS.md).
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise AgentKernelError(f"Corrupted trace payload {context}: {exc}.") from exc
+    if not isinstance(data, dict):
+        raise AgentKernelError(f"Corrupted trace payload {context}: expected a JSON object.")
+    return data
+
+
 class SQLiteTraceStore:
     """Durable, hash-chained :class:`TraceStoreProtocol` backend.
 
@@ -41,6 +58,7 @@ class SQLiteTraceStore:
 
     def __init__(self, path: str | Path, *, secret: str | None = None) -> None:
         self._secret = resolve_hmac_secret(secret)
+        self._path = str(path)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.execute(
@@ -105,12 +123,15 @@ class SQLiteTraceStore:
         ).fetchone()
         if row is None:
             raise AgentKernelError(f"No action trace found for action_id='{action_id}'.")
-        return decode_trace(json.loads(row[0]))
+        return decode_trace(_loads_payload(row[0], context=f"for action_id='{action_id}'"))
 
     def list_all(self) -> list[ActionTrace]:
         """Return all traces in chain order."""
-        rows = self._conn.execute("SELECT payload FROM traces ORDER BY seq").fetchall()
-        return [decode_trace(json.loads(r[0])) for r in rows]
+        rows = self._conn.execute("SELECT seq, payload FROM traces ORDER BY seq").fetchall()
+        return [
+            decode_trace(_loads_payload(r[1], context=f"at seq {int(r[0])} in {self._path}"))
+            for r in rows
+        ]
 
     # ── Audit chain (issue #127) ──────────────────────────────────────────────
 
@@ -124,7 +145,7 @@ class SQLiteTraceStore:
                 seq=int(r[0]),
                 prev_hash=str(r[1]),
                 record_hash=str(r[2]),
-                trace=json.loads(r[3]),
+                trace=_loads_payload(r[3], context=f"at seq {int(r[0])} in {self._path}"),
             )
             for r in rows
         ]
@@ -141,13 +162,17 @@ class SQLiteTraceStore:
         checkpoint, so :meth:`verify_chain` still validates the retained suffix.
 
         Args:
-            before: Timezone-aware cutoff; records with ``invoked_at`` strictly
-                before this are removed.
+            before: Cutoff; records with ``invoked_at`` strictly before this are
+                removed. Normalised to UTC before comparison (a naive datetime is
+                assumed to be UTC) so the lexicographic comparison against the
+                stored UTC ISO-8601 timestamps is correct.
 
         Returns:
             The number of records pruned.
         """
-        cutoff = before.isoformat()
+        if before.tzinfo is None:
+            before = before.replace(tzinfo=datetime.timezone.utc)
+        cutoff = before.astimezone(datetime.timezone.utc).isoformat()
         with self._lock:
             doomed = self._conn.execute(
                 "SELECT seq, record_hash FROM traces WHERE invoked_at < ? ORDER BY seq",

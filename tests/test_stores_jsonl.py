@@ -88,3 +88,15 @@ def test_blank_lines_ignored(tmp_path: Path) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write("\n")
     assert len(JsonlTraceStore(path, secret=SECRET).list_all()) == 1
+
+
+def test_corrupted_line_raises_typed_error(tmp_path: Path) -> None:
+    path = tmp_path / "a.jsonl"
+    store = JsonlTraceStore(path, secret=SECRET)
+    store.record(_trace("act-0"))
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("{ not valid json\n")
+    # The store reads the file on construction, so a corrupt line surfaces as a
+    # typed error there as well as on any later read.
+    with pytest.raises(AgentKernelError, match="Corrupted trace record"):
+        JsonlTraceStore(path, secret=SECRET)

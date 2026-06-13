@@ -168,3 +168,35 @@ def test_revoked_token_stays_revoked_for_fresh_provider(tmp_path: Path) -> None:
     fresh = HMACTokenProvider(secret=SECRET, revocation_store=SQLiteRevocationStore(db))
     with pytest.raises(TokenRevoked, match="revoked"):
         fresh.verify(token, expected_principal_id="u1", expected_capability_id="cap.x")
+
+
+# ── Corruption surfaces as a typed error (not a bare ValueError) ─────────────
+
+
+def test_corrupted_payload_raises_typed_error(tmp_path: Path) -> None:
+    db = tmp_path / "a.db"
+    store = SQLiteTraceStore(db, secret=SECRET)
+    store.record(_trace("act-0"))
+    store.close()
+    conn = sqlite3.connect(str(db))
+    conn.execute("UPDATE traces SET payload = 'not json' WHERE seq = 0")
+    conn.commit()
+    conn.close()
+    reopened = SQLiteTraceStore(db, secret=SECRET)
+    with pytest.raises(AgentKernelError, match="Corrupted trace payload"):
+        reopened.list_all()
+    with pytest.raises(AgentKernelError, match="Corrupted trace payload"):
+        reopened.get("act-0")
+    with pytest.raises(AgentKernelError, match="Corrupted trace payload"):
+        reopened.verify_chain()
+
+
+def test_prune_accepts_naive_datetime_as_utc(tmp_path: Path) -> None:
+    store = SQLiteTraceStore(tmp_path / "a.db", secret=SECRET)
+    base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    for i in range(3):
+        store.record(_trace(f"act-{i}", when=base + datetime.timedelta(days=i)))
+    # A naive cutoff is treated as UTC; days 0 and 1 are pruned.
+    pruned = store.prune(before=datetime.datetime(2026, 1, 2, 12))
+    assert pruned == 2
+    assert store.verify_chain().ok

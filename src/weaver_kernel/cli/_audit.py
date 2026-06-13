@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Protocol
 
+from ..errors import AgentKernelError
 from ..models import ActionTrace
 from ..stores import TraceStoreProtocol
 from ..stores._trace_codec import encode_trace
@@ -39,7 +40,18 @@ class _VerifiableTraceStore(TraceStoreProtocol, Protocol):
 def open_trace_store(
     path: str, fmt: str | None, *, secret: str | None = None
 ) -> _VerifiableTraceStore:
-    """Open a persisted trace store, inferring the format from the path suffix."""
+    """Open a persisted trace store, inferring the format from the path suffix.
+
+    Raises:
+        AgentKernelError: If *path* does not exist. Opening would otherwise
+            create an empty store and make ``audit verify`` falsely report OK on
+            a mistyped path, hiding the misconfiguration.
+    """
+    if path != ":memory:" and not Path(path).exists():
+        raise AgentKernelError(
+            f"Trace store '{path}' does not exist. Check the --store path "
+            "(the audit commands read an existing store; they do not create one)."
+        )
     resolved = fmt or ("jsonl" if path.endswith(".jsonl") else "sqlite")
     if resolved == "jsonl":
         return JsonlTraceStore(path, secret=secret)

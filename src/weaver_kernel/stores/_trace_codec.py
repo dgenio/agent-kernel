@@ -26,8 +26,10 @@ def decode_trace(payload: dict[str, Any]) -> ActionTrace:
     """Reconstruct an :class:`ActionTrace` from a persisted payload.
 
     Raises:
-        AgentKernelError: If the payload is missing a required field — surfaced
-            as a kernel error rather than a bare ``KeyError`` (see AGENTS.md).
+        AgentKernelError: If the payload is missing a required field, or carries
+            a malformed ``invoked_at`` / ``sensitivity`` — surfaced as a kernel
+            error rather than a bare ``KeyError``/``ValueError`` (see AGENTS.md),
+            so tampered data cannot crash the CLI with a traceback.
     """
     try:
         return ActionTrace(
@@ -48,3 +50,5 @@ def decode_trace(payload: dict[str, Any]) -> ActionTrace:
         raise AgentKernelError(
             f"Persisted trace payload is missing required field {exc}."
         ) from exc
+    except (ValueError, TypeError) as exc:
+        raise AgentKernelError(f"Persisted trace payload is malformed: {exc}.") from exc
