@@ -60,6 +60,27 @@ When a capability has `SensitivityTag.PII` or `SensitivityTag.PCI`:
 
 Principals with the `pii_reader` role bypass `allowed_fields` enforcement.
 
+Redaction is applied on **every** path that returns data to the LLM, not just
+the first `transform()`:
+
+- **Depth boundary (fail-closed).** The `max_depth` cap bounds recursion cost.
+  At the boundary, scalar strings are still pattern-scrubbed, but a nested
+  container is *elided* (`[REDACTED: nested data beyond depth limit]`) rather
+  than returned verbatim — a deeply nested subtree never reaches the LLM
+  unscanned.
+- **Handle expansion.** `HandleStore.expand()` runs its projected rows through
+  the same `redact()` as the first invocation, so a secret inline in a
+  permitted field (e.g. a token in a `note` value) is scrubbed on expand too.
+- **Streaming.** `Firewall.apply_stream()` keeps a per-field `StreamRedactor`
+  that holds back a trailing overlap window, so a secret split across two
+  chunks is reassembled and redacted before either half is emitted. Patterns
+  containing internal whitespace (phone/SSN/spaced card numbers) split exactly
+  at the held boundary may still evade detection — see `docs/security.md`.
+
+Invocation **arguments** recorded on `ActionTrace.args`, and driver **error**
+text, are run through the same redactor before persistence, so the trace store
+never becomes a sensitive-data sink (see `docs/security.md`).
+
 ## Summarization
 
 Summaries are produced deterministically:

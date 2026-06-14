@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from .errors import HandleConstraintViolation, HandleExpired, HandleNotFound
+from .firewall.redaction import redact
 from .models import Frame, Handle, Provenance, ResponseMode
 from .policy_reasons import DenialReason
 
@@ -319,11 +320,22 @@ class HandleStore:
         else:
             table_preview = [{"value": r} for r in rows]
 
+        # ── Redaction ───────────────────────────────────────────────────────────
+        # expand() builds its Frame directly from the raw stored dataset, which
+        # is persisted pre-firewall. Field-level grant constraints
+        # (allowed_fields / scope) are already enforced above, but a permitted
+        # field can still carry inline secrets (e.g. a Bearer token in a `note`
+        # value). Route the projected rows through the same redactor the
+        # Firewall applies on first invocation so the I-01 boundary holds on the
+        # expansion path too (see docs/agent-context/invariants.md).
+        redacted_preview, warnings = redact(table_preview)
+
         return Frame(
             action_id=action_id,
             capability_id=handle.capability_id,
             response_mode=response_mode,
-            table_preview=table_preview,
+            table_preview=redacted_preview,
+            warnings=warnings,
             handle=handle,
             provenance=Provenance(
                 capability_id=handle.capability_id,

@@ -237,7 +237,14 @@ def test_action_trace_redacts_memory_payload_arg() -> None:
 
 
 def test_action_trace_keeps_non_memory_args_verbatim() -> None:
-    """The redaction is scoped to memory.* — other capabilities are untouched."""
+    """Benign non-memory args survive the trace redaction pass unchanged.
+
+    Since #172 every capability's args pass through ``redact()``, but values
+    with no sensitive field name or inline pattern (and non-string scalars)
+    are returned verbatim — so audit value is preserved for ordinary args.
+    The complementary case (a secret in a non-memory arg *is* scrubbed) is
+    pinned by the canary suite in ``test_firewall_canary.py``.
+    """
     registry = CapabilityRegistry()
     cap = Capability(
         capability_id="billing.refund",
