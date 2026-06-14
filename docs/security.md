@@ -90,12 +90,21 @@ record's hash (the first record links to a genesis value). `verify_chain()`
 recomputes every hash and checks the linkage, so it detects:
 
 - **mutation** of any persisted record (recomputed hash diverges),
-- **insertion**, **deletion**, or **reordering** (broken `prev_hash` linkage or a
+- **interior insertion, deletion, or reordering** (broken `prev_hash` linkage or a
   non-contiguous `seq`),
 
 and reports the `seq` of the first divergent record. `SQLiteTraceStore.prune()`
 removes old records while preserving verifiability of the retained suffix by
 recording the last pruned record's hash as a checkpoint.
+
+**Truncation is the exception.** The chain stores no signed head/length anchor, so
+dropping the **most recent** records (tail truncation) — or deleting the whole
+store — leaves a self-consistent prefix that still verifies: there is no broken
+link or sequence gap to detect, and an empty store verifies vacuously. Detecting
+truncation requires anchoring the expected head out of band (a separately stored,
+signed record count + head hash); that is a planned follow-up. Until then, treat
+append-only durability (JSONL shipped to a write-once collector, or a SQLite file
+on append-only storage) as the truncation defense.
 
 **What this is — and is not.** This is **tamper-evidence**: anyone who does not
 hold `WEAVER_KERNEL_SECRET` cannot alter the log without `verify_chain()`

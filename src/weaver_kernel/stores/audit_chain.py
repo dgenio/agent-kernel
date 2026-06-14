@@ -7,9 +7,12 @@ keyed by the same HMAC secret used for token signing
 mutation, or reordering of records is detectable by :func:`verify_chain`.
 
 Integrity model (honest scope): this gives **tamper-evidence** against post-hoc
-edits by anyone who does not hold the secret. It is **not** non-repudiation — a
-host that controls ``WEAVER_KERNEL_SECRET`` can forge a self-consistent chain.
-See ``docs/security.md``.
+edits by anyone who does not hold the secret. It detects mutation, interior
+insertion/deletion, and reordering, but **not tail-truncation** (dropping the
+most recent records) or whole-log deletion — the chain stores no signed head
+anchor, so a self-consistent prefix (including the empty chain) still verifies.
+It is **not** non-repudiation — a host that controls ``WEAVER_KERNEL_SECRET`` can
+forge a self-consistent chain. See ``docs/security.md``.
 
 The chaining envelope is intentionally separate from ``ActionTrace`` semantics:
 ``prev_hash``/``record_hash``/``seq`` live only on the persisted record, never on
@@ -115,9 +118,12 @@ def verify_chain(
 ) -> ChainVerificationResult:
     """Verify the integrity of an ordered sequence of trace records.
 
-    Detects mutation (recomputed hash differs), insertion/deletion/reordering
-    (broken ``prev_hash`` linkage or non-contiguous ``seq``), and a wrong secret
-    (every hash diverges). Records must be supplied in ascending ``seq`` order.
+    Detects mutation (recomputed hash differs), interior insertion/deletion/
+    reordering (broken ``prev_hash`` linkage or non-contiguous ``seq``), and a
+    wrong secret (every hash diverges). It does **not** detect tail-truncation
+    (dropping the most recent records) or whole-log deletion: with no signed head
+    anchor, a self-consistent prefix — including the empty chain — verifies (see
+    ``docs/security.md``). Records must be supplied in ascending ``seq`` order.
 
     Args:
         records: The chain to verify, ordered by ``seq``.

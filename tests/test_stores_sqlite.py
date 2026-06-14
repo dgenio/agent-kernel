@@ -191,6 +191,25 @@ def test_corrupted_payload_raises_typed_error(tmp_path: Path) -> None:
         reopened.verify_chain()
 
 
+def test_duplicate_action_id_raises_typed_error(tmp_path: Path) -> None:
+    """Re-recording an action_id surfaces AgentKernelError, not sqlite3.IntegrityError."""
+    store = SQLiteTraceStore(tmp_path / "a.db", secret=SECRET)
+    store.record(_trace("act-dup"))
+    with pytest.raises(AgentKernelError, match="already present"):
+        store.record(_trace("act-dup"))
+    # The store stays usable and its chain intact after the rejected write.
+    assert [t.action_id for t in store.list_all()] == ["act-dup"]
+    assert store.verify_chain().ok
+
+
+def test_open_non_sqlite_file_raises_typed_error(tmp_path: Path) -> None:
+    """Opening a non-SQLite file (e.g. a JSONL store) surfaces a typed error."""
+    bogus = tmp_path / "traces.jsonl"
+    bogus.write_text('{"seq": 0}\n', encoding="utf-8")
+    with pytest.raises(AgentKernelError, match="not a valid SQLite trace store"):
+        SQLiteTraceStore(bogus, secret=SECRET)
+
+
 def test_prune_accepts_naive_datetime_as_utc(tmp_path: Path) -> None:
     store = SQLiteTraceStore(tmp_path / "a.db", secret=SECRET)
     base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)

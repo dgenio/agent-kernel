@@ -21,10 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hash-chained, verifiable audit log (#127).** Persisted traces are wrapped in
   a `prev_hash`/`record_hash` chain (HMAC-SHA256, keyed by
   `WEAVER_KERNEL_SECRET`). `verify_chain()` (and `SQLiteTraceStore.verify_chain()`
-  / `JsonlTraceStore.verify_chain()`) detect mutation, insertion, deletion, and
-  reordering, reporting the first divergent record. `SQLiteTraceStore.prune()`
-  drops old records while preserving verifiability of the retained suffix via a
-  checkpoint. Tamper-evidence, not non-repudiation — see `docs/security.md`.
+  / `JsonlTraceStore.verify_chain()`) detect mutation, interior insertion,
+  deletion, and reordering, reporting the first divergent record. Tail-truncation
+  and whole-log deletion are out of scope (no signed head anchor) — see
+  `docs/security.md`. `SQLiteTraceStore.prune()` drops old records while
+  preserving verifiability of the retained suffix via a checkpoint.
+  Tamper-evidence, not non-repudiation — see `docs/security.md`.
 - **`weaver-kernel` operator CLI.** `weaver-kernel audit list|show|verify|export`
   inspects, filters, verifies, and exports a persisted trace store, with `--json`
   on every subcommand and redaction-safe output by construction (#147).
@@ -41,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 - `Kernel(trace_store=...)` is now typed against `TraceStoreProtocol`, so any
   conforming backend (including the durable ones) can be injected.
+- `SQLiteTraceStore` now remaps `sqlite3` errors to `AgentKernelError`: a
+  duplicate `action_id` (or seq) on `record()` and opening a non-SQLite file
+  (e.g. a JSONL store without `--format jsonl`) surface as typed errors instead
+  of leaking a traceback through the CLI. The durable trace stores document an
+  explicit single-writer constraint (durable revocation remains multi-process).
 
 ## [0.10.0] - 2026-06-07
 

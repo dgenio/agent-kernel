@@ -54,6 +54,13 @@ class SQLiteTraceStore:
     The signing secret defaults to the shared ``WEAVER_KERNEL_SECRET`` path; a
     store opened with a different secret than it was written with will fail
     :meth:`verify_chain`.
+
+    Concurrency: this store is **single-writer**. Writes are serialised within a
+    process by a lock, but the chain head is read-then-written without a
+    cross-process transaction, so two processes writing the same file can collide
+    on ``seq`` (surfaced as :class:`AgentKernelError`) or fork the chain. Use one
+    writer per store file. Durable *revocation* (:class:`SQLiteRevocationStore`)
+    is safe across processes; the trace chain is not.
     """
 
     def __init__(self, path: str | Path, *, secret: str | None = None) -> None:
@@ -61,17 +68,29 @@ class SQLiteTraceStore:
         self._path = str(path)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS traces ("
-            "seq INTEGER PRIMARY KEY, "
-            "action_id TEXT UNIQUE NOT NULL, "
-            "prev_hash TEXT NOT NULL, "
-            "record_hash TEXT NOT NULL, "
-            "invoked_at TEXT NOT NULL, "
-            "payload TEXT NOT NULL)"
-        )
-        self._conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-        self._conn.commit()
+        try:
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS traces ("
+                "seq INTEGER PRIMARY KEY, "
+                "action_id TEXT UNIQUE NOT NULL, "
+                "prev_hash TEXT NOT NULL, "
+                "record_hash TEXT NOT NULL, "
+                "invoked_at TEXT NOT NULL, "
+                "payload TEXT NOT NULL)"
+            )
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+            )
+            self._conn.commit()
+        except sqlite3.DatabaseError as exc:
+            # e.g. pointing --store at a JSONL file: sqlite3 opens it but the
+            # first statement raises "file is not a database". Surface a typed
+            # error the CLI renders, not a bare traceback (see AGENTS.md).
+            self._conn.close()
+            raise AgentKernelError(
+                f"'{self._path}' is not a valid SQLite trace store: {exc}. "
+                "If this is a JSONL store, pass --format jsonl."
+            ) from exc
 
     # ── Internal helpers ────────────────────────────────────────────────────
 
@@ -102,19 +121,32 @@ class SQLiteTraceStore:
                 next_seq = int(self._get_meta("checkpoint_next_seq", "0"))
                 prev_hash = self._get_meta("checkpoint_hash", GENESIS_HASH)
             record = build_record(next_seq, prev_hash, payload, secret=self._secret)
-            self._conn.execute(
-                "INSERT INTO traces (seq, action_id, prev_hash, record_hash, invoked_at, payload) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    record.seq,
-                    trace.action_id,
-                    record.prev_hash,
-                    record.record_hash,
-                    payload["invoked_at"],
-                    json.dumps(payload),
-                ),
-            )
-            self._conn.commit()
+            try:
+                self._conn.execute(
+                    "INSERT INTO traces "
+                    "(seq, action_id, prev_hash, record_hash, invoked_at, payload) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        record.seq,
+                        trace.action_id,
+                        record.prev_hash,
+                        record.record_hash,
+                        payload["invoked_at"],
+                        json.dumps(payload),
+                    ),
+                )
+                self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                # Duplicate action_id (UNIQUE) or seq (PRIMARY KEY). Each
+                # invocation has a fresh action_id, so this signals a re-recorded
+                # trace or a concurrent second writer (the store is single-writer;
+                # see the class docstring). Surface a typed error rather than let a
+                # bare sqlite3.IntegrityError escape to the caller (see AGENTS.md).
+                self._conn.rollback()
+                raise AgentKernelError(
+                    f"Cannot record trace: action_id '{trace.action_id}' is already "
+                    "present in the store (duplicate record or concurrent write)."
+                ) from exc
 
     def get(self, action_id: str) -> ActionTrace:
         """Return the trace for *action_id*."""

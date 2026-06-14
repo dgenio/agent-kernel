@@ -27,7 +27,14 @@ from .audit_chain import (
 
 
 class JsonlTraceStore:
-    """Durable append-only :class:`TraceStoreProtocol` backend."""
+    """Durable append-only :class:`TraceStoreProtocol` backend.
+
+    Concurrency: this store is **single-writer**. It caches the chain head
+    (``seq``/``record_hash``) in memory and appends under an intra-process lock,
+    so two processes (or two instances) writing the same file fork the chain —
+    which :meth:`verify_chain` then reports as a non-contiguous sequence. Use one
+    writer per file; rotate externally if needed.
+    """
 
     def __init__(self, path: str | Path, *, secret: str | None = None) -> None:
         self._secret = resolve_hmac_secret(secret)
