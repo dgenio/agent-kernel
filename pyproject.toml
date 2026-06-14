@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "weaver-kernel"
-version = "0.10.0"
+version = "0.11.0"
 description = "Capability-based security kernel for AI agents operating in large tool ecosystems"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -39,6 +39,9 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2",
 ]
+
+[project.scripts]
+weaver-kernel = "weaver_kernel.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/dgenio/agent-kernel"

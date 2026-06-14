@@ -7,40 +7,15 @@ import hashlib
 import hmac
 import json
 import logging
-import os
-import secrets
-import threading
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ._secrets import _get_secret
 from .errors import TokenExpired, TokenInvalid, TokenRevoked, TokenScopeError
+from .stores import InMemoryRevocationStore, RevocationStoreProtocol
 
 logger = logging.getLogger(__name__)
-
-_DEV_SECRET: str | None = None
-_DEV_SECRET_LOCK = threading.Lock()
-
-
-def _get_secret() -> str:
-    """Return the HMAC secret from the environment or generate a dev fallback.
-
-    Thread-safe: a :data:`threading.Lock` ensures only one thread generates
-    the fallback secret.
-    """
-    global _DEV_SECRET
-    secret = os.environ.get("WEAVER_KERNEL_SECRET")
-    if secret:
-        return secret
-    with _DEV_SECRET_LOCK:
-        if _DEV_SECRET is None:
-            _DEV_SECRET = secrets.token_hex(32)
-            logger.warning(
-                "WEAVER_KERNEL_SECRET is not set. "
-                "Using a random development secret — tokens will not survive restarts. "
-                "Set WEAVER_KERNEL_SECRET in production."
-            )
-    return _DEV_SECRET
 
 
 # ── Token dataclass ───────────────────────────────────────────────────────────
@@ -190,12 +165,16 @@ class HMACTokenProvider:
     generated and a warning is logged.
     """
 
-    def __init__(self, secret: str | None = None) -> None:
+    def __init__(
+        self,
+        secret: str | None = None,
+        *,
+        revocation_store: RevocationStoreProtocol | None = None,
+    ) -> None:
         self._secret = secret  # None → use env / dev fallback at call time
-        self._revoked: set[str] = set()
-        # TODO: consider TTL-based cleanup to bound growth over long-lived instances
-        self._principal_tokens: dict[str, set[str]] = {}
-        self._revocation_lock = threading.Lock()
+        # Revocation state lives behind a protocol so it can be made durable
+        # (e.g. SQLiteRevocationStore) without weakening verify-before-invoke.
+        self._revocation: RevocationStoreProtocol = revocation_store or InMemoryRevocationStore()
 
     @staticmethod
     def _log_verify_failure(token_id: str, reason: str, **extra: Any) -> None:
@@ -243,8 +222,7 @@ class HMACTokenProvider:
             audit_id=audit_id,
         )
         token.signature = self._sign(token._signable_payload())
-        with self._revocation_lock:
-            self._principal_tokens.setdefault(principal_id, set()).add(token.token_id)
+        self._revocation.track(principal_id, token.token_id)
         logger.debug(
             "token_issued",
             extra={
@@ -265,8 +243,7 @@ class HMACTokenProvider:
         Args:
             token_id: The ID of the token to revoke.
         """
-        with self._revocation_lock:
-            self._revoked.add(token_id)
+        self._revocation.revoke(token_id)
 
     def revoke_all(self, principal_id: str) -> int:
         """Revoke all tokens issued to a principal.
@@ -278,13 +255,7 @@ class HMACTokenProvider:
             The number of tokens newly revoked by this call (excluding tokens
             that were already revoked).
         """
-        with self._revocation_lock:
-            token_ids = self._principal_tokens.get(principal_id, set())
-            newly_revoked = token_ids - self._revoked
-            self._revoked |= newly_revoked
-            # Drop the index entry; new tokens for this principal will start fresh
-            self._principal_tokens.pop(principal_id, None)
-            return len(newly_revoked)
+        return self._revocation.revoke_principal(principal_id)
 
     def verify(
         self,
@@ -306,10 +277,8 @@ class HMACTokenProvider:
             TokenInvalid: If the HMAC signature does not verify.
             TokenScopeError: If principal or capability do not match.
         """
-        # 0. Revocation (fast set lookup before any crypto)
-        with self._revocation_lock:
-            is_revoked = token.token_id in self._revoked
-        if is_revoked:
+        # 0. Revocation (fast lookup before any crypto)
+        if self._revocation.is_revoked(token.token_id):
             self._log_verify_failure(token.token_id, "revoked")
             raise TokenRevoked(f"Token '{token.token_id}' has been revoked.")
 

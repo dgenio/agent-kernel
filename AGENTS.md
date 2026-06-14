@@ -10,6 +10,8 @@ reference this file and add only tool-specific guidance.
 src/weaver_kernel/        — library source (one module per concern, ≤300 lines each)
   drivers/               — capability drivers (one file per driver)
   firewall/              — context firewall (redaction, summarization, budgets)
+  stores/                — pluggable persistence (SQLite/JSONL) + verifiable audit chain
+  cli/                   — `weaver-kernel` console entry point (audit, doctor)
 tests/                   — pytest suite (one test file per module)
 examples/                — runnable demos (prefer offline; network OK with fallback)
 docs/                    — reference documentation
@@ -139,6 +141,7 @@ See [docs/agent-context/review-checklist.md](docs/agent-context/review-checklist
 | Capability design conventions | [docs/capabilities.md](docs/capabilities.md) |
 | Context firewall details | [docs/context_firewall.md](docs/context_firewall.md) |
 | Action trace export contract | [docs/trace_export.md](docs/trace_export.md) |
+| Command-line interface (`weaver-kernel`) | [docs/cli.md](docs/cli.md) |
 
 ## Update policy
 

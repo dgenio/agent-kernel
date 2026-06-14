@@ -95,19 +95,21 @@ def test_dev_secret_warning(caplog: pytest.LogCaptureFixture) -> None:
     """A provider with no secret should generate a warning."""
     import logging
 
-    import weaver_kernel.tokens as tok_mod
+    import weaver_kernel._secrets as sec_mod
 
-    # Save and restore _DEV_SECRET to avoid leaking state to other tests
-    original = tok_mod._DEV_SECRET
+    # Save and restore _DEV_SECRET to avoid leaking state to other tests. The
+    # secret-loading path now lives in weaver_kernel._secrets (shared by token
+    # signing and audit-chain hashing).
+    original = sec_mod._DEV_SECRET
     try:
-        tok_mod._DEV_SECRET = None
+        sec_mod._DEV_SECRET = None
         provider_no_secret = HMACTokenProvider(secret=None)
-        with caplog.at_level(logging.WARNING, logger="weaver_kernel.tokens"):
+        with caplog.at_level(logging.WARNING, logger="weaver_kernel._secrets"):
             token = provider_no_secret.issue("cap.x", "user-1")
         assert "WEAVER_KERNEL_SECRET" in caplog.text
         assert token.signature != ""
     finally:
-        tok_mod._DEV_SECRET = original
+        sec_mod._DEV_SECRET = original
 
 
 # ── Revocation ─────────────────────────────────────────────────────────────────

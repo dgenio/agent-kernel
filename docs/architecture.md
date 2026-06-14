@@ -158,6 +158,49 @@ Records every `ActionTrace`. `explain(action_id)` returns the full audit record.
 
 `export_action_trace` / `export_action_traces` serialise traces into a stable, versioned, JSON-serialisable shape for downstream analysis tools (distinct from the OpenTelemetry observability export); `Kernel.list_traces()` is the public accessor that feeds them the audit trail. See [trace_export.md](trace_export.md).
 
+## Persistence & durable stores
+
+The stateful stores are protocol-based seams (`weaver_kernel.stores`), mirroring
+the `Driver` / `PolicyEngine` pattern. The in-memory implementations are the
+defaults; durable backends are opt-in via constructor injection.
+
+| Protocol | Default (in-memory) | Durable backends | Injected via |
+|----------|--------------------|------------------|--------------|
+| `TraceStoreProtocol` | `TraceStore` | `SQLiteTraceStore`, `JsonlTraceStore` | `Kernel(trace_store=...)` |
+| `RevocationStoreProtocol` | `InMemoryRevocationStore` | `SQLiteRevocationStore` | `HMACTokenProvider(revocation_store=...)` |
+| `HandleStoreProtocol` | `HandleStore` | *(none yet — see below)* | `Kernel(handle_store=...)` |
+
+```python
+from weaver_kernel import Kernel, HMACTokenProvider
+from weaver_kernel.stores import SQLiteTraceStore, SQLiteRevocationStore
+
+kernel = Kernel(
+    registry,
+    token_provider=HMACTokenProvider(revocation_store=SQLiteRevocationStore("revoked.db")),
+    trace_store=SQLiteTraceStore("audit.db"),
+)
+```
+
+**Backend selection.** Use the in-memory defaults for ephemeral or single-process
+use. Use `SQLiteTraceStore` for a durable, queryable, hash-chained audit trail
+that survives restarts and supports retention pruning; use `JsonlTraceStore` for
+an append-only log that is easy to ship to a collector. Use
+`SQLiteRevocationStore` when `revoke()` / `revoke_all()` must outlive a process
+or apply across workers sharing a database file. All durable backends use only
+the standard library (`sqlite3`, `json`) — no new runtime dependency.
+
+**Verifiable audit chain.** Persisted traces are hash-chained
+(`prev_hash`/`record_hash`, HMAC-SHA256 keyed by `WEAVER_KERNEL_SECRET`).
+`verify_chain()` detects mutation, insertion, deletion, and reordering;
+`SQLiteTraceStore.prune(before=...)` enforces retention while keeping the
+retained suffix verifiable via a checkpoint. The integrity model and its limits
+are documented in [security.md](security.md#audit-log-integrity-hash-chain).
+
+**Handle persistence is intentionally not shipped yet.** `HandleStoreProtocol` is
+defined so a durable backend can be added without a breaking change, but handles
+are short-lived, TTL-bounded result caches whose durability matters far less than
+the audit trail's; only the in-memory `HandleStore` ships today.
+
 ### Adapters (`weaver_kernel.adapters`)
 Vendor-specific tool-format adapters that translate between `Capability` objects
 and the tool shapes used by LLM provider APIs:

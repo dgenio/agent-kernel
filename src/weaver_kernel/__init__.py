@@ -28,6 +28,15 @@ Handles & traces::
     from weaver_kernel import HandleStore, TraceStore
     from weaver_kernel import export_action_trace, export_action_traces
 
+Durable persistence & verifiable audit log::
+
+    from weaver_kernel import SQLiteTraceStore, JsonlTraceStore
+    from weaver_kernel import SQLiteRevocationStore, InMemoryRevocationStore
+    from weaver_kernel import verify_chain, ChainVerificationResult, TraceRecord
+    from weaver_kernel import (
+        TraceStoreProtocol, RevocationStoreProtocol, HandleStoreProtocol,
+    )
+
 LLM tool-format adapters::
 
     from weaver_kernel import OpenAIMiddleware, AnthropicMiddleware
@@ -140,6 +149,18 @@ from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
 from .policy_reasons import AllowReason, DenialReason
 from .registry import CapabilityRegistry
 from .router import StaticRouter
+from .stores import (
+    ChainVerificationResult,
+    HandleStoreProtocol,
+    InMemoryRevocationStore,
+    JsonlTraceStore,
+    RevocationStoreProtocol,
+    SQLiteRevocationStore,
+    SQLiteTraceStore,
+    TraceRecord,
+    TraceStoreProtocol,
+    verify_chain,
+)
 from .tokens import CapabilityToken, HMACTokenProvider
 from .trace import (
     TRACE_EXPORT_SCHEMA,
@@ -257,6 +278,17 @@ __all__ = [
     # stores
     "HandleStore",
     "TraceStore",
+    # durable persistence & verifiable audit log (issues #126, #127)
+    "TraceStoreProtocol",
+    "RevocationStoreProtocol",
+    "HandleStoreProtocol",
+    "InMemoryRevocationStore",
+    "JsonlTraceStore",
+    "SQLiteTraceStore",
+    "SQLiteRevocationStore",
+    "ChainVerificationResult",
+    "TraceRecord",
+    "verify_chain",
     # trace export (issue #94)
     "TRACE_EXPORT_SCHEMA",
     "TRACE_EXPORT_VERSION",

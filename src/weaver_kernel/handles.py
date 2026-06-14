@@ -256,6 +256,11 @@ class HandleStore:
                 f"Handle expand 'offset' must be an integer, got {query.get('offset')!r}.",
                 reason_code=DenialReason.INVALID_CONSTRAINT,
             ) from exc
+        if offset < 0:
+            raise HandleConstraintViolation(
+                f"Handle expand 'offset' must be non-negative, got {offset}.",
+                reason_code=DenialReason.INVALID_CONSTRAINT,
+            )
         requested_limit_raw = query.get("limit")
         requested_limit: int | None
         if requested_limit_raw is None:
@@ -268,6 +273,14 @@ class HandleStore:
                     f"Handle expand 'limit' must be an integer, got {requested_limit_raw!r}.",
                     reason_code=DenialReason.INVALID_CONSTRAINT,
                 ) from exc
+            # A negative limit would slice as rows[offset:offset+limit] and could
+            # return rows in excess of a (possibly zero) grant cap — reject it
+            # rather than silently bypassing max_rows.
+            if requested_limit < 0:
+                raise HandleConstraintViolation(
+                    f"Handle expand 'limit' must be non-negative, got {requested_limit}.",
+                    reason_code=DenialReason.INVALID_CONSTRAINT,
+                )
         limit = len(rows) if requested_limit is None else requested_limit
 
         if isinstance(granted_max_rows, int) and granted_max_rows >= 0:

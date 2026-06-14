@@ -318,3 +318,21 @@ def test_expand_no_constraints_is_unchanged(store: HandleStore) -> None:
     handle = store.store("cap.x", _granted_rows())
     frame = store.expand(handle, query={"limit": 2})
     assert len(frame.table_preview) == 2
+
+
+# ── Negative pagination (grant-cap bypass regression) ────────────────────────
+
+
+def test_negative_limit_rejected(store: HandleStore) -> None:
+    """A negative limit must not slice past a grant cap (e.g. max_rows=0)."""
+    handle = store.store("cap.x", [{"id": 0}, {"id": 1}], constraints={"max_rows": 0})
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"limit": -1})
+    assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT
+
+
+def test_negative_offset_rejected(store: HandleStore) -> None:
+    handle = store.store("cap.x", [{"id": 0}, {"id": 1}])
+    with pytest.raises(HandleConstraintViolation) as exc:
+        store.expand(handle, query={"offset": -1})
+    assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT

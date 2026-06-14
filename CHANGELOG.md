@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-13
+
+### Added
+- **Pluggable persistence for the trace and revocation stores (#126).** New
+  `weaver_kernel.stores` package defining `TraceStoreProtocol`,
+  `RevocationStoreProtocol`, and `HandleStoreProtocol`, with stdlib-only durable
+  backends: `SQLiteTraceStore`, `JsonlTraceStore` (append-only), and
+  `SQLiteRevocationStore`. The in-memory `TraceStore` / `HMACTokenProvider`
+  remain the defaults — inject a backend via constructor to opt in. A token
+  revoked through a `SQLiteRevocationStore` stays revoked after a process
+  restart. No new runtime dependencies.
+- **Hash-chained, verifiable audit log (#127).** Persisted traces are wrapped in
+  a `prev_hash`/`record_hash` chain (HMAC-SHA256, keyed by
+  `WEAVER_KERNEL_SECRET`). `verify_chain()` (and `SQLiteTraceStore.verify_chain()`
+  / `JsonlTraceStore.verify_chain()`) detect mutation, interior insertion,
+  deletion, and reordering, reporting the first divergent record. Tail-truncation
+  and whole-log deletion are out of scope (no signed head anchor) — see
+  `docs/security.md`. `SQLiteTraceStore.prune()` drops old records while
+  preserving verifiability of the retained suffix via a checkpoint.
+  Tamper-evidence, not non-repudiation — see `docs/security.md`.
+- **`weaver-kernel` operator CLI.** `weaver-kernel audit list|show|verify|export`
+  inspects, filters, verifies, and exports a persisted trace store, with `--json`
+  on every subcommand and redaction-safe output by construction (#147).
+  `weaver-kernel doctor` preflight-checks the environment, optional extras, and
+  token / audit-chain self-test vectors (#124). Registered via
+  `[project.scripts]`; argparse, stdlib-only. See `docs/cli.md`.
+- `examples/persistent_audit_demo.py` — offline end-to-end demo of durable
+  hash-chained audit + tamper detection + durable revocation.
+
+### Changed
+- HMAC secret loading moved to `weaver_kernel._secrets` (shared by token signing
+  and audit-chain hashing). `HMACTokenProvider` now accepts a `revocation_store`
+  and delegates revocation to it; behaviour with the default in-memory store is
+  unchanged.
+- `Kernel(trace_store=...)` is now typed against `TraceStoreProtocol`, so any
+  conforming backend (including the durable ones) can be injected.
+- `SQLiteTraceStore` now remaps `sqlite3` errors to `AgentKernelError`: a
+  duplicate `action_id` (or seq) on `record()` and opening a non-SQLite file
+  (e.g. a JSONL store without `--format jsonl`) surface as typed errors instead
+  of leaking a traceback through the CLI. The durable trace stores document an
+  explicit single-writer constraint (durable revocation remains multi-process).
+
 ## [0.10.0] - 2026-06-07
 
 ### Changed

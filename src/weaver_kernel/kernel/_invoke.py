@@ -35,8 +35,8 @@ from ..models import (
     ResponseMode,
     RoutePlan,
 )
+from ..stores import TraceStoreProtocol
 from ..tokens import CapabilityToken
-from ..trace import TraceStore
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
@@ -151,7 +151,7 @@ def record_failure_trace(
     args: dict[str, Any],
     response_mode: ResponseMode,
     error_message: str,
-    trace_store: TraceStore,
+    trace_store: TraceStoreProtocol,
     sensitivity: SensitivityTag = SensitivityTag.NONE,
 ) -> None:
     """Persist an :class:`ActionTrace` for a run where no driver succeeded."""
@@ -182,7 +182,7 @@ def record_success_trace(
     driver_id: str,
     handle_id: str | None,
     result_summary: dict[str, Any] | None,
-    trace_store: TraceStore,
+    trace_store: TraceStoreProtocol,
     sensitivity: SensitivityTag = SensitivityTag.NONE,
 ) -> None:
     """Persist an :class:`ActionTrace` for a successful invocation."""
