@@ -9,12 +9,14 @@
 | Token forgery / tampering | HMAC-SHA256 signature; any bit flip → `TokenInvalid` |
 | Token replay after expiry | Expiry checked on every `verify()` call |
 | Context injection via raw tool output | Firewall always transforms `RawResult → Frame`; raw data never reaches LLM by default |
-| PII / PCI leakage | Redaction + `allowed_fields` enforcement in the firewall |
+| PII / PCI leakage | Redaction + `allowed_fields` enforcement in the firewall, applied on every egress path (summary/table/raw, handle expansion, streaming) |
+| PII / secret leak below the depth budget | Redaction fails *closed* at `max_depth`: leaf strings are scrubbed; nested containers are elided rather than returned verbatim (#149) |
+| Inline secret leak via handle expansion | `HandleStore.expand()` runs projected rows through the firewall redactor, so a secret in a permitted field is scrubbed (#150) |
+| Cross-chunk secret split in streaming | `Firewall.apply_stream()` holds back a per-field overlap window so a secret spanning two chunks is reassembled before redaction (#151) |
 | Privilege escalation via WRITE/DESTRUCTIVE | Policy engine enforces role requirements |
 | Audit evasion | Every `invoke()` creates an immutable `ActionTrace` |
 | Handle scope escape (expand exceeds grant) | Handles persist grant constraints; `HandleStore.expand` rechecks `max_rows`, `allowed_fields`, `scope`, and principal binding (#76) |
-| Memory exfiltration via tool output | `SensitivityTag.MEMORY` capabilities gate sensitive reads and durable writes; `ActionTrace.args` redacts payload-like fields for `memory.*` capabilities (#75) |
-| Raw memory payload reaching audit log | Kernel strips `payload`/`content`/`value`/`memory`/`text`/`body` from `ActionTrace.args` for `memory.*` capabilities |
+| Sensitive data reaching the audit log via args/errors | `ActionTrace.args` and driver `error` text are run through the firewall redactor for **every** capability; memory payloads (`payload`/`content`/`value`/`memory`/`text`/`body`) are additionally stripped wholesale for `memory.*` capabilities (#75, #172) |
 | Scanned content / raw result reaching audit log | `ActionTrace.result_summary` is built only from the post-firewall `Frame` (counts and flags, never raw driver data), so the audit trail records an invocation's outcome without re-introducing the data the firewall removed |
 
 ## Token scopes
@@ -126,6 +128,15 @@ audit.db` exits non-zero on any divergence (see [cli.md](cli.md)).
 - The `WEAVER_KERNEL_SECRET` must be kept secret. Rotate it if compromised.
 - The default `InMemoryDriver` has no persistence — suitable for testing only.
 - PII redaction is heuristic (regex-based). It is not a substitute for proper data governance.
+- Streaming redaction (`Firewall.apply_stream`) reassembles patterns split across
+  chunks by holding back a bounded overlap window. A contiguous secret
+  (JWT/Bearer/API-key/connection-string body) is never split across a commit
+  boundary, but a pattern containing internal whitespace (phone, SSN, spaced card
+  number) split exactly at the held boundary may still evade detection. The
+  holdback buffer is also memory-bounded (`overlap * 4`); a single contiguous
+  secret longer than that bound is force-committed and may be severed at the cut,
+  so an extremely long unbroken token can escape per-segment detection — a
+  deliberate memory-vs-safety trade.
 - Rate limiting is enforced per `(principal_id, capability_id)` pair using a sliding window.
   Default limits: 60 READ / 10 WRITE / 2 DESTRUCTIVE invocations per 60-second window.
   Principals with the `"service"` role receive 10× the default limits. Limits are

@@ -17,7 +17,7 @@ from ..models import (
     ResponseMode,
 )
 from .budgets import Budgets
-from .redaction import redact
+from .redaction import StreamRedactor, redact
 from .summarize import summarize
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,16 @@ class Firewall:
             self._budgets = Budgets()
         else:
             self._budgets = budgets
+
+    @property
+    def budgets(self) -> Budgets:
+        """The configured row/field/character/depth budgets.
+
+        Exposed so other egress paths (e.g. handle expansion) can redact with
+        the *same* ``max_depth`` the single-shot ``transform`` path uses,
+        keeping the I-01 boundary consistent across paths.
+        """
+        return self._budgets
 
     def transform(
         self,
@@ -232,9 +242,15 @@ class Firewall:
         budget caps that apply to a single-shot :meth:`transform` apply to
         *every* chunk — PII never leaks even when results stream in.
 
+        Cross-chunk redaction safety: top-level string fields are routed
+        through a per-field :class:`StreamRedactor`, which holds back a
+        trailing overlap window so a secret whose characters span two chunks
+        is reassembled and redacted before either half is emitted. Non-string
+        and nested values are redacted per chunk by :meth:`transform`.
+
         Mode escalation across chunks (e.g. dropping from ``table`` to
         ``summary`` as budget drains) is the caller's responsibility — the
-        Firewall itself is stateless. ``Kernel.invoke_stream`` orchestrates
+        Firewall itself does not escalate. ``Kernel.invoke_stream`` orchestrates
         escalation via :class:`BudgetManager.suggested_mode`.
 
         The synthetic key ``"__is_final__"`` on a chunk is stripped before
@@ -256,9 +272,13 @@ class Firewall:
         Yields:
             :class:`Frame` chunks with ``is_final`` set on the last one.
         """
+        redactors: dict[str, StreamRedactor] = {}
         async for chunk in response_chunks:
             is_final = bool(chunk.get("__is_final__", False))
-            payload = {k: v for k, v in chunk.items() if k != "__is_final__"}
+            raw_payload = {k: v for k, v in chunk.items() if k != "__is_final__"}
+            payload, stream_warnings = _apply_stream_redactors(
+                raw_payload, redactors, is_final=is_final
+            )
             synthetic_raw = RawResult(
                 capability_id=capability_id,
                 data=payload,
@@ -272,6 +292,8 @@ class Firewall:
                 response_mode=response_mode,
                 constraints=constraints,
             )
+            if stream_warnings:
+                frame = replace(frame, warnings=[*frame.warnings, *stream_warnings])
             if is_final:
                 frame = replace(frame, is_final=True)
             yield frame
@@ -293,6 +315,54 @@ class Firewall:
             else:
                 result.append({"value": row})
         return result
+
+
+def _apply_stream_redactors(
+    payload: dict[str, Any],
+    redactors: dict[str, StreamRedactor],
+    *,
+    is_final: bool,
+) -> tuple[dict[str, Any], list[str]]:
+    """Route a chunk's top-level string fields through per-field redactors.
+
+    String values are fed to a :class:`StreamRedactor` (created lazily per
+    field) so patterns split across chunks are reassembled before emission.
+    Non-string values are passed through unchanged — :meth:`Firewall.transform`
+    still redacts them per chunk. On the final chunk every active redactor is
+    flushed, including fields absent from the final payload (their held tail is
+    re-attached under the original key) so no buffered text is dropped.
+
+    Args:
+        payload: The chunk payload (``__is_final__`` already stripped).
+        redactors: Mutable per-field redactor state carried across chunks.
+        is_final: Whether this is the last chunk (triggers flush).
+
+    Returns:
+        ``(redacted_payload, warnings)``.
+    """
+    out: dict[str, Any] = {}
+    warnings: list[str] = []
+    for key, value in payload.items():
+        if isinstance(value, str):
+            redactor = redactors.setdefault(key, StreamRedactor())
+            committed, warns = redactor.feed(value)
+            if is_final:
+                tail, tail_warns = redactor.flush()
+                committed += tail
+                warns = [*warns, *tail_warns]
+            out[key] = committed
+            warnings.extend(warns)
+        else:
+            out[key] = value
+    if is_final:
+        for key, redactor in redactors.items():
+            if key in out:
+                continue
+            tail, tail_warns = redactor.flush()
+            if tail:
+                out[key] = tail
+                warnings.extend(tail_warns)
+    return out, warnings
 
 
 def _cap_facts(facts: list[str], max_chars: int) -> list[str]:

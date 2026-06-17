@@ -19,12 +19,13 @@ import datetime
 import logging
 import uuid
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..drivers.base import Driver, ExecutionContext
 from ..enums import SensitivityTag
 from ..errors import DriverError
 from ..firewall.budget_manager import BudgetManager
+from ..firewall.redaction import redact
 from ..models import (
     ActionTrace,
     Capability,
@@ -50,22 +51,41 @@ _MEMORY_SENSITIVE_ARG_KEYS: frozenset[str] = frozenset(
 
 
 def _redact_args_for_trace(capability_id: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Strip raw memory payloads from :class:`ActionTrace.args`.
+    """Redact sensitive values from :class:`ActionTrace.args` before storage.
 
-    Memory capabilities (``capability_id`` starting with ``"memory."``) may
-    carry durable text the principal is committing to or fetching from
-    long-term memory. Tracing the raw payload would defeat the I-01 boundary
-    the :class:`Firewall` enforces for outputs — so we apply an equivalent
-    input-side redaction at trace-record time. Keys are preserved (so audit
-    can confirm a payload was provided); sensitive values become
-    ``"[REDACTED]"``. Non-memory capabilities are returned unchanged.
+    The trace store is the long-lived audit record; if invocation arguments
+    carry user content, secrets passed as parameters, or PII, storing them raw
+    makes the store itself a sensitive-data sink — undermining the I-01
+    boundary the :class:`Firewall` enforces on *outputs*. Two layers apply:
+
+    1. **Memory payload stripping.** Memory capabilities (``capability_id``
+       starting with ``"memory."``) carry durable free text under known keys
+       (``payload``, ``content``, …); those values are replaced wholesale with
+       ``"[REDACTED]"`` (keys preserved so audit can confirm a payload was
+       provided).
+    2. **General pattern/field redaction for every capability.** All args are
+       then passed through the same :func:`~weaver_kernel.firewall.redaction.redact`
+       used on driver output, so inline secrets/PII and sensitive field names
+       are scrubbed regardless of the capability namespace (#172).
     """
-    if not capability_id.startswith(_MEMORY_CAPABILITY_PREFIX):
-        return args
-    return {
-        k: ("[REDACTED]" if k.lower() in _MEMORY_SENSITIVE_ARG_KEYS else v)
-        for k, v in args.items()
-    }
+    if capability_id.startswith(_MEMORY_CAPABILITY_PREFIX):
+        args = {
+            k: ("[REDACTED]" if k.lower() in _MEMORY_SENSITIVE_ARG_KEYS else v)
+            for k, v in args.items()
+        }
+    redacted, _ = redact(args)
+    return cast(dict[str, Any], redacted)
+
+
+def _redact_trace_text(text: str) -> str:
+    """Scrub inline secrets/PII from free text before it enters a trace.
+
+    ``DriverError`` messages can embed raw response bodies (e.g. up to 200
+    characters of an HTTP error body), so error text recorded on an
+    :class:`ActionTrace` is run through the firewall's string redactor first.
+    """
+    redacted, _ = redact(text)
+    return cast(str, redacted)
 
 
 def _frame_result_summary(frame: Frame) -> dict[str, Any]:
@@ -166,7 +186,7 @@ def record_failure_trace(
             response_mode=response_mode,
             driver_id="",
             sensitivity=sensitivity,
-            error=error_message,
+            error=_redact_trace_text(error_message),
         )
     )
 
