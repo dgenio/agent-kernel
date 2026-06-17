@@ -38,6 +38,16 @@ class Firewall:
         else:
             self._budgets = budgets
 
+    @property
+    def budgets(self) -> Budgets:
+        """The configured row/field/character/depth budgets.
+
+        Exposed so other egress paths (e.g. handle expansion) can redact with
+        the *same* ``max_depth`` the single-shot ``transform`` path uses,
+        keeping the I-01 boundary consistent across paths.
+        """
+        return self._budgets
+
     def transform(
         self,
         raw: RawResult,

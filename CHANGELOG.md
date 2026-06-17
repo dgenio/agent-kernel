@@ -17,13 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projected rows through the same `redact()` the firewall applies on first
   invocation, so a secret inline in a grant-permitted field (e.g. a Bearer token
   in a `note` value) is scrubbed on the expand path. Expansion Frames now carry
-  redaction `warnings`.
+  redaction `warnings`. `Kernel.expand()` threads the firewall's configured
+  `Budgets.max_depth` (exposed via the new `Firewall.budgets` property) into the
+  expand redaction so it scrubs to the same depth as the `transform` path rather
+  than the `redact()` default.
 - **Cross-chunk redaction safety for streaming Frames (#151).**
   `Firewall.apply_stream()` keeps a per-field `StreamRedactor` that holds back a
   trailing overlap window, so a secret whose characters are split across two
   streamed chunks is reassembled and redacted before either half is emitted.
-  Documented limit: patterns containing internal whitespace split exactly at the
-  held boundary may still evade detection (see `docs/security.md`).
+  Documented limits (see `docs/security.md`): patterns containing internal
+  whitespace split exactly at the held boundary may still evade detection, and a
+  single contiguous secret longer than the memory-bounded holdback buffer
+  (`overlap * 4`) may be force-committed and severed at the cut.
 - **Trace argument and error redaction extended beyond `memory.*` (#172).**
   `ActionTrace.args` for **every** capability — and driver `error` text — now
   pass through the firewall redactor before persistence, so the trace store no

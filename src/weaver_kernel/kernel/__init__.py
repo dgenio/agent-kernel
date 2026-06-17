@@ -324,6 +324,7 @@ class Kernel:
             handle,
             query=query,
             principal_id=principal.principal_id if principal else "",
+            max_depth=self._firewall.budgets.max_depth,
         )
 
     def explain(self, action_id: str) -> ActionTrace:

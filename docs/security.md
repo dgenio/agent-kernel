@@ -132,7 +132,11 @@ audit.db` exits non-zero on any divergence (see [cli.md](cli.md)).
   chunks by holding back a bounded overlap window. A contiguous secret
   (JWT/Bearer/API-key/connection-string body) is never split across a commit
   boundary, but a pattern containing internal whitespace (phone, SSN, spaced card
-  number) split exactly at the held boundary may still evade detection.
+  number) split exactly at the held boundary may still evade detection. The
+  holdback buffer is also memory-bounded (`overlap * 4`); a single contiguous
+  secret longer than that bound is force-committed and may be severed at the cut,
+  so an extremely long unbroken token can escape per-segment detection — a
+  deliberate memory-vs-safety trade.
 - Rate limiting is enforced per `(principal_id, capability_id)` pair using a sliding window.
   Default limits: 60 READ / 10 WRITE / 2 DESTRUCTIVE invocations per 60-second window.
   Principals with the `"service"` role receive 10× the default limits. Limits are

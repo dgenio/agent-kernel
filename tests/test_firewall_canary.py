@@ -39,7 +39,7 @@ from weaver_kernel.adapters._base import frame_to_payload
 from weaver_kernel.drivers.base import ExecutionContext
 from weaver_kernel.errors import DriverError
 from weaver_kernel.firewall.redaction import StreamRedactor, redact
-from weaver_kernel.models import CapabilityRequest, Handle
+from weaver_kernel.models import CapabilityRequest, Handle, ResponseMode
 
 # ── Canaries — these strings exist nowhere else in the codebase ────────────────
 
@@ -199,12 +199,17 @@ def _build_kernel(
 
 
 def _grant_and_invoke(
-    kernel: Kernel, principal: Principal, capability_id: str, args: dict[str, Any]
+    kernel: Kernel,
+    principal: Principal,
+    capability_id: str,
+    args: dict[str, Any],
+    *,
+    response_mode: ResponseMode = "summary",
 ):
     request = CapabilityRequest(capability_id=capability_id, goal="canary test")
     grant = kernel.grant_capability(request, principal, justification="canary regression coverage")
     return asyncio.run(
-        kernel.invoke(grant.token, principal=principal, args=args, response_mode="summary")
+        kernel.invoke(grant.token, principal=principal, args=args, response_mode=response_mode)
     )
 
 
@@ -248,3 +253,17 @@ def test_canary_never_leaks_through_adapter_payload() -> None:
     frame = _grant_and_invoke(kernel, principal, "billing.refund", {"amount": 1})
     payload = frame_to_payload(frame)
     _assert_no_canary(_dump(payload), path="frame_to_payload")
+
+
+def test_canary_never_leaks_through_raw_admin_frame() -> None:
+    """The admin-only ``raw`` response mode still redacts inline secrets (#206)."""
+    kernel, principal = _build_kernel(
+        lambda _ctx: [{"id": 1, "secret_note": f"db {_CANARY_CONN}"}]
+    )
+    frame = _grant_and_invoke(
+        kernel, principal, "billing.refund", {"amount": 1}, response_mode="raw"
+    )
+    # Confirm we exercised the raw path, not the admin-role fallback to summary.
+    assert frame.response_mode == "raw"
+    _assert_no_canary(_dump(frame), path="response_mode=raw")
+    _assert_no_canary(_dump(frame_to_payload(frame)), path="frame_to_payload(raw)")

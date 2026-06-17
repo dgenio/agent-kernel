@@ -148,6 +148,7 @@ class HandleStore:
         action_id: str = "",
         response_mode: ResponseMode = "table",
         principal_id: str = "",
+        max_depth: int | None = None,
     ) -> Frame:
         """Expand a handle with optional pagination, field selection, and filtering.
 
@@ -164,6 +165,10 @@ class HandleStore:
             response_mode: Response mode for the returned Frame.
             principal_id: Principal performing the expansion. When the handle
                 was created with a non-empty ``principal_id``, this must match.
+            max_depth: Redaction recursion cap for the projected rows. When
+                ``None`` the :func:`redact` default applies; the kernel passes
+                the firewall's configured ``Budgets.max_depth`` so the
+                expansion path redacts to the same depth as ``transform``.
 
         Returns:
             A :class:`Frame` containing the slice of data.
@@ -323,12 +328,17 @@ class HandleStore:
         # ── Redaction ───────────────────────────────────────────────────────────
         # expand() builds its Frame directly from the raw stored dataset, which
         # is persisted pre-firewall. Field-level grant constraints
-        # (allowed_fields / scope) are already enforced above, but a permitted
+        # (allowed_fields / scope) are already enforced by the projection above,
+        # so allowed_fields is intentionally not re-passed here; but a permitted
         # field can still carry inline secrets (e.g. a Bearer token in a `note`
         # value). Route the projected rows through the same redactor the
-        # Firewall applies on first invocation so the I-01 boundary holds on the
-        # expansion path too (see docs/agent-context/invariants.md).
-        redacted_preview, warnings = redact(table_preview)
+        # Firewall applies on first invocation — using the firewall's configured
+        # max_depth when the caller threads it — so the I-01 boundary holds on
+        # the expansion path too (see docs/agent-context/invariants.md).
+        if max_depth is None:
+            redacted_preview, warnings = redact(table_preview)
+        else:
+            redacted_preview, warnings = redact(table_preview, max_depth=max_depth)
 
         return Frame(
             action_id=action_id,

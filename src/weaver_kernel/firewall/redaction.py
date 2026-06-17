@@ -199,6 +199,12 @@ class StreamRedactor:
     card numbers) and are split exactly at the held boundary may still evade
     detection — a documented limit, mirrored in ``docs/security.md``.
 
+    Second documented limit: to bound memory the buffer force-commits when it
+    grows past ``overlap * 4`` without hitting a separator. A *single
+    contiguous* secret longer than that bound (e.g. a very large JWT) can then
+    be severed at the forced cut and escape per-segment detection. This is the
+    deliberate memory-vs-safety trade and is mirrored in ``docs/security.md``.
+
     The redactor is single-stream and stateful: feed chunks in order, then
     call :meth:`flush` once at end-of-stream.
     """
