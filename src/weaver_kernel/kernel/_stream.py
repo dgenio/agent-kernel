@@ -125,6 +125,7 @@ async def invoke_stream_impl(
                     principal_id=principal.principal_id,
                     constraints=token.constraints,
                 )
+                kernel._stats.on_handle_store()
             frame = kernel._fw.transform(
                 raw,
                 action_id=action_id,
@@ -154,6 +155,12 @@ async def invoke_stream_impl(
                 result_summary=(_frame_result_summary(last_frame) if last_frame else None),
                 error=None if yielded_any else "stream produced no chunks",
             )
+        )
+        kernel._stats.on_invocation(
+            failed=not yielded_any,
+            fallback=False,
+            redacted=bool(last_frame.warnings) if last_frame else False,
+            downgraded=initial_mode != response_mode,
         )
         logger.info(
             "invoke_stream_end",

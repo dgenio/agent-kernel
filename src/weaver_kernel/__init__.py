@@ -27,6 +27,13 @@ Handles & traces::
 
     from weaver_kernel import HandleStore, TraceStore
     from weaver_kernel import export_action_trace, export_action_traces
+    from weaver_kernel import TraceQuery, query_traces
+
+Observability & SIEM export::
+
+    from weaver_kernel import KernelStats, StatsSnapshot
+    from weaver_kernel import trace_to_ocsf, traces_to_ocsf
+    from weaver_kernel import replay, record_decision, DecisionRecord, DecisionDiff
 
 Durable persistence & verifiable audit log::
 
@@ -141,14 +148,24 @@ from .models import (
     ResponseMode,
     RoutePlan,
     ToolHints,
+    TraceEventType,
     TrustLevel,
 )
+from .ocsf import AOS_EXTENSION, OCSF_VERSION, trace_to_ocsf, traces_to_ocsf
 from .otel import OTEL_AVAILABLE, instrument_kernel
 from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
 from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
 from .policy_reasons import AllowReason, DenialReason
 from .registry import CapabilityRegistry
+from .replay import (
+    DecisionDiff,
+    DecisionFlip,
+    DecisionRecord,
+    record_decision,
+    replay,
+)
 from .router import StaticRouter
+from .stats import KernelStats, StatsSnapshot
 from .stores import (
     ChainVerificationResult,
     HandleStoreProtocol,
@@ -169,6 +186,7 @@ from .trace import (
     export_action_trace,
     export_action_traces,
 )
+from .trace_query import TraceQuery, query_traces
 
 # Single source of truth: read the version from the installed distribution
 # metadata (the PyPI dist name is ``weaver-kernel``, distinct from the import
@@ -208,6 +226,7 @@ __all__ = [
     "ResponseMode",
     "RoutePlan",
     "ActionTrace",
+    "TraceEventType",
     "ToolHints",
     "TrustLevel",
     # enums
@@ -294,6 +313,23 @@ __all__ = [
     "TRACE_EXPORT_VERSION",
     "export_action_trace",
     "export_action_traces",
+    # trace query (issue #177)
+    "TraceQuery",
+    "query_traces",
+    # kernel metrics counters (issue #179)
+    "KernelStats",
+    "StatsSnapshot",
+    # OCSF / AOS SIEM export (issue #176)
+    "AOS_EXTENSION",
+    "OCSF_VERSION",
+    "trace_to_ocsf",
+    "traces_to_ocsf",
+    # policy-replay harness (issue #213)
+    "DecisionDiff",
+    "DecisionFlip",
+    "DecisionRecord",
+    "record_decision",
+    "replay",
     # adapters
     "AnthropicMiddleware",
     "OpenAIMiddleware",

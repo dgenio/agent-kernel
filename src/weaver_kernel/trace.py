@@ -20,11 +20,15 @@ payloads. The contract adds no field that the trace did not already hold.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Any
 
 from .errors import AgentKernelError
 from .models import ActionTrace
+from .trace_query import TraceQuery, query_traces
+
+logger = logging.getLogger("weaver_kernel.trace")
 
 # ── Export contract ─────────────────────────────────────────────────────────
 
@@ -74,6 +78,8 @@ def export_action_trace(
         "handle_id": trace.handle_id,
         "sensitivity": trace.sensitivity.value,
         "status": "failed" if trace.error is not None else "succeeded",
+        "event_type": trace.event_type,
+        "reason_code": trace.reason_code,
         "error": trace.error,
         "args": trace.args,
         "result_summary": trace.result_summary,
@@ -109,23 +115,71 @@ def export_action_traces(
     }
 
 
+_DEFAULT_MAX_ENTRIES = 10_000
+
+
 class TraceStore:
     """Stores :class:`ActionTrace` records indexed by ``action_id``.
 
     All invocations recorded by the :class:`~weaver_kernel.kernel.Kernel` are
     retrievable here for audit and explainability purposes.
+
+    Memory is bounded (#182): a long-lived agent process records one trace per
+    invocation, so the store caps itself at ``max_entries`` and evicts the
+    oldest record (insertion order, FIFO) when the cap is exceeded. Eviction
+    discards audit data, so it is *loud* — the first eviction logs a warning and
+    :attr:`evicted_count` records how many records were dropped. Deployments
+    that need unbounded retention should use a durable backend
+    (:class:`~weaver_kernel.stores.SQLiteTraceStore` /
+    :class:`~weaver_kernel.stores.JsonlTraceStore`).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_entries: int = _DEFAULT_MAX_ENTRIES) -> None:
+        """Initialise the store.
+
+        Args:
+            max_entries: Maximum number of records retained. Must be positive;
+                defaults high enough (10 000) that typical sessions never evict.
+
+        Raises:
+            AgentKernelError: If ``max_entries`` is not positive.
+        """
+        if max_entries <= 0:
+            raise AgentKernelError(f"TraceStore max_entries must be positive, got {max_entries}.")
         self._traces: dict[str, ActionTrace] = {}
+        self._max_entries = max_entries
+        self.evicted_count = 0
+        self._eviction_warned = False
 
     def record(self, trace: ActionTrace) -> None:
-        """Store an action trace.
+        """Store an action trace, evicting the oldest if the cap is exceeded.
+
+        Re-recording an existing ``action_id`` overwrites in place and never
+        evicts (the record count is unchanged). A genuinely new record beyond
+        :attr:`max_entries` drops the oldest record first.
 
         Args:
             trace: The :class:`ActionTrace` to record.
         """
         self._traces[trace.action_id] = trace
+        while len(self._traces) > self._max_entries:
+            oldest_id = next(iter(self._traces))
+            del self._traces[oldest_id]
+            self.evicted_count += 1
+            if not self._eviction_warned:
+                logger.warning(
+                    "trace_store_eviction",
+                    extra={"max_entries": self._max_entries, "evicted_action_id": oldest_id},
+                )
+                self._eviction_warned = True
+
+    def query(self, query: TraceQuery) -> list[ActionTrace]:
+        """Return recorded traces matching *query*, ordered and paginated.
+
+        See :func:`~weaver_kernel.trace_query.query_traces` for ordering and
+        pagination semantics.
+        """
+        return query_traces(self._traces.values(), query)
 
     def get(self, action_id: str) -> ActionTrace:
         """Retrieve an action trace by its ID.

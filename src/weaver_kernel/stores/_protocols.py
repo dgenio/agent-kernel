@@ -10,9 +10,11 @@ via constructor injection.
 
 from __future__ import annotations
 
+import datetime
 from typing import Protocol, runtime_checkable
 
 from ..models import ActionTrace
+from ..trace_query import TraceQuery
 
 
 @runtime_checkable
@@ -36,6 +38,15 @@ class TraceStoreProtocol(Protocol):
         """Return all recorded traces in insertion order."""
         ...
 
+    def query(self, query: TraceQuery) -> list[ActionTrace]:
+        """Return traces matching *query*, ordered and paginated (#177).
+
+        Ordering and pagination follow
+        :func:`~weaver_kernel.trace_query.query_traces` so every backend exposes
+        the same filter semantics.
+        """
+        ...
+
 
 @runtime_checkable
 class RevocationStoreProtocol(Protocol):
@@ -54,8 +65,16 @@ class RevocationStoreProtocol(Protocol):
         """Revoke a single token. Idempotent."""
         ...
 
-    def track(self, principal_id: str, token_id: str) -> None:
-        """Record that *token_id* was issued to *principal_id* (for ``revoke_all``)."""
+    def track(self, principal_id: str, token_id: str, expires_at: datetime.datetime) -> None:
+        """Record that *token_id* was issued to *principal_id* (for ``revoke_all``).
+
+        Args:
+            principal_id: The principal the token was issued to.
+            token_id: The issued token's id.
+            expires_at: The token's expiry. Lets :meth:`sweep_expired` drop
+                bookkeeping for tokens that can no longer verify, bounding memory
+                growth in long-lived processes (#182).
+        """
         ...
 
     def revoke_principal(self, principal_id: str) -> int:
@@ -64,6 +83,20 @@ class RevocationStoreProtocol(Protocol):
         Returns:
             The count of tokens newly revoked by this call (excluding tokens
             already revoked).
+        """
+        ...
+
+    def sweep_expired(self, now: datetime.datetime) -> int:
+        """Drop revocation/tracking state for tokens already expired at *now*.
+
+        An expired token fails verification on its own (expiry is checked before
+        the revocation list is even consulted), so retaining its revocation entry
+        no longer changes any decision — but it would otherwise accumulate
+        forever. Removing it bounds memory without ever un-revoking a *live*
+        token (#182).
+
+        Returns:
+            The number of tracked tokens whose state was removed.
         """
         ...
 

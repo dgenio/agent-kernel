@@ -120,6 +120,38 @@ in-memory trace did not already hold and cannot widen the I-01 boundary.
 The CLI exposes verification to operators: `weaver-kernel audit verify --store
 audit.db` exits non-zero on any divergence (see [cli.md](cli.md)).
 
+## What the audit trail captures (#175)
+
+Auditability (I-02) covers authorization decisions and data-access events, not
+only successful invocations. Every recorded `ActionTrace` carries an `event_type`:
+
+- `invoke` — a capability invocation (success or driver failure).
+- `expand` — a `Kernel.expand()` data-access event (more rows of a stored
+  handle). Expansion Frames carry the expanding principal in
+  `Provenance.principal_id`.
+- `deny` — a `grant_capability()` rejected by policy, recorded with the stable
+  `reason_code` (a `DenialReason`) and a redacted reason message *before* the
+  `PolicyDenied` exception propagates.
+
+So `explain()` and `query_traces()` can answer "who was refused what, when, and
+why" and "which rows were expanded by whom". Expansion query arguments and denial
+messages pass through the same firewall redactor as invocation args, so these new
+records never make the trace store a sensitive-data sink.
+
+## Retention bounding (#182)
+
+Long-lived processes accumulate one trace per invocation and one revocation entry
+per revoked token. Both in-memory structures are bounded:
+
+- The in-memory `TraceStore` caps at `max_entries` (default 10 000), evicting
+  oldest-first. Eviction discards audit data, so it is deliberately loud (a
+  warning on first eviction) and counted (`evicted_count`). For unbounded
+  retention, use a durable backend.
+- Revocation state records each token's expiry and is swept for already-expired
+  tokens (lazily, and via `HMACTokenProvider.sweep_revocations()`). A sweep never
+  un-revokes a live token — only entries for tokens that already fail the expiry
+  check are removed.
+
 ## Security disclaimers
 
 > **v0.1 is not production-hardened for real authentication.**

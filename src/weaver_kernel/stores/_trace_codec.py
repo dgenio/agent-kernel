@@ -45,6 +45,8 @@ def decode_trace(payload: dict[str, Any]) -> ActionTrace:
             error=payload.get("error"),
             result_summary=payload.get("result_summary"),
             sensitivity=SensitivityTag(payload.get("sensitivity", "NONE")),
+            event_type=payload.get("event_type", "invoke"),
+            reason_code=payload.get("reason_code"),
         )
     except KeyError as exc:
         raise AgentKernelError(

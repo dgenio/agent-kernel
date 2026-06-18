@@ -42,6 +42,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   egress — summary/table/raw Frames, handle expansions, streamed chunks, trace
   args/errors, and adapter-rendered payloads — turning the I-01 boundary into an
   executable invariant and a regression net for the fixes above.
+- **Handle expansions and policy denials are now first-class audit records
+  (#175).** `ActionTrace` gained an additive `event_type`
+  (`invoke`/`expand`/`deny`) and `reason_code`. A successful `Kernel.expand()`
+  records an `expand` event (and expansion Frames now carry a non-empty
+  `Provenance.principal_id`); a `PolicyDenied` grant records a `deny` event with
+  the stable reason code before the exception propagates, so `explain()` and the
+  trace listing answer "who was refused what, when, and why" (I-02).
+- **TraceStore query API (#177).** New `TraceQuery` dataclass and pure
+  `query_traces()` filter by principal, capability, event type, outcome, reason
+  code, and time window (since-inclusive / until-exclusive) with deterministic
+  `(invoked_at, action_id)` ordering and pagination. Exposed as
+  `TraceStore.query()` / `Kernel.query_traces()` and added to
+  `TraceStoreProtocol`, so the SQLite and JSONL backends share the contract.
+- **Programmatic kernel metrics counters (#179).** `Kernel.stats` returns an
+  immutable `StatsSnapshot` (grants, denials by reason code, invocations,
+  invocation failures, fallback activations, redaction events, budget downgrades,
+  handle stores, expansions); `Kernel.reset_stats()` zeroes them. Dependency-free
+  and lock-guarded — telemetry without exporting the full trail or installing the
+  `otel` extra.
+- **OCSF / OWASP-AOS SIEM export (#176).** `trace_to_ocsf()` / `traces_to_ocsf()`
+  map any `ActionTrace` (invoke/expand/deny) to OCSF API Activity (class 6003)
+  events, AOS-enriched, as a pure dependency-free dict construction. See the SIEM
+  section in `docs/integrations.md` for the field-mapping table and a runnable
+  recipe (`examples/ocsf_export_demo.py`).
+- **Policy-replay regression harness (#213).** `DecisionRecord`,
+  `record_decision()`, and `replay(records, engine) -> DecisionDiff` re-evaluate a
+  recorded decision corpus against a candidate policy and report allow→deny,
+  deny→allow, and reason-code flips deterministically. Rate-limit-dependent flips
+  are surfaced separately (`DecisionDiff.rate_limited`).
+  Companion: `examples/trace_replay_demo.py`.
+
+### Changed
+- **Bounded memory for in-memory audit and revocation state (#182).**
+  `TraceStore` now caps at `max_entries` (default 10 000) with oldest-first
+  eviction, a one-time warning, and an observable `evicted_count`. The revocation
+  store tracks each token's expiry and sweeps state for already-expired tokens
+  (lazily on an interval and via `HMACTokenProvider.sweep_revocations()`), never
+  un-revoking a live token. `RevocationStoreProtocol.track()` now takes an
+  `expires_at` argument and the protocol gained `sweep_expired()` (breaking for
+  custom revocation backends).
 
 ## [0.11.0] - 2026-06-13
 

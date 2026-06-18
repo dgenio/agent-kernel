@@ -21,6 +21,14 @@ if TYPE_CHECKING:
 
 ResponseMode = Literal["summary", "table", "handle_only", "raw"]
 
+TraceEventType = Literal["invoke", "expand", "deny"]
+"""Kind of audited event an :class:`ActionTrace` records.
+
+``"invoke"`` is a capability invocation (the original and default shape),
+``"expand"`` is a handle-expansion data-access event, and ``"deny"`` is a
+policy denial at grant time. A single homogeneous record type keeps the trace
+query, OCSF export, and replay paths uniform across all three (#175)."""
+
 
 # ── Capability ────────────────────────────────────────────────────────────────
 
@@ -435,8 +443,25 @@ class ActionTrace:
     registry lookup. Defaults to :attr:`SensitivityTag.NONE` for traces
     constructed directly (e.g. in tests) or for non-sensitive capabilities.
 
-    Declared last so adding it does not shift the positional ``__init__`` order
-    of the pre-existing fields (``ActionTrace`` is part of the public API).
+    Declared (with the fields below) after the original positional arguments so
+    adding it does not shift their ``__init__`` order (``ActionTrace`` is part
+    of the public API).
+    """
+
+    event_type: TraceEventType = "invoke"
+    """Which kind of audited event this record describes (#175).
+
+    Defaults to ``"invoke"`` so every pre-existing trace and any record
+    constructed directly keeps its original meaning. Handle expansions record
+    ``"expand"`` and policy denials record ``"deny"``.
+    """
+
+    reason_code: str | None = None
+    """Stable :class:`~weaver_kernel.policy_reasons.DenialReason` value for a
+    ``"deny"`` event (``None`` for invoke/expand events).
+
+    Lets audit consumers branch on *why* a request was refused without parsing
+    the human-readable :attr:`error` message.
     """
 
 

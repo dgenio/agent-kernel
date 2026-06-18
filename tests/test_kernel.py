@@ -938,3 +938,51 @@ async def test_dry_run_with_mcp_driver_does_not_call_execute() -> None:
     assert result.operation == "mcp.echo"
     assert result.capability_id == "mcp.echo"
     assert result.policy_decision.allowed is True
+
+
+# ── Audit recording for denials and expansions (issue #175) ────────────────────
+
+
+def test_denied_grant_records_deny_trace(kernel: Kernel, reader_principal: Principal) -> None:
+    req = CapabilityRequest(capability_id="billing.delete_invoice", goal="delete")
+    with pytest.raises(PolicyDenied):
+        kernel.grant_capability(req, reader_principal, justification="nope")
+    deny_traces = [t for t in kernel.list_traces() if t.event_type == "deny"]
+    assert len(deny_traces) == 1
+    assert deny_traces[0].capability_id == "billing.delete_invoice"
+    assert deny_traces[0].principal_id == reader_principal.principal_id
+    assert deny_traces[0].reason_code is not None
+    # Retrievable via explain().
+    assert kernel.explain(deny_traces[0].action_id).event_type == "deny"
+
+
+@pytest.mark.asyncio
+async def test_expand_records_expand_trace(kernel: Kernel, reader_principal: Principal) -> None:
+    req = CapabilityRequest(capability_id="billing.list_invoices", goal="list")
+    token = kernel.get_token(req, reader_principal, justification="")
+    frame = await kernel.invoke(
+        token, principal=reader_principal, args={"operation": "billing.list_invoices"}
+    )
+    assert frame.handle is not None
+    expanded = kernel.expand(frame.handle, query={"limit": 1}, principal=reader_principal)
+    assert expanded.provenance.principal_id == reader_principal.principal_id
+
+    expand_traces = [t for t in kernel.list_traces() if t.event_type == "expand"]
+    assert len(expand_traces) == 1
+    assert expand_traces[0].principal_id == reader_principal.principal_id
+    assert expand_traces[0].handle_id == frame.handle.handle_id
+    assert expand_traces[0].capability_id == "billing.list_invoices"
+
+
+def test_kernel_query_traces(kernel: Kernel, reader_principal: Principal) -> None:
+    from weaver_kernel import TraceQuery
+
+    req = CapabilityRequest(capability_id="billing.delete_invoice", goal="delete")
+    with pytest.raises(PolicyDenied):
+        kernel.grant_capability(req, reader_principal, justification="nope")
+
+    denied = kernel.query_traces(TraceQuery(event_type="deny"))
+    assert len(denied) == 1
+    assert denied[0].capability_id == "billing.delete_invoice"
+    # Filtering by a principal who did nothing yields nothing.
+    assert kernel.query_traces(TraceQuery(principal_id="ghost")) == []

@@ -22,6 +22,7 @@ from typing import Any
 from .._secrets import resolve_hmac_secret
 from ..errors import AgentKernelError
 from ..models import ActionTrace
+from ..trace_query import TraceQuery, query_traces
 from ._trace_codec import decode_trace, encode_trace
 from .audit_chain import (
     GENESIS_HASH,
@@ -165,6 +166,16 @@ class SQLiteTraceStore:
             for r in rows
         ]
 
+    def query(self, query: TraceQuery) -> list[ActionTrace]:
+        """Return traces matching *query* (#177).
+
+        Decodes the chain and filters in Python via the shared
+        :func:`~weaver_kernel.trace_query.query_traces`, so every backend shares
+        identical semantics. O(n); acceptable until a pushed-down SQL filter is
+        warranted by volume.
+        """
+        return query_traces(self.list_all(), query)
+
     # ── Audit chain (issue #127) ──────────────────────────────────────────────
 
     def list_records(self) -> list[TraceRecord]:
@@ -240,6 +251,12 @@ class SQLiteRevocationStore:
             "principal_id TEXT NOT NULL, token_id TEXT NOT NULL, "
             "PRIMARY KEY (principal_id, token_id))"
         )
+        # Token expiry, so sweep_expired can bound growth without un-revoking a
+        # live token (#182). Separate table keeps the existing schema intact.
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS token_expiry ("
+            "token_id TEXT PRIMARY KEY, expires_at TEXT NOT NULL)"
+        )
         self._conn.commit()
 
     def is_revoked(self, token_id: str) -> bool:
@@ -255,12 +272,19 @@ class SQLiteRevocationStore:
             self._conn.execute("INSERT OR IGNORE INTO revoked (token_id) VALUES (?)", (token_id,))
             self._conn.commit()
 
-    def track(self, principal_id: str, token_id: str) -> None:
-        """Record that *token_id* was issued to *principal_id*."""
+    def track(self, principal_id: str, token_id: str, expires_at: datetime.datetime) -> None:
+        """Record that *token_id* was issued to *principal_id*, with its expiry."""
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+        expiry_iso = expires_at.astimezone(datetime.timezone.utc).isoformat()
         with self._lock:
             self._conn.execute(
                 "INSERT OR IGNORE INTO principal_tokens (principal_id, token_id) VALUES (?, ?)",
                 (principal_id, token_id),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO token_expiry (token_id, expires_at) VALUES (?, ?)",
+                (token_id, expiry_iso),
             )
             self._conn.commit()
 
@@ -293,6 +317,33 @@ class SQLiteRevocationStore:
             )
             self._conn.commit()
             return len(newly)
+
+    def sweep_expired(self, now: datetime.datetime) -> int:
+        """Drop revocation/tracking state for tokens expired at *now* (#182).
+
+        Removes only entries whose token has already expired (and therefore
+        fails the verifier's expiry check regardless), so a revoked but unexpired
+        token is never un-revoked.
+
+        Returns:
+            The number of tracked tokens whose state was removed.
+        """
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=datetime.timezone.utc)
+        cutoff = now.astimezone(datetime.timezone.utc).isoformat()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT token_id FROM token_expiry WHERE expires_at <= ?", (cutoff,)
+            ).fetchall()
+            expired = [str(r[0]) for r in rows]
+            if not expired:
+                return 0
+            params = [(tid,) for tid in expired]
+            self._conn.executemany("DELETE FROM revoked WHERE token_id = ?", params)
+            self._conn.executemany("DELETE FROM principal_tokens WHERE token_id = ?", params)
+            self._conn.executemany("DELETE FROM token_expiry WHERE token_id = ?", params)
+            self._conn.commit()
+            return len(expired)
 
     def close(self) -> None:
         """Close the underlying database connection."""

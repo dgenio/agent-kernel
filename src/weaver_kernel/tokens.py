@@ -222,7 +222,7 @@ class HMACTokenProvider:
             audit_id=audit_id,
         )
         token.signature = self._sign(token._signable_payload())
-        self._revocation.track(principal_id, token.token_id)
+        self._revocation.track(principal_id, token.token_id, token.expires_at)
         logger.debug(
             "token_issued",
             extra={
@@ -256,6 +256,24 @@ class HMACTokenProvider:
             that were already revoked).
         """
         return self._revocation.revoke_principal(principal_id)
+
+    def sweep_revocations(self, now: datetime.datetime | None = None) -> int:
+        """Drop revocation bookkeeping for tokens that have already expired.
+
+        Bounds revocation-state growth in long-lived processes (#182). Safe to
+        call at any time: an expired token fails the verifier's expiry check
+        regardless, so sweeping its entry never un-revokes a live token. The
+        in-memory store also sweeps itself lazily; durable backends expose this
+        for an operator to call on a schedule.
+
+        Args:
+            now: Reference time; defaults to the current UTC time.
+
+        Returns:
+            The number of tracked tokens whose state was removed.
+        """
+        when = now or datetime.datetime.now(tz=datetime.timezone.utc)
+        return self._revocation.sweep_expired(when)
 
     def verify(
         self,

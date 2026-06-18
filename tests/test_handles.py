@@ -336,3 +336,11 @@ def test_negative_offset_rejected(store: HandleStore) -> None:
     with pytest.raises(HandleConstraintViolation) as exc:
         store.expand(handle, query={"offset": -1})
     assert exc.value.reason_code == DenialReason.INVALID_CONSTRAINT
+
+
+def test_expand_fills_provenance_principal(store: HandleStore) -> None:
+    """Expansion Frames carry the expanding principal in provenance (#175)."""
+    handle = _make_handle(store)
+    frame = store.expand(handle, query={}, action_id="act-9", principal_id="agent-1")
+    assert frame.provenance.principal_id == "agent-1"
+    assert frame.provenance.action_id == "act-9"
