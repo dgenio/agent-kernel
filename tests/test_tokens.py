@@ -228,3 +228,16 @@ def test_revocation_state_bounded_under_grant_revoke_loop() -> None:
     assert store._expiry == {}
     assert store._revoked == set()
     assert store._principal_tokens == {}
+
+
+def test_track_and_sweep_accept_naive_datetimes() -> None:
+    """Naive expiry/now are treated as UTC — no naive-vs-aware TypeError."""
+    store = InMemoryRevocationStore()
+    store.track("p1", "t1", datetime.datetime(2099, 1, 1))  # naive expiry
+    store.revoke("t1")
+    # Naive 'now' before expiry keeps the (live) revoked token.
+    assert store.sweep_expired(datetime.datetime(2026, 1, 1)) == 0
+    assert store.is_revoked("t1")
+    # Naive 'now' after expiry removes it.
+    assert store.sweep_expired(datetime.datetime(2099, 1, 2)) == 1
+    assert not store.is_revoked("t1")

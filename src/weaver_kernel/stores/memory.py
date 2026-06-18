@@ -48,7 +48,14 @@ class InMemoryRevocationStore:
             self._revoked.add(token_id)
 
     def track(self, principal_id: str, token_id: str, expires_at: datetime.datetime) -> None:
-        """Record that *token_id* was issued to *principal_id*."""
+        """Record that *token_id* was issued to *principal_id*.
+
+        A naive *expires_at* is treated as UTC (consistent with
+        :class:`~weaver_kernel.stores.SQLiteRevocationStore`) so the sweep never
+        compares naive and aware datetimes.
+        """
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
         with self._lock:
             self._principal_tokens.setdefault(principal_id, set()).add(token_id)
             self._expiry[token_id] = expires_at
@@ -73,9 +80,14 @@ class InMemoryRevocationStore:
     def sweep_expired(self, now: datetime.datetime) -> int:
         """Drop revocation/tracking state for tokens expired at *now*.
 
+        A naive *now* is treated as UTC, matching ``track`` and the durable
+        backends, so the comparison never mixes naive and aware datetimes.
+
         Returns:
             The number of tracked tokens whose state was removed.
         """
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=datetime.timezone.utc)
         with self._lock:
             return self._sweep_locked(now)
 

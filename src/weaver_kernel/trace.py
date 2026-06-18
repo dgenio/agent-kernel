@@ -61,11 +61,13 @@ def export_action_trace(
 
     Returns:
         A dict with the stable export fields. ``status`` is ``"failed"`` when
-        the invocation recorded an ``error`` and ``"succeeded"`` otherwise.
-        (A *denied* request never produces an :class:`ActionTrace` — policy
-        gates before invocation, per I-02 — so the export only ever describes
-        authorised invocations; denials surface via
-        :class:`~weaver_kernel.PolicyDenied` / ``explain_denial``.)
+        the trace recorded an ``error`` and ``"succeeded"`` otherwise.
+        ``event_type`` distinguishes ``"invoke"`` (a capability invocation),
+        ``"expand"`` (a handle-expansion data-access event), and ``"deny"`` (a
+        policy denial at grant time, carrying a stable ``reason_code``); see
+        #175. A denial therefore *does* appear in the export as a ``"deny"``
+        event with ``status == "failed"`` — its structured form is still
+        available via :class:`~weaver_kernel.PolicyDenied` / ``explain_denial``.
     """
     return {
         "action_id": trace.action_id,

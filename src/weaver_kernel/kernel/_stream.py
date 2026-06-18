@@ -96,6 +96,7 @@ async def invoke_stream_impl(
         fallback_driver_id = driver_id  # last non-streaming candidate
 
     yielded_any = False
+    redacted_any = False
     handle: Handle | None = None
     last_frame: Frame | None = None
     try:
@@ -110,6 +111,7 @@ async def invoke_stream_impl(
                 action_id=action_id,
             ):
                 yielded_any = True
+                redacted_any = redacted_any or bool(frame.warnings)
                 last_frame = frame
                 yield frame
         else:
@@ -137,6 +139,7 @@ async def invoke_stream_impl(
             )
             frame = replace(frame, is_final=True)
             yielded_any = True
+            redacted_any = redacted_any or bool(frame.warnings)
             last_frame = frame
             yield frame
     finally:
@@ -159,7 +162,9 @@ async def invoke_stream_impl(
         kernel._stats.on_invocation(
             failed=not yielded_any,
             fallback=False,
-            redacted=bool(last_frame.warnings) if last_frame else False,
+            # apply_stream attaches redaction warnings per chunk, so any frame
+            # (not just the last) may have carried one — count if *any* did.
+            redacted=redacted_any,
             downgraded=initial_mode != response_mode,
         )
         logger.info(

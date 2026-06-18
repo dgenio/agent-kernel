@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from .errors import AgentKernelError
@@ -57,6 +57,16 @@ class TraceQuery:
     offset: int = 0
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Treat a naive datetime as UTC (matching the rest of the codebase).
+
+    ``ActionTrace.invoked_at`` is always timezone-aware, so comparing a naive
+    bound (common when parsing user input) against it would raise ``TypeError``;
+    normalising the bound to UTC avoids that surprising runtime failure.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def _matches(trace: ActionTrace, query: TraceQuery) -> bool:
     """Return whether *trace* satisfies every set filter on *query*."""
     if query.principal_id is not None and trace.principal_id != query.principal_id:
@@ -71,9 +81,9 @@ def _matches(trace: ActionTrace, query: TraceQuery) -> bool:
         outcome: Outcome = "failed" if trace.error is not None else "succeeded"
         if outcome != query.outcome:
             return False
-    if query.since is not None and trace.invoked_at < query.since:
+    if query.since is not None and trace.invoked_at < _as_utc(query.since):
         return False
-    return not (query.until is not None and trace.invoked_at >= query.until)
+    return not (query.until is not None and trace.invoked_at >= _as_utc(query.until))
 
 
 def query_traces(traces: Iterable[ActionTrace], query: TraceQuery) -> list[ActionTrace]:

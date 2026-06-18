@@ -154,3 +154,12 @@ def test_trace_store_query_integration() -> None:
         store.record(trace)
     result = store.query(TraceQuery(principal_id="alice", event_type="invoke"))
     assert [t.action_id for t in result] == ["a1", "a3"]
+
+
+def test_naive_time_bounds_are_treated_as_utc() -> None:
+    # Naive since/until (e.g. from parsing user input) must not raise against
+    # the always-aware invoked_at; they are interpreted as UTC.
+    naive_since = datetime.datetime(2026, 1, 1, 12, 1, 0)
+    naive_until = datetime.datetime(2026, 1, 1, 12, 3, 0)
+    result = query_traces(_corpus(), TraceQuery(since=naive_since, until=naive_until))
+    assert [t.action_id for t in result] == ["a2", "a3"]
