@@ -143,7 +143,10 @@ async def execute_with_fallback(
         ``(raw_result, driver_id, last_error, fell_back)``. ``raw_result`` is
         ``None`` if every driver failed; ``fell_back`` is ``True`` when at least
         one earlier driver raised before the one that ultimately ran (or before
-        all-failed), so callers can count fallback activations.
+        all-failed), so callers can count fallback activations. Only a
+        ``DriverError`` counts as a failed attempt: a route entry whose driver is
+        unregistered (``drivers.get(driver_id) is None``) is skipped silently and
+        does **not** set ``fell_back``.
     """
     last_error: Exception | None = None
     failed_attempts = 0

@@ -369,7 +369,10 @@ class Kernel:
             max_depth=self._firewall.budgets.max_depth,
         )
         # A successful expansion is an authorized data-access event — record it
-        # in the audit trail (I-02) and count it (#175, #179).
+        # in the audit trail (I-02) and count it (#175, #179). Unlike the
+        # best-effort denial trace (a denial is already authoritative and fails
+        # closed), this record is *not* wrapped: an audit-write failure here
+        # propagates so a served expansion is never left unaudited (I-02).
         record_expansion_trace(
             action_id=action_id,
             capability_id=handle.capability_id,
