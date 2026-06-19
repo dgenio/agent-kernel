@@ -7,41 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **Firewall redaction now fails closed at the depth boundary (#149).**
-  `redact()` previously returned any subtree nested at/below `max_depth`
-  verbatim, so PII/secrets nested beyond the cap reached the LLM unscanned. The
-  boundary now scrubs leaf strings and *elides* nested containers
-  (`[REDACTED: nested data beyond depth limit]`) instead of returning them raw.
-- **Handle expansion is now redacted (#150).** `HandleStore.expand()` routes its
-  projected rows through the same `redact()` the firewall applies on first
-  invocation, so a secret inline in a grant-permitted field (e.g. a Bearer token
-  in a `note` value) is scrubbed on the expand path. Expansion Frames now carry
-  redaction `warnings`. `Kernel.expand()` threads the firewall's configured
-  `Budgets.max_depth` (exposed via the new `Firewall.budgets` property) into the
-  expand redaction so it scrubs to the same depth as the `transform` path rather
-  than the `redact()` default.
-- **Cross-chunk redaction safety for streaming Frames (#151).**
-  `Firewall.apply_stream()` keeps a per-field `StreamRedactor` that holds back a
-  trailing overlap window, so a secret whose characters are split across two
-  streamed chunks is reassembled and redacted before either half is emitted.
-  Documented limits (see `docs/security.md`): patterns containing internal
-  whitespace split exactly at the held boundary may still evade detection, and a
-  single contiguous secret longer than the memory-bounded holdback buffer
-  (`overlap * 4`) may be force-committed and severed at the cut.
-- **Trace argument and error redaction extended beyond `memory.*` (#172).**
-  `ActionTrace.args` for **every** capability — and driver `error` text — now
-  pass through the firewall redactor before persistence, so the trace store no
-  longer becomes a sensitive-data sink when arguments carry secrets/PII or when a
-  `DriverError` embeds a raw response body. Memory-payload stripping for
-  `memory.*` capabilities is unchanged.
-
 ### Added
-- **Secret-canary regression suite (#206).** `tests/test_firewall_canary.py`
-  plants distinctive canary secrets and asserts they never appear in any kernel
-  egress — summary/table/raw Frames, handle expansions, streamed chunks, trace
-  args/errors, and adapter-rendered payloads — turning the I-01 boundary into an
-  executable invariant and a regression net for the fixes above.
 - **Handle expansions and policy denials are now first-class audit records
   (#175).** `ActionTrace` gained an additive `event_type`
   (`invoke`/`expand`/`deny`) and `reason_code`. A successful `Kernel.expand()`
@@ -83,7 +49,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `expires_at` argument and the protocol gained `sweep_expired()` (breaking for
   custom revocation backends).
 
-## [0.11.0] - 2026-06-13
+## [0.11.0] - 2026-06-19
+
+### Fixed
+- **Firewall redaction now fails closed at the depth boundary (#149).**
+  `redact()` previously returned any subtree nested at/below `max_depth`
+  verbatim, so PII/secrets nested beyond the cap reached the LLM unscanned. The
+  boundary now scrubs leaf strings and *elides* nested containers
+  (`[REDACTED: nested data beyond depth limit]`) instead of returning them raw.
+- **Handle expansion is now redacted (#150).** `HandleStore.expand()` routes its
+  projected rows through the same `redact()` the firewall applies on first
+  invocation, so a secret inline in a grant-permitted field (e.g. a Bearer token
+  in a `note` value) is scrubbed on the expand path. Expansion Frames now carry
+  redaction `warnings`. `Kernel.expand()` threads the firewall's configured
+  `Budgets.max_depth` (exposed via the new `Firewall.budgets` property) into the
+  expand redaction so it scrubs to the same depth as the `transform` path rather
+  than the `redact()` default.
+- **Cross-chunk redaction safety for streaming Frames (#151).**
+  `Firewall.apply_stream()` keeps a per-field `StreamRedactor` that holds back a
+  trailing overlap window, so a secret whose characters are split across two
+  streamed chunks is reassembled and redacted before either half is emitted.
+  Documented limits (see `docs/security.md`): patterns containing internal
+  whitespace split exactly at the held boundary may still evade detection, and a
+  single contiguous secret longer than the memory-bounded holdback buffer
+  (`overlap * 4`) may be force-committed and severed at the cut.
+- **Trace argument and error redaction extended beyond `memory.*` (#172).**
+  `ActionTrace.args` for **every** capability — and driver `error` text — now
+  pass through the firewall redactor before persistence, so the trace store no
+  longer becomes a sensitive-data sink when arguments carry secrets/PII or when a
+  `DriverError` embeds a raw response body. Memory-payload stripping for
+  `memory.*` capabilities is unchanged.
 
 ### Added
 - **Pluggable persistence for the trace and revocation stores (#126).** New
@@ -111,6 +106,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[project.scripts]`; argparse, stdlib-only. See `docs/cli.md`.
 - `examples/persistent_audit_demo.py` — offline end-to-end demo of durable
   hash-chained audit + tamper detection + durable revocation.
+- **Secret-canary regression suite (#206).** `tests/test_firewall_canary.py`
+  plants distinctive canary secrets and asserts they never appear in any kernel
+  egress — summary/table/raw Frames, handle expansions, streamed chunks, trace
+  args/errors, and adapter-rendered payloads — turning the I-01 boundary into an
+  executable invariant and a regression net for the fixes above.
 
 ### Changed
 - HMAC secret loading moved to `weaver_kernel._secrets` (shared by token signing
