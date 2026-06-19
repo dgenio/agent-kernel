@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-19
+
 ### Fixed
 - **Firewall redaction now fails closed at the depth boundary (#149).**
   `redact()` previously returned any subtree nested at/below `max_depth`
@@ -37,15 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `memory.*` capabilities is unchanged.
 
 ### Added
-- **Secret-canary regression suite (#206).** `tests/test_firewall_canary.py`
-  plants distinctive canary secrets and asserts they never appear in any kernel
-  egress — summary/table/raw Frames, handle expansions, streamed chunks, trace
-  args/errors, and adapter-rendered payloads — turning the I-01 boundary into an
-  executable invariant and a regression net for the fixes above.
-
-## [0.11.0] - 2026-06-13
-
-### Added
 - **Pluggable persistence for the trace and revocation stores (#126).** New
   `weaver_kernel.stores` package defining `TraceStoreProtocol`,
   `RevocationStoreProtocol`, and `HandleStoreProtocol`, with stdlib-only durable
@@ -71,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[project.scripts]`; argparse, stdlib-only. See `docs/cli.md`.
 - `examples/persistent_audit_demo.py` — offline end-to-end demo of durable
   hash-chained audit + tamper detection + durable revocation.
+- **Secret-canary regression suite (#206).** `tests/test_firewall_canary.py`
+  plants distinctive canary secrets and asserts they never appear in any kernel
+  egress — summary/table/raw Frames, handle expansions, streamed chunks, trace
+  args/errors, and adapter-rendered payloads — turning the I-01 boundary into an
+  executable invariant and a regression net for the fixes above.
 
 ### Changed
 - HMAC secret loading moved to `weaver_kernel._secrets` (shared by token signing
