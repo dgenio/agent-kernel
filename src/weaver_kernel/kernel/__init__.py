@@ -142,8 +142,9 @@ class Kernel:
 
         On a :class:`~weaver_kernel.PolicyDenied` rejection, a ``"deny"`` audit
         record (carrying the stable reason code) is written to the trace store
-        before the exception propagates, so the audit trail answers "who was
-        refused what, and why" (#175). Denials are also counted in
+        (best-effort) before the exception propagates, so the audit trail answers
+        "who was refused what, and why" (#175). A trace-store write failure is
+        logged but never masks the denial. Denials are also counted in
         :attr:`stats`.
         """
         capability = self._registry.get(request.capability_id)
@@ -153,13 +154,27 @@ class Kernel:
             )
         except PolicyDenied as exc:
             self._stats.on_denial(exc.reason_code)
-            record_denial_trace(
-                capability_id=request.capability_id,
-                principal_id=principal.principal_id,
-                reason_code=exc.reason_code,
-                message=str(exc),
-                trace_store=self._trace_store,
-            )
+            # The denial is authoritative and already fails closed (no token is
+            # issued). Recording its audit trace is best-effort: a trace-store
+            # write failure must never mask the PolicyDenied the caller expects.
+            try:
+                record_denial_trace(
+                    capability_id=request.capability_id,
+                    principal_id=principal.principal_id,
+                    reason_code=exc.reason_code,
+                    message=str(exc),
+                    trace_store=self._trace_store,
+                )
+            except Exception:
+                logger.warning(
+                    "deny_trace_record_failed",
+                    extra={
+                        "capability_id": request.capability_id,
+                        "principal_id": principal.principal_id,
+                        "reason_code": exc.reason_code,
+                    },
+                    exc_info=True,
+                )
             raise
         audit_id = str(uuid.uuid4())
         token = self._token_provider.issue(

@@ -1,12 +1,18 @@
 """Audit-record builders for non-invoke events (#175).
 
-I-02 (auditability) covers *every* authorized data-access event and every
-authorization decision, not just successful invocations. Handle expansions are
-data-access events and policy denials are authorization decisions, yet both were
-previously only logged. These helpers record them as first-class
-:class:`~weaver_kernel.models.ActionTrace` entries (``event_type="expand"`` /
-``"deny"``) so :meth:`Kernel.explain`, the trace query API, and the audit CLI
-can answer "who was refused what, when, and why" and "which rows were expanded".
+Auditability extends beyond successful invocations to other authorized
+data-access events and grant-time authorization decisions, which were previously
+only logged. These helpers record two of them as first-class
+:class:`~weaver_kernel.models.ActionTrace` entries: a successful handle
+*expansion* (``event_type="expand"``, a data-access event) and a grant-time
+policy *denial* (``event_type="deny"``, raised by
+:meth:`PolicyEngine.evaluate`). So :meth:`Kernel.explain`, the trace query API,
+and the audit CLI can answer "who was refused a grant, when, and why" and "which
+rows were expanded".
+
+Scope note: only grant-time denials are recorded here. Expansion-time access
+failures (principal/constraint violations raised by ``HandleStore.expand``)
+still surface as exceptions and logs, not ``"deny"`` traces.
 
 The redaction helpers are shared with :mod:`._invoke` so an expansion's query
 arguments and a denial's message pass through the same firewall scrub used for
