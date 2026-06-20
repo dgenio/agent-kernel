@@ -1,8 +1,15 @@
 # agent-kernel
 
 [![CI](https://github.com/dgenio/agent-kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/dgenio/agent-kernel/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/dgenio/agent-kernel/actions/workflows/codeql.yml/badge.svg)](https://github.com/dgenio/agent-kernel/actions/workflows/codeql.yml)
+[![Coverage ≥90%](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen.svg)](https://github.com/dgenio/agent-kernel/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+<!-- The coverage badge shows the CI-enforced floor (cov_fail_under in
+pyproject.toml). The live figure (well above the floor) prints in every CI run
+and is uploaded as the `coverage-html-*` artifact. -->
+
 
 **Least-privilege, revocable, principal-scoped authorization for agent tool calls — with a tamper-evident audit of everything that ran.**
 
@@ -73,6 +80,19 @@ through the shared [weaver-spec](https://github.com/dgenio/weaver-spec)
 contracts, not through tight coupling. A deeper, per-project comparison —
 including *when not* to reach for `agent-kernel` — is in
 [How this relates to neighboring projects](#how-this-relates-to-neighboring-projects).
+
+The minimal-install guarantee is enforced in CI: a dedicated job installs the
+package with **no extras** (`pip install weaver-kernel`), imports the entire
+public API, and runs the quickstart — so an accidental hard dependency on an
+optional extra (`mcp`, `yaml`, `opentelemetry`, `tiktoken`) fails the build.
+
+**Supply-chain & security automation.** CI runs [`pip-audit`](https://pypi.org/project/pip-audit/)
+over the runtime dependency tree and [CodeQL](https://codeql.github.com/)
+(`security-and-quality`) on every PR and weekly; Dependabot keeps pinned
+GitHub Actions and Python dependencies fresh. Releases carry a CycloneDX SBOM
+and PEP 740 PyPI attestations (see [RELEASE.md](RELEASE.md)). A `pip-audit`
+false positive can be allow-listed with `pip-audit --ignore-vuln <ID>` plus a
+justifying comment in the workflow.
 
 ## Quickstart
 

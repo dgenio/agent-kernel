@@ -16,15 +16,21 @@
 | `make example` | Run all example scripts | After changing examples or core APIs |
 
 `make ci` is the **single authoritative pre-push command**. It runs all five targets
-in sequence and mirrors the checks in the `test` job of `.github/workflows/ci.yml`: the
-format step is the non-mutating `fmt-check` (equivalent to CI's `ruff format --check`),
-and lint/type/test/example run the same tools CI does. (CI's separate `conformance_stub`
-job is a no-op placeholder and is not part of the local gate.) The Makefile
-additionally invokes every tool via `python -m <tool>` — a local hardening over CI
-that uses the active interpreter's site-packages, preventing spurious failures when
-`ruff` or `mypy` are provided by isolated installers such as `uv tool` or `pipx`. If
-`make ci` passes locally, the same checks will pass in CI. Use `make fmt` (the
-mutating target) when you want to auto-fix formatting before re-running `make ci`.
+in sequence, and the `test` job of `.github/workflows/ci.yml` now **invokes those same
+Makefile targets** (`make fmt-check lint type test example`) rather than re-implementing
+them inline — so the local gate and CI cannot drift. The format step is the non-mutating
+`fmt-check` (equivalent to CI's `ruff format --check`). The Makefile invokes every tool
+via `python -m <tool>` — a local hardening that uses the active interpreter's
+site-packages, preventing spurious failures when `ruff` or `mypy` are provided by
+isolated installers such as `uv tool` or `pipx`. If `make ci` passes locally, the same
+checks will pass in CI. Use `make fmt` (the mutating target) when you want to auto-fix
+formatting before re-running `make ci`.
+
+CI runs additional jobs that are **not** part of the local `make ci` gate (they need a
+clean environment or network): `bare-install` (no-extras smoke test), `security-audit`
+(`pip-audit`), `conformance` (weaver-spec mapping against the `conformance` extra), and
+the separate `codeql.yml` analysis. The coverage floor, docstring gate, and architecture
+conformance checks *are* part of `make test`, so they run both locally and in CI.
 
 ## PR conventions
 
