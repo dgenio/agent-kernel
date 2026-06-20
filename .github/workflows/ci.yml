@@ -48,6 +48,8 @@ jobs:
           python examples/tutorial.py
           python examples/readme_quickstart.py
           python examples/trace_export_demo.py
+          python examples/ocsf_export_demo.py
+          python examples/trace_replay_demo.py
 
   conformance_stub:
     name: "Weaver Spec Conformance Stub (v0.1.0)"

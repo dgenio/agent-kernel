@@ -158,6 +158,51 @@ Records every `ActionTrace`. `explain(action_id)` returns the full audit record.
 
 `export_action_trace` / `export_action_traces` serialise traces into a stable, versioned, JSON-serialisable shape for downstream analysis tools (distinct from the OpenTelemetry observability export); `Kernel.list_traces()` is the public accessor that feeds them the audit trail. See [trace_export.md](trace_export.md).
 
+#### Audited event types (#175)
+
+`ActionTrace.event_type` distinguishes three kinds of audited event, so the
+audit trail covers authorization decisions and data-access events, not only
+successful invocations (I-02):
+
+| `event_type` | Recorded when | Notable fields |
+|--------------|---------------|----------------|
+| `invoke` (default) | A capability invocation runs | `driver_id`, `result_summary`, `handle_id` |
+| `expand` | `Kernel.expand()` serves more rows of a handle | `handle_id`, `result_summary`; expansion Frames carry `Provenance.principal_id` |
+| `deny` | A `grant_capability()` call is rejected by policy | `reason_code` (stable `DenialReason`), redacted `error`; no token is issued |
+
+`reason_code` is populated for `deny` events. All three fields are additive with
+defaults, so a directly-constructed trace keeps the original `invoke` meaning.
+
+#### Querying the audit trail (#177)
+
+`Kernel.query_traces(TraceQuery(...))` (and `TraceStore.query(...)` on any
+backend) filters records by `principal_id`, `capability_id`, `event_type`,
+`outcome` (`succeeded`/`failed`), `reason_code`, and a `since`/`until` window
+(`since` inclusive, `until` exclusive), with `limit`/`offset` pagination. Results
+are ordered deterministically by `(invoked_at, action_id)`, so successive pages
+over an unchanged store are disjoint and complete. The pure `query_traces()`
+function applies the same semantics to any iterable of traces.
+
+#### Bounded memory (#182)
+
+The in-memory `TraceStore` caps itself at `max_entries` (default 10 000) and
+evicts oldest-first when exceeded; eviction is *loud* (first eviction logs a
+warning) and observable via `TraceStore.evicted_count`. Re-recording an existing
+`action_id` overwrites in place and never evicts. Deployments needing unbounded
+retention should use a durable backend. Revocation state is bounded similarly —
+see [Persistence & durable stores](#persistence--durable-stores) and
+[security.md](security.md).
+
+#### Kernel metrics counters (#179)
+
+`Kernel.stats` returns an immutable `StatsSnapshot` of aggregate counters
+(grants, denials by reason code, invocations, invocation failures, fallback
+activations, redaction events, budget downgrades, handle stores, expansions);
+`Kernel.reset_stats()` zeroes them. The counters are dependency-free and
+lock-guarded — cheap health-check telemetry that needs neither a trace export nor
+the `otel` extra. They are *aggregates*; the `TraceStore` remains the record of
+individual events.
+
 ## Persistence & durable stores
 
 The stateful stores are protocol-based seams (`weaver_kernel.stores`), mirroring
@@ -188,6 +233,14 @@ an append-only log that is easy to ship to a collector. Use
 `SQLiteRevocationStore` when `revoke()` / `revoke_all()` must outlive a process
 or apply across workers sharing a database file. All durable backends use only
 the standard library (`sqlite3`, `json`) — no new runtime dependency.
+
+**Bounded revocation state (#182).** Every revocation backend tracks each
+token's `expires_at` and can `sweep_expired(now)` to drop bookkeeping for tokens
+that have already expired — they fail the verifier's expiry check regardless, so
+a sweep never un-revokes a *live* token. The in-memory store sweeps lazily on an
+interval; `HMACTokenProvider.sweep_revocations()` triggers it explicitly (call it
+on a schedule for durable backends). `RevocationStoreProtocol.track()` therefore
+takes an `expires_at` argument and the protocol includes `sweep_expired()`.
 
 **Verifiable audit chain.** Persisted traces are hash-chained
 (`prev_hash`/`record_hash`, HMAC-SHA256 keyed by `WEAVER_KERNEL_SECRET`).

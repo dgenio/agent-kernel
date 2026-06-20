@@ -143,8 +143,9 @@ def test_revocation_basic(tmp_path: Path) -> None:
 
 def test_revoke_principal_counts_only_newly_revoked(tmp_path: Path) -> None:
     store = SQLiteRevocationStore(tmp_path / "r.db")
-    store.track("p1", "t1")
-    store.track("p1", "t2")
+    future = datetime.datetime.now(tz=datetime.timezone.utc) + datetime.timedelta(hours=1)
+    store.track("p1", "t1", future)
+    store.track("p1", "t2", future)
     store.revoke("t1")
     assert store.revoke_principal("p1") == 1  # only t2 newly revoked
     assert store.is_revoked("t2")
@@ -219,3 +220,16 @@ def test_prune_accepts_naive_datetime_as_utc(tmp_path: Path) -> None:
     pruned = store.prune(before=datetime.datetime(2026, 1, 2, 12))
     assert pruned == 2
     assert store.verify_chain().ok
+
+
+def test_sqlite_sweep_expired_removes_only_expired(tmp_path: Path) -> None:
+    store = SQLiteRevocationStore(tmp_path / "r.db")
+    now = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    store.track("p1", "live", now + datetime.timedelta(hours=1))
+    store.track("p1", "dead", now - datetime.timedelta(hours=1))
+    store.revoke("live")
+    store.revoke("dead")
+    removed = store.sweep_expired(now)
+    assert removed == 1
+    assert store.is_revoked("live")  # unexpired, revoked → still revoked
+    assert not store.is_revoked("dead")  # expired → swept (fails on expiry anyway)

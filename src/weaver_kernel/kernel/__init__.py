@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Literal, overload
 
 from ..drivers.base import Driver, StreamingDriver
-from ..errors import AgentKernelError
+from ..errors import AgentKernelError, PolicyDenied
 from ..federation import TrustPolicy
 from ..firewall.budget_manager import BudgetManager
 from ..firewall.transform import Firewall
@@ -37,9 +37,12 @@ from ..models import (
 from ..policy import DefaultPolicyEngine, PolicyEngine
 from ..registry import CapabilityRegistry
 from ..router import Router, StaticRouter
+from ..stats import KernelStats, StatsSnapshot
 from ..stores import TraceStoreProtocol
 from ..tokens import CapabilityToken, HMACTokenProvider, TokenProvider
 from ..trace import TraceStore
+from ..trace_query import TraceQuery
+from ._audit import record_denial_trace, record_expansion_trace
 from ._dry_run import build_dry_run_result
 from ._federation import (
     perform_advertise,
@@ -94,6 +97,7 @@ class Kernel:
         self._budget_manager = budget_manager
         self._drivers: dict[str, Driver] = {}
         self._kernel_id = kernel_id
+        self._stats = KernelStats()
 
     @property
     def kernel_id(self) -> str:
@@ -134,11 +138,44 @@ class Kernel:
         *,
         justification: str,
     ) -> CapabilityGrant:
-        """Evaluate the policy and, if approved, issue a signed token."""
+        """Evaluate the policy and, if approved, issue a signed token.
+
+        On a :class:`~weaver_kernel.PolicyDenied` rejection, a ``"deny"`` audit
+        record (carrying the stable reason code) is written to the trace store
+        (best-effort) before the exception propagates, so the audit trail answers
+        "who was refused what, and why" (#175). A trace-store write failure is
+        logged but never masks the denial. Denials are also counted in
+        :attr:`stats`.
+        """
         capability = self._registry.get(request.capability_id)
-        decision = self._policy.evaluate(
-            request, capability, principal, justification=justification
-        )
+        try:
+            decision = self._policy.evaluate(
+                request, capability, principal, justification=justification
+            )
+        except PolicyDenied as exc:
+            self._stats.on_denial(exc.reason_code)
+            # The denial is authoritative and already fails closed (no token is
+            # issued). Recording its audit trace is best-effort: a trace-store
+            # write failure must never mask the PolicyDenied the caller expects.
+            try:
+                record_denial_trace(
+                    capability_id=request.capability_id,
+                    principal_id=principal.principal_id,
+                    reason_code=exc.reason_code,
+                    message=str(exc),
+                    trace_store=self._trace_store,
+                )
+            except Exception:
+                logger.warning(
+                    "deny_trace_record_failed",
+                    extra={
+                        "capability_id": request.capability_id,
+                        "principal_id": principal.principal_id,
+                        "reason_code": exc.reason_code,
+                    },
+                    exc_info=True,
+                )
+            raise
         audit_id = str(uuid.uuid4())
         token = self._token_provider.issue(
             capability.capability_id,
@@ -156,6 +193,7 @@ class Kernel:
                 "token_id": token.token_id,
             },
         )
+        self._stats.on_grant()
         return CapabilityGrant(
             request=request,
             principal=principal,
@@ -312,20 +350,40 @@ class Kernel:
                 grant's persisted constraints (``max_rows``, ``allowed_fields``,
                 ``scope``) or is requested by a different principal.
         """
+        principal_id = principal.principal_id if principal else ""
+        action_id = str(uuid.uuid4())
         logger.info(
             "expand",
             extra={
                 "handle_id": handle.handle_id,
                 "capability_id": handle.capability_id,
-                "principal_id": principal.principal_id if principal else "",
+                "principal_id": principal_id,
+                "action_id": action_id,
             },
         )
-        return self._handle_store.expand(
+        frame = self._handle_store.expand(
             handle,
             query=query,
-            principal_id=principal.principal_id if principal else "",
+            action_id=action_id,
+            principal_id=principal_id,
             max_depth=self._firewall.budgets.max_depth,
         )
+        # A successful expansion is an authorized data-access event — record it
+        # in the audit trail (I-02) and count it (#175, #179). Unlike the
+        # best-effort denial trace (a denial is already authoritative and fails
+        # closed), this record is *not* wrapped: an audit-write failure here
+        # propagates so a served expansion is never left unaudited (I-02).
+        record_expansion_trace(
+            action_id=action_id,
+            capability_id=handle.capability_id,
+            principal_id=principal_id,
+            handle_id=handle.handle_id,
+            query=query,
+            frame=frame,
+            trace_store=self._trace_store,
+        )
+        self._stats.on_expansion()
+        return frame
 
     def explain(self, action_id: str) -> ActionTrace:
         """Retrieve the audit trace for a past invocation."""
@@ -341,6 +399,30 @@ class Kernel:
         ``docs/trace_export.md``.
         """
         return self._trace_store.list_all()
+
+    def query_traces(self, query: TraceQuery) -> list[ActionTrace]:
+        """Return audit records matching *query*, ordered and paginated (#177).
+
+        Operator-facing entry point over the configured trace store's
+        :meth:`~weaver_kernel.stores.TraceStoreProtocol.query`. Answers
+        questions like "what did principal X do in the last hour?" or "which
+        capabilities were denied today?" without iterating store internals.
+        """
+        return self._trace_store.query(query)
+
+    @property
+    def stats(self) -> StatsSnapshot:
+        """An immutable snapshot of the kernel's aggregate counters (#179).
+
+        Cheap operational telemetry (grants, denials by reason, invocations,
+        fallback activations, redaction events, budget downgrades, handle
+        stores/expansions) that needs no trace export and no optional extra.
+        """
+        return self._stats.snapshot()
+
+    def reset_stats(self) -> None:
+        """Zero every counter returned by :attr:`stats`."""
+        self._stats.reset()
 
     def explain_denial(
         self,

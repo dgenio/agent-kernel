@@ -196,3 +196,37 @@ async def test_kernel_invoke_stream_emits_trace_event() -> None:
     assert trace.principal_id == "streamer"
     assert trace.driver_id == "stream-test"
     assert trace.error is None
+
+
+@pytest.mark.asyncio
+async def test_stream_redaction_event_counts_any_frame_not_just_last() -> None:
+    """Streaming redaction is counted if *any* frame warned, not only the last.
+
+    `apply_stream` holds back a trailing overlap window, so a secret early in a
+    long stream commits (and warns) in an early frame while the final frame is
+    clean. The stats increment must reflect that earlier warning (#179 fix).
+    """
+    # Chunk 1: a contiguous email then >256 clean chars, so the email commits
+    # (and warns) in the first emitted frame. Chunk 2 (final) is clean.
+    driver = _FakeStreamingDriver(
+        chunks=[
+            {"text": "leaked@example.com " + ("x" * 300)},
+            {"text": "all clear", "__is_final__": True},
+        ]
+    )
+    kernel, principal = _build_streaming_kernel(driver)
+    req = CapabilityRequest(capability_id="stream.read", goal="t")
+    token = kernel.get_token(req, principal, justification="")
+
+    frames: list[Any] = []
+    async for frame in kernel.invoke_stream(
+        token, principal=principal, args={}, response_mode="summary"
+    ):
+        frames.append(frame)
+
+    # The secret warned on an earlier frame, and the final frame is clean.
+    assert frames[0].warnings
+    assert not frames[-1].warnings
+    # The secret never leaks, and the redaction is counted exactly once.
+    assert "leaked@example.com" not in repr([f.facts for f in frames])
+    assert kernel.stats.redaction_events == 1

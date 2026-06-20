@@ -61,6 +61,40 @@ def test_list_all() -> None:
     assert [t.action_id for t in all_traces] == ["act-0", "act-1", "act-2"]
 
 
+# ── Bounded memory / eviction (issue #182) ──────────────────────────────────
+
+
+def test_store_evicts_oldest_when_capped() -> None:
+    store = TraceStore(max_entries=2)
+    for i in range(3):
+        store.record(_trace(f"act-{i}"))
+    # Oldest (act-0) was evicted; newest two retained in insertion order.
+    assert [t.action_id for t in store.list_all()] == ["act-1", "act-2"]
+    assert store.evicted_count == 1
+
+
+def test_rerecording_existing_action_id_does_not_evict() -> None:
+    store = TraceStore(max_entries=2)
+    store.record(_trace("act-0"))
+    store.record(_trace("act-1"))
+    store.record(_trace("act-0"))  # overwrite in place — count unchanged
+    assert [t.action_id for t in store.list_all()] == ["act-0", "act-1"]
+    assert store.evicted_count == 0
+
+
+def test_eviction_is_counted_across_many_records() -> None:
+    store = TraceStore(max_entries=10)
+    for i in range(25):
+        store.record(_trace(f"act-{i}"))
+    assert len(store.list_all()) == 10
+    assert store.evicted_count == 15
+
+
+def test_max_entries_must_be_positive() -> None:
+    with pytest.raises(AgentKernelError, match="max_entries must be positive"):
+        TraceStore(max_entries=0)
+
+
 def test_explain_returns_consistent_data() -> None:
     store = TraceStore()
     t = _trace("act-explain")
@@ -109,6 +143,29 @@ def test_export_action_trace_success_shape() -> None:
     assert exported["error"] is None
     assert exported["result_summary"]["row_count"] == 3
     assert exported["correction"] is None
+
+
+def test_export_includes_event_type_and_reason_code() -> None:
+    trace = ActionTrace(
+        action_id="act-deny",
+        capability_id="billing.delete_invoice",
+        principal_id="u1",
+        token_id="",
+        invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
+        args={},
+        response_mode="summary",
+        driver_id="",
+        event_type="deny",
+        reason_code="missing_role",
+        error="denied: missing role",
+    )
+    exported = export_action_trace(trace)
+    assert exported["event_type"] == "deny"
+    assert exported["reason_code"] == "missing_role"
+    # Default invoke trace carries the defaults.
+    plain = export_action_trace(_trace("act-plain"))
+    assert plain["event_type"] == "invoke"
+    assert plain["reason_code"] is None
 
 
 def test_export_action_trace_failure_status() -> None:

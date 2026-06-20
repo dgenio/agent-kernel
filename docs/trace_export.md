@@ -134,6 +134,10 @@ envelope = export_action_traces(
 }
 ```
 
+The envelope also carries `event_type` (`invoke`/`expand`/`deny`) and, for
+denials, a stable `reason_code` (#175), so an exported trail distinguishes
+invocations, handle expansions, and policy denials.
+
 ## Stability
 
 `TRACE_EXPORT_VERSION` is bumped only on a **breaking** change to the field
@@ -141,3 +145,13 @@ shape. New optional fields may be added without a bump, so consumers should
 ignore unknown keys. Assert on `status`, `sensitivity`, and the presence of
 `error` rather than on human-readable strings (the `error` text itself may
 evolve).
+
+## Related
+
+- **Querying the trail:** `Kernel.query_traces(TraceQuery(...))` filters by
+  principal, capability, event type, outcome, reason code, and time window — see
+  [architecture.md](architecture.md#querying-the-audit-trail-177).
+- **SIEM export:** `traces_to_ocsf()` renders the trail as OCSF/AOS events for a
+  security pipeline — see
+  [integrations.md](integrations.md#siem-export-ocsf--owasp-aos). The OTel
+  observability export is distinct from both (live spans/metrics).

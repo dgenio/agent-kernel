@@ -16,6 +16,7 @@ from pathlib import Path
 from .._secrets import resolve_hmac_secret
 from ..errors import AgentKernelError
 from ..models import ActionTrace
+from ..trace_query import TraceQuery, query_traces
 from ._trace_codec import decode_trace, encode_trace
 from .audit_chain import (
     GENESIS_HASH,
@@ -103,6 +104,15 @@ class JsonlTraceStore:
     def list_all(self) -> list[ActionTrace]:
         """Return all traces in append order."""
         return [decode_trace(record.trace) for record in self._iter_records()]
+
+    def query(self, query: TraceQuery) -> list[ActionTrace]:
+        """Return traces matching *query* (#177).
+
+        Filters the decoded append-only log via the shared
+        :func:`~weaver_kernel.trace_query.query_traces` so semantics match the
+        in-memory and SQLite backends.
+        """
+        return query_traces(self.list_all(), query)
 
     # ── Audit chain (issue #127) ──────────────────────────────────────────────
 

@@ -363,6 +363,45 @@ instrument_kernel(kernel)
 no-op. Use `weaver_kernel.otel.reset_instrumentation(kernel)` in tests to
 re-instrument with a different provider.
 
+## SIEM export (OCSF / OWASP AOS)
+
+OpenTelemetry feeds the *observability* pipeline; SIEMs speak **OCSF** (the Open
+Cybersecurity Schema Framework), the *security-operations* pipeline. The audit
+trail maps to OCSF **API Activity** events (class `6003`), enriched per the OWASP
+Agent Observability Standard (AOS), with no new dependency — the mapping is a pure
+dict construction.
+
+```python
+from weaver_kernel import traces_to_ocsf
+
+events = traces_to_ocsf(kernel.list_traces())   # list[dict], OCSF-shaped
+# ship `events` to your SIEM (one JSON object per event)
+```
+
+`trace_to_ocsf(trace)` maps a single record. Runnable recipe:
+[`examples/ocsf_export_demo.py`](../examples/ocsf_export_demo.py).
+
+Field mapping (kernel `ActionTrace` → OCSF API Activity 6003):
+
+| OCSF field | Source |
+|------------|--------|
+| `class_uid` / `class_name` | constant `6003` / `"API Activity"` |
+| `category_uid` / `category_name` | constant `6` / `"Application Activity"` |
+| `activity_id` / `activity_name` | `event_type`: invoke→Other(99), expand→Read(2), deny→Other(99) |
+| `type_uid` | `class_uid * 100 + activity_id` |
+| `status_id` / `status` | `2`/`Failure` when `error` is set, else `1`/`Success` |
+| `status_detail` | `error` (already redacted at record time) |
+| `severity_id` / `severity` | deny→Medium(3), else Informational(1) |
+| `time` | `invoked_at` as epoch milliseconds (UTC) |
+| `actor.user.uid` | `principal_id` |
+| `api.operation` / `api.service.name` | `capability_id` / `driver_id` (or `"weaver-kernel"`) |
+| `metadata` | product + OCSF version (`OCSF_VERSION`) + AOS extension marker |
+| `unmapped` | kernel specifics: `action_id`, `token_id`, `event_type`, `response_mode`, `sensitivity`, `reason_code`, `handle_id`, `result_summary` |
+
+The mapping is built only from already-redaction-safe trace fields, so exporting
+cannot widen the I-01 boundary. AOS is young, so the mapping is versioned and
+isolated in `weaver_kernel.ocsf`; output is validated structurally in the tests.
+
 ## Ecosystem integration patterns
 
 These reference flows show how agent-kernel composes with neighboring Weaver

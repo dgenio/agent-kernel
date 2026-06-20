@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+
 import pytest
 
 from weaver_kernel import (
@@ -11,6 +13,9 @@ from weaver_kernel import (
     TokenRevoked,
     TokenScopeError,
 )
+from weaver_kernel.stores import InMemoryRevocationStore
+
+_UTC = datetime.timezone.utc
 
 
 @pytest.fixture()
@@ -174,3 +179,65 @@ def test_revoked_checked_before_signature(provider: HMACTokenProvider) -> None:
     tampered = replace(token, signature="invalid-signature")
     with pytest.raises(TokenRevoked):
         provider.verify(tampered, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+# ── Revocation-state bounding / expiry sweep (issue #182) ────────────────────
+
+
+def test_sweep_keeps_revoked_but_unexpired_entry() -> None:
+    store = InMemoryRevocationStore()
+    now = datetime.datetime(2026, 1, 1, tzinfo=_UTC)
+    store.track("p1", "t1", now + datetime.timedelta(hours=1))
+    store.revoke("t1")
+    removed = store.sweep_expired(now)
+    assert removed == 0
+    assert store.is_revoked("t1")  # a live, revoked token is never un-revoked
+
+
+def test_sweep_removes_expired_entry() -> None:
+    store = InMemoryRevocationStore()
+    now = datetime.datetime(2026, 1, 1, tzinfo=_UTC)
+    store.track("p1", "t1", now - datetime.timedelta(hours=1))
+    store.revoke("t1")
+    removed = store.sweep_expired(now)
+    assert removed == 1
+    assert not store.is_revoked("t1")  # expired anyway — verify() fails on expiry
+
+
+def test_provider_sweep_preserves_revoked_unexpired_token(provider: HMACTokenProvider) -> None:
+    token = provider.issue("cap.x", "user-1", ttl_seconds=3600)
+    provider.revoke(token.token_id)
+    # now precedes expiry, so the entry is kept and the token still fails closed.
+    provider.sweep_revocations(datetime.datetime.now(tz=_UTC))
+    with pytest.raises(TokenRevoked):
+        provider.verify(token, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+def test_revocation_state_bounded_under_grant_revoke_loop() -> None:
+    store = InMemoryRevocationStore()
+    # Tokens are live (future expiry) when revoked — the normal lifecycle.
+    expiry = datetime.datetime(2099, 1, 1, tzinfo=_UTC)
+    for i in range(500):
+        store.track("p1", f"t{i}", expiry)
+        store.revoke(f"t{i}")
+    # Before expiry, a sweep removes nothing (every token is still live).
+    assert store.sweep_expired(datetime.datetime(2026, 1, 1, tzinfo=_UTC)) == 0
+    assert len(store._revoked) == 500
+    # Once expired, a single sweep drops all bookkeeping → growth is bounded.
+    store.sweep_expired(expiry + datetime.timedelta(seconds=1))
+    assert store._expiry == {}
+    assert store._revoked == set()
+    assert store._principal_tokens == {}
+
+
+def test_track_and_sweep_accept_naive_datetimes() -> None:
+    """Naive expiry/now are treated as UTC — no naive-vs-aware TypeError."""
+    store = InMemoryRevocationStore()
+    store.track("p1", "t1", datetime.datetime(2099, 1, 1))  # naive expiry
+    store.revoke("t1")
+    # Naive 'now' before expiry keeps the (live) revoked token.
+    assert store.sweep_expired(datetime.datetime(2026, 1, 1)) == 0
+    assert store.is_revoked("t1")
+    # Naive 'now' after expiry removes it.
+    assert store.sweep_expired(datetime.datetime(2099, 1, 2)) == 1
+    assert not store.is_revoked("t1")

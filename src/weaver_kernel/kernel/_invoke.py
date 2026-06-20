@@ -136,14 +136,20 @@ async def execute_with_fallback(
     *,
     ctx: ExecutionContext,
     log_ctx: dict[str, str],
-) -> tuple[RawResult | None, str, Exception | None]:
+) -> tuple[RawResult | None, str, Exception | None, bool]:
     """Iterate the route plan's drivers until one succeeds.
 
     Returns:
-        ``(raw_result, driver_id, last_error)``. ``raw_result`` is
-        ``None`` if every driver failed.
+        ``(raw_result, driver_id, last_error, fell_back)``. ``raw_result`` is
+        ``None`` if every driver failed; ``fell_back`` is ``True`` when at least
+        one earlier driver raised before the one that ultimately ran (or before
+        all-failed), so callers can count fallback activations. Only a
+        ``DriverError`` counts as a failed attempt: a route entry whose driver is
+        unregistered (``drivers.get(driver_id) is None``) is skipped silently and
+        does **not** set ``fell_back``.
     """
     last_error: Exception | None = None
+    failed_attempts = 0
     for driver_id in plan.driver_ids:
         driver = drivers.get(driver_id)
         if driver is None:
@@ -151,15 +157,16 @@ async def execute_with_fallback(
         try:
             raw_result = await driver.execute(ctx)
             logger.debug("driver_success", extra={**log_ctx, "driver_id": driver_id})
-            return raw_result, driver_id, None
+            return raw_result, driver_id, None, failed_attempts > 0
         except DriverError as exc:
             logger.warning(
                 "driver_failure",
                 extra={**log_ctx, "driver_id": driver_id, "error": str(exc)},
             )
             last_error = exc
+            failed_attempts += 1
             continue
-    return None, "", last_error
+    return None, "", last_error, failed_attempts > 0
 
 
 def record_failure_trace(
@@ -284,7 +291,8 @@ async def perform_invoke(
         constraints=token.constraints,
         action_id=action_id,
     )
-    raw_result, used_driver_id, last_error = await execute_with_fallback(
+    downgraded = effective_mode != response_mode
+    raw_result, used_driver_id, last_error, fell_back = await execute_with_fallback(
         kernel._driver_map, plan, ctx=ctx, log_ctx=log_ctx
     )
 
@@ -304,6 +312,9 @@ async def perform_invoke(
             trace_store=kernel._traces,
             sensitivity=capability.sensitivity,
         )
+        kernel._stats.on_invocation(
+            failed=True, fallback=fell_back, redacted=False, downgraded=downgraded
+        )
         raise DriverError(
             f"All drivers failed for capability '{token.capability_id}'. Last error: {err_msg}"
         )
@@ -316,6 +327,7 @@ async def perform_invoke(
             principal_id=principal.principal_id,
             constraints=token.constraints,
         )
+        kernel._stats.on_handle_store()
 
     reservation_consumed = False
     try:
@@ -348,6 +360,12 @@ async def perform_invoke(
         result_summary=_frame_result_summary(frame),
         trace_store=kernel._traces,
         sensitivity=capability.sensitivity,
+    )
+    kernel._stats.on_invocation(
+        failed=False,
+        fallback=fell_back,
+        redacted=bool(frame.warnings),
+        downgraded=frame.response_mode != response_mode,
     )
     logger.info(
         "invoke_success",

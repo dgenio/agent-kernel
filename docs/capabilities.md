@@ -222,3 +222,42 @@ Both built-in engines support `explain()`. If you bring a custom policy
 engine that implements only `PolicyEngine.evaluate`, `explain_denial` raises
 `AgentKernelError` with guidance — implement the `ExplainingPolicyEngine`
 protocol to enable structured explanations.
+
+## Validating a policy change with replay (#213)
+
+A policy edit is the highest-blast-radius change in the system: one rule can
+silently widen access or break every agent. The replay harness re-evaluates a
+corpus of recorded decisions against a *candidate* policy and reports the
+decision diff, so you get a deterministic "what would have changed" answer before
+deploying.
+
+```python
+from weaver_kernel import DefaultPolicyEngine, record_decision, replay
+
+baseline = DefaultPolicyEngine()
+# Build a corpus (a real one would come from historical traffic).
+records = [
+    record_decision(baseline, request, capability, principal, justification="..."),
+    # ...
+]
+
+diff = replay(records, candidate_engine)
+assert diff.empty          # replaying against the same engine → no flips
+for flip in diff.flips:    # allow_to_deny | deny_to_allow | reason_code_change
+    print(flip.record.capability.capability_id, flip.kind,
+          flip.baseline_reason_code, "->", flip.candidate_reason_code)
+```
+
+Determinism and fidelity:
+
+- Output order is the input record order; replaying records against the engine
+  that produced them yields `diff.empty`.
+- Rate-limit decisions are replay-order-sensitive (the default engine's limiter is
+  stateful), so flips involving `DenialReason.RATE_LIMITED` are surfaced in
+  `diff.rate_limited` rather than `diff.flips`.
+- Replay validates **policy structure** (role/justification/constraint rules), not
+  argument-dependent rules whose inputs the audit trail redacts.
+
+Runnable recipe: [`examples/trace_replay_demo.py`](../examples/trace_replay_demo.py).
+This complements shadow mode (live-traffic comparison) and the fixture-based
+policy testing framework with real-traffic, pre-deployment coverage.

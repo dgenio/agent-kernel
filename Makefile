@@ -27,5 +27,7 @@ example:
 	python examples/evaluation_artifact_policy.py
 	python examples/trace_export_demo.py
 	python examples/persistent_audit_demo.py
+	python examples/ocsf_export_demo.py
+	python examples/trace_replay_demo.py
 
 ci: fmt-check lint type test example

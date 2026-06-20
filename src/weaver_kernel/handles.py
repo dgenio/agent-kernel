@@ -349,7 +349,7 @@ class HandleStore:
             handle=handle,
             provenance=Provenance(
                 capability_id=handle.capability_id,
-                principal_id="",
+                principal_id=principal_id,
                 invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
                 action_id=action_id,
             ),
