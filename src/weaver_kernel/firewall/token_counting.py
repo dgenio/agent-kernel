@@ -31,6 +31,12 @@ def default_token_counter(value: Any) -> int:
 
     Returns:
         A non-negative integer approximating the token count.
+
+    Example:
+        >>> default_token_counter(None)
+        0
+        >>> default_token_counter("hello world")
+        3
     """
     if value is None:
         return 0
