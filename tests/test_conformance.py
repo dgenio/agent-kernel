@@ -14,6 +14,7 @@ import datetime
 import pytest
 
 from weaver_kernel import CapabilityToken, Frame, SensitivityTag
+from weaver_kernel.errors import AgentKernelError
 from weaver_kernel.models import ActionTrace
 
 wc = pytest.importorskip("weaver_contracts", reason="install the 'conformance' extra")
@@ -98,6 +99,19 @@ def test_failed_invoke_maps_to_failure() -> None:
     event = conformance.trace_to_contract(_trace(error="driver exploded"))
     assert event.outcome == "failure"
     assert event.error_message == "driver exploded"
+
+
+def test_unknown_event_type_raises_kernel_error() -> None:
+    # An unmapped event_type (e.g. from a deserialised or future trace) must
+    # fail with a clear kernel error, not a bare KeyError leaking the lookup.
+    bad = _trace(event_type="teleport")
+    with pytest.raises(AgentKernelError) as exc_info:
+        conformance.trace_to_contract(bad)
+    message = str(exc_info.value)
+    assert "teleport" in message
+    # The message names the supported event types so the caller can self-correct.
+    for known in ("invoke", "expand", "deny"):
+        assert known in message
 
 
 def test_token_maps_to_valid_contract_token() -> None:
