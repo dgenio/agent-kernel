@@ -74,22 +74,59 @@ def _layer_of(rel_path: str) -> str:
     return head if "/" in rel_path else head.removesuffix(".py")
 
 
+def _is_type_checking_guard(test: ast.expr) -> bool:
+    """True for ``if TYPE_CHECKING:`` / ``if typing.TYPE_CHECKING:`` guards."""
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _module_scope_imports(body: list[ast.stmt]) -> list[ast.Import | ast.ImportFrom]:
+    """Collect import statements at module scope.
+
+    Descends into module-scope ``if`` / ``try`` / ``with`` blocks (so a
+    conditional import cannot bypass the boundary check) but never into
+    function or class bodies — those lazy imports are the optional-extra seam.
+    The body of an ``if TYPE_CHECKING:`` guard is skipped (typing-only, never
+    executed); its ``else`` branch *is* checked because it runs at runtime.
+    """
+    found: list[ast.Import | ast.ImportFrom] = []
+    for node in body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            found.append(node)
+        elif isinstance(node, ast.If):
+            if not _is_type_checking_guard(node.test):
+                found.extend(_module_scope_imports(node.body))
+            found.extend(_module_scope_imports(node.orelse))
+        elif isinstance(node, ast.Try):
+            found.extend(_module_scope_imports(node.body))
+            for handler in node.handlers:
+                found.extend(_module_scope_imports(handler.body))
+            found.extend(_module_scope_imports(node.orelse))
+            found.extend(_module_scope_imports(node.finalbody))
+        elif isinstance(node, ast.With):
+            found.extend(_module_scope_imports(node.body))
+        # FunctionDef / AsyncFunctionDef / ClassDef: not descended (lazy seam).
+    return found
+
+
 def _intra_imports(tree: ast.Module, rel_path: str) -> set[str]:
     """Return top-level ``weaver_kernel`` names imported at *rel_path*'s scope.
 
     Relative imports are resolved against the importing file's package depth
     (``from .models`` in ``router.py`` and ``from ..models`` in
     ``firewall/transform.py`` both resolve to top-level ``models``), as are
-    absolute ``weaver_kernel.<x>`` imports. ``TYPE_CHECKING`` blocks and imports
-    nested inside functions/classes are ignored — that lazy seam is how optional
-    extras stay optional.
+    absolute ``weaver_kernel.<x>`` imports. Module-scope conditional imports
+    (inside ``if`` / ``try`` / ``with``) are included; ``TYPE_CHECKING`` blocks
+    and imports nested inside functions/classes are ignored — that lazy seam is
+    how optional extras stay optional.
     """
     # Package parts of the importing module, e.g. firewall/transform.py -> ["firewall"].
     package_parts = rel_path.split("/")[:-1]
     base = ["weaver_kernel", *package_parts]
 
     names: set[str] = set()
-    for node in tree.body:
+    for node in _module_scope_imports(tree.body):
         if isinstance(node, ast.ImportFrom):
             if node.level > 0:
                 # Drop (level - 1) trailing components to reach the target package.

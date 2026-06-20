@@ -145,17 +145,25 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      # Audit the *runtime* dependency tree (install without extras) so the gate
-      # tracks what adopters actually ship. Policy: fail on any known
-      # vulnerability; document false positives via pip-audit's --ignore-vuln
-      # allowlist (see README "Security automation").
-      - name: Install runtime deps + pip-audit
-        run: |
-          pip install .
-          pip install pip-audit
+      - name: Install pip-audit
+        run: pip install pip-audit
 
-      - name: Audit dependencies
-        run: pip-audit --strict --desc
+      # Resolve weaver-kernel's *runtime* dependency tree in an isolated venv
+      # (no extras, no pip-audit) and audit exactly that, so pip-audit's own
+      # dependencies can never cause a failure unrelated to what adopters ship.
+      - name: Resolve runtime dependency tree
+        run: |
+          python -m venv /tmp/runtime
+          /tmp/runtime/bin/pip install .
+          /tmp/runtime/bin/pip freeze --exclude-editable \
+            | grep -viE '^(weaver-kernel|pip|setuptools)([=@ ]|$)' > runtime-requirements.txt
+          echo "Auditing:"; cat runtime-requirements.txt
+
+      # Policy: fail on any known vulnerability in the runtime tree. Document a
+      # false positive by appending `--ignore-vuln <ID>` here with a comment
+      # (see README "Security automation").
+      - name: Audit runtime dependencies
+        run: pip-audit --strict --desc --requirement runtime-requirements.txt
 
   conformance:
     name: "Weaver-spec conformance"

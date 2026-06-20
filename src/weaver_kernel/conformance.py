@@ -1,7 +1,7 @@
 """weaver-spec conformance adapter (issue #225).
 
 Maps the kernel's runtime objects (:class:`~weaver_kernel.models.Frame`,
-:class:`~weaver_kernel.trace.ActionTrace`,
+:class:`~weaver_kernel.models.ActionTrace`,
 :class:`~weaver_kernel.tokens.CapabilityToken`) onto the published
 ``weaver-contracts`` dataclasses, so CI can assert the kernel emits
 spec-conformant payloads instead of echoing a placeholder.
@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING, Any
+
+from .errors import AgentKernelError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .models import ActionTrace, Frame
@@ -93,13 +95,24 @@ def trace_to_contract(trace: ActionTrace) -> Any:
     Returns:
         A validated ``weaver_contracts.TraceEvent`` with kernel-specific detail
         (driver, sensitivity, reason code) carried in ``metadata``.
+
+    Raises:
+        AgentKernelError: If ``trace.event_type`` is not a known kernel event
+            type (e.g. a malformed or future value from a deserialised trace).
     """
     wc = _require_contracts()
+    try:
+        contract_event_type = _EVENT_TYPE_MAP[trace.event_type]
+    except KeyError as exc:
+        raise AgentKernelError(
+            f"Cannot map unknown ActionTrace.event_type {trace.event_type!r} to a "
+            f"weaver-contracts TraceEvent; expected one of {sorted(_EVENT_TYPE_MAP)}."
+        ) from exc
     is_deny = trace.event_type == "deny"
     outcome = "failure" if (is_deny or trace.error is not None) else "success"
     return wc.TraceEvent(
         event_id=trace.action_id,
-        event_type=_EVENT_TYPE_MAP[trace.event_type],
+        event_type=contract_event_type,
         timestamp=trace.invoked_at,
         capability_id=trace.capability_id,
         principal=trace.principal_id,
