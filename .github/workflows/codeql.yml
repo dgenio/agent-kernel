@@ -1,0 +1,40 @@
+name: CodeQL
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Weekly, so newly-published advisories are caught even without a push.
+    - cron: "27 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: "Analyze (python)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # required to upload CodeQL results to the Security tab
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8272c299f21ca24af15dfe9ac0971ba969e5e0d5  # v3.36.2
+        with:
+          languages: python
+          queries: security-and-quality
+
+      # Python is interpreted — no build step is needed, so autobuild is omitted.
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@8272c299f21ca24af15dfe9ac0971ba969e5e0d5  # v3.36.2
+        with:
+          category: "/language:python"
