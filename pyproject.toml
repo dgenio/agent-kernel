@@ -62,6 +62,7 @@ dev = [
     "pyyaml>=6.0",
     "tomli>=2.0; python_version<'3.11'",
     "types-PyYAML>=6.0",
+    "weaver-contracts>=0.7,<0.8",
 ]
 mcp = ["mcp>=1.6"]
 otel = ["opentelemetry-api>=1.20"]
@@ -70,6 +71,10 @@ policy = [
     "tomli>=2.0; python_version<'3.11'",
 ]
 tiktoken = ["tiktoken>=0.6"]
+# Weaver-spec contract conformance: validate kernel objects against the
+# published weaver-contracts dataclasses. Optional so `import weaver_kernel`
+# never requires it; CI installs it (via [dev]) to run tests/test_conformance.py.
+conformance = ["weaver-contracts>=0.7,<0.8"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/weaver_kernel"]
@@ -77,6 +82,24 @@ packages = ["src/weaver_kernel"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["weaver_kernel"]
+
+[tool.coverage.report]
+# Ratchet floor: kept slightly below the measured branch coverage so the gate
+# protects against regressions without forcing aspirational targets. Raise it
+# (never lower it) as coverage climbs — see CONTRIBUTING.md.
+fail_under = 90
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+]
 
 [tool.ruff]
 line-length = 99
@@ -109,4 +132,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "opentelemetry.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "weaver_contracts.*"
 ignore_missing_imports = true

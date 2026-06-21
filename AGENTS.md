@@ -52,9 +52,35 @@ Use these terms consistently. Never substitute synonyms:
 - All public interfaces need type hints and docstrings.
 - Never raise bare `ValueError` or `KeyError` to callers. Use custom exceptions from `errors.py`. Catching stdlib exceptions internally to remap them is fine.
 - Error messages are part of the contract — tests must assert both exception type and message.
-- Keep modules ≤ 300 lines. Split if needed.
+- Keep modules ≤ 300 lines. Split if needed. Enforced by
+  `tests/test_architecture.py` (over-budget files are pinned with a shrink-only
+  ceiling; new files must be ≤ 300).
+- All `__all__` exports need a Google-style docstring (`Args:` for functions
+  with parameters). Enforced by `tests/test_docstrings.py`.
+- Branch coverage must stay at or above the `fail_under` floor in
+  `pyproject.toml` (`make test` fails otherwise). The floor is a ratchet — only
+  raise it.
 - No randomness in matching, routing, or summarization. Deterministic outputs always.
-- No new dependencies without justification. The dep list is intentionally minimal (`httpx`, `pydantic`).
+- No new dependencies without justification. The runtime dep list is
+  intentionally minimal (`httpx`, `pydantic`); a CI job installs with no extras
+  to prove it. Optional features live behind extras (`mcp`, `otel`, `policy`,
+  `tiktoken`, `conformance`).
+
+## Architectural conformance
+
+`tests/test_architecture.py` mechanically enforces the layering below (stdlib
+`ast` only — no architecture tool). Module-scope imports are checked; lazy
+imports inside functions and `TYPE_CHECKING` blocks are exempt (that is the
+optional-extra seam).
+
+| Layer | May import (within the package) |
+|-------|----------------------------------|
+| `firewall/` | `models`, `errors`, `enums` only — never execution/policy/registry |
+| `drivers/` | `models`, `errors`, `enums` only |
+| `router` | `models` only (stateless dispatch) |
+| `models` | `enums`, `errors` only |
+| `enums`, `errors` | nothing else in the package (leaves) |
+| `kernel/` and everything else | unconstrained (the kernel is the orchestrator) |
 
 ## Security rules
 

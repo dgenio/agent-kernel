@@ -117,6 +117,17 @@ def record_decision(
 
     Convenience for building a replay corpus from a known-good engine, so a
     later :func:`replay` against the same engine yields an empty diff.
+
+    Args:
+        engine: The policy engine evaluated to capture the baseline outcome.
+        request: The capability request to evaluate.
+        capability: The capability the request targets.
+        principal: The principal on whose behalf the request is made.
+        justification: Optional free-text justification passed to the engine.
+
+    Returns:
+        A :class:`DecisionRecord` carrying the baseline allow/deny outcome and
+        reason code, ready to feed :func:`replay`.
     """
     allowed, reason_code = _evaluate(
         engine,

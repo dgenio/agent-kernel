@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **CI / supply-chain hardening.** A focused pass over the build pipeline and
+  repository automation:
+  - **Bare-install CI job (#208).** Installs `weaver-kernel` with no extras,
+    imports the entire public API, runs the README quickstart, asserts optional
+    extras (`mcp`/`yaml`/`opentelemetry`/`tiktoken`) are genuinely absent, and
+    asserts the MCP-extra-missing `ImportError` stays actionable — so the
+    "minimal deps: httpx + pydantic" claim is tested, not just stated.
+  - **Dependency + code scanning (#205).** `pip-audit` over the runtime tree,
+    a CodeQL workflow (`security-and-quality`, on PRs + weekly), and Dependabot
+    for the `pip` and `github-actions` ecosystems (grouped, range-respecting).
+  - **Coverage gate + badge (#141).** Branch coverage is configured in
+    `pyproject.toml` with a ratchet floor (`fail_under`); `make test` fails
+    below it, CI uploads an HTML coverage artifact, and the README carries a
+    floor badge.
+  - **Docstring + doctest gate (#195).** `tests/test_docstrings.py` requires a
+    Google-style docstring (and `Args:` for functions with parameters) on every
+    `weaver_kernel.__all__` symbol; `tests/test_doctests.py` runs curated inline
+    doctests.
+  - **Architecture conformance (#202).** `tests/test_architecture.py` enforces
+    import boundaries (`firewall`/`drivers`/`router`/`models` leaf-import rules)
+    and the 300-line module budget (over-budget files pinned with a shrink-only
+    ceiling), stdlib `ast` only. Rules are documented in AGENTS.md.
+  - **weaver-spec conformance, activated (#225).** The placeholder
+    `conformance_stub` job is replaced by a real `conformance` job. New
+    `weaver_kernel.conformance` adapter maps `Frame`/`ActionTrace`/
+    `CapabilityToken` onto the published `weaver-contracts` dataclasses and is
+    validated by `tests/test_conformance.py` (new `conformance` extra).
+  - **Release SBOM + attestations (#212).** `publish.yml` generates a CycloneDX
+    SBOM of the published runtime tree (attached to the GitHub Release) and
+    enables PEP 740 PyPI attestations via the existing Trusted Publisher.
+    Verification steps are documented in RELEASE.md.
 - **Handle expansions and policy denials are now first-class audit records
   (#175).** `ActionTrace` gained an additive `event_type`
   (`invoke`/`expand`/`deny`) and `reason_code`. A successful `Kernel.expand()`
@@ -40,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Companion: `examples/trace_replay_demo.py`.
 
 ### Changed
+- **CI aligned with `make ci` and hardened (#209, #210, #232).** The `ci.yml`
+  test job now invokes the Makefile targets (`fmt-check`/`lint`/`type`/`test`/
+  `example`) instead of re-implementing them, so the local gate and CI cannot
+  drift, and all 13 example scripts now run in CI (previously 8). Every action
+  is pinned to a commit SHA (matching `publish.yml`) with explicit
+  least-privilege `permissions:` blocks, and the workflow adds pip caching plus
+  a `concurrency` group with `cancel-in-progress`.
 - **Bounded memory for in-memory audit and revocation state (#182).**
   `TraceStore` now caps at `max_entries` (default 10 000) with oldest-first
   eviction, a one-time warning, and an observable `evicted_count`. The revocation

@@ -13,7 +13,7 @@ type:
 	python -m mypy src/
 
 test:
-	python -m pytest -q --cov=weaver_kernel
+	python -m pytest -q --cov=weaver_kernel --cov-branch --cov-report=term-missing
 
 example:
 	python examples/basic_cli.py

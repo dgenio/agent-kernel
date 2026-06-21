@@ -29,11 +29,32 @@ jobs:
       - name: Build sdist and wheel
         run: python -m build
 
+      # Describe the *published package's* runtime tree (not the build env): a
+      # clean venv with only the built wheel installed, introspected by
+      # cyclonedx-py from a separate tool install so the tool's own deps do not
+      # pollute the SBOM. Written to sbom/ (NOT dist/) so it is never uploaded
+      # to PyPI as a distribution.
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          python -m pip install cyclonedx-bom
+          python -m venv /tmp/wheelenv
+          /tmp/wheelenv/bin/pip install dist/*.whl
+          mkdir -p sbom
+          cyclonedx-py environment /tmp/wheelenv/bin/python \
+            --of JSON --mc-type library --pyproject pyproject.toml \
+            -o sbom/weaver-kernel.cdx.json
+
       - name: Upload dist artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: dist
           path: dist/
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: sbom
+          path: sbom/
 
   release:
     name: "GitHub Release"
@@ -48,12 +69,20 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: sbom
+          path: sbom/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
         with:
           generate_release_notes: true
           fail_on_unmatched_files: true
-          files: dist/*
+          files: |
+            dist/*
+            sbom/*
 
   publish:
     name: "Publish to PyPI"
@@ -72,3 +101,8 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
+        with:
+          # PEP 740 attestations, signed via the Trusted Publisher OIDC identity
+          # (the id-token: write permission above). Verifiable on the PyPI
+          # project page and with the `pypi-attestations` CLI — see RELEASE.md.
+          attestations: true

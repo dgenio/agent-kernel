@@ -121,6 +121,12 @@ def traces_to_ocsf(traces: Iterable[ActionTrace]) -> list[dict[str, object]]:
 
     Order is preserved from *traces* (typically ``Kernel.list_traces()`` /
     ``Kernel.query_traces(...)``), so the caller controls ordering.
+
+    Args:
+        traces: Traces to map, in the desired output order.
+
+    Returns:
+        One OCSF API Activity event dict per trace, order-preserved.
     """
     return [trace_to_ocsf(trace) for trace in traces]
 

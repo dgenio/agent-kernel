@@ -259,6 +259,13 @@ def merge_sensitivity(local: SensitivityTag, remote: SensitivityTag) -> Sensitiv
 
     Exposed for callers that maintain their own capability records outside
     the registry and want the canonical ``most_restrictive`` union rule.
+
+    Args:
+        local: The locally-known sensitivity tag.
+        remote: The sensitivity tag advertised by a remote/federated source.
+
+    Returns:
+        The stricter (more restrictive) of the two tags.
     """
     return _stricter(local, remote)
 

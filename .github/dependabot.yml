@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # Python dependencies. The library declares *ranged* requirements
+  # (httpx>=0.27, pydantic>=2) on purpose; Dependabot only proposes a change
+  # when a dependency drifts out of the declared range, so it never forces a
+  # pin on the library itself. Minor/patch bumps are grouped to limit noise.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions. Keeps the SHA-pinned actions in ci.yml / publish.yml /
+  # codeql.yml fresh (it updates the pin and the version comment together).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"

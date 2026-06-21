@@ -53,8 +53,10 @@ Pushing the `v*` tag triggers `.github/workflows/publish.yml`, which:
 
 1. Runs the full CI suite (`make ci` equivalent) as a gate.
 2. Builds the sdist and wheel with `python -m build`.
-3. Creates a GitHub Release with auto-generated notes and the built artifacts attached.
-4. Publishes to PyPI using Trusted Publisher (OIDC — no API tokens stored).
+3. Generates a CycloneDX SBOM of the published runtime tree (`weaver-kernel.cdx.json`).
+4. Creates a GitHub Release with auto-generated notes, the built artifacts, and the SBOM attached.
+5. Publishes to PyPI using Trusted Publisher (OIDC — no API tokens stored) with
+   PEP 740 attestations generated and uploaded automatically.
 
 Monitor the workflow run at:
 <https://github.com/dgenio/agent-kernel/actions/workflows/publish.yml>
@@ -62,7 +64,29 @@ Monitor the workflow run at:
 ### 5. Verify
 
 ```bash
-pip install weaver-kernel==0.3.0
+pip install "weaver-kernel==<version>"
+```
+
+### Supply-chain artifacts (SBOM + attestations)
+
+Each release ships verifiable provenance:
+
+- **SBOM** — a CycloneDX 1.6 JSON describing the published package's runtime
+  dependency tree, attached to the GitHub Release as `weaver-kernel.cdx.json`.
+  It is generated from a clean install of the built wheel, so it reflects what
+  adopters actually receive (not the build environment).
+- **PyPI attestations** — PEP 740 digital attestations signed via the Trusted
+  Publisher OIDC identity, shown under "Provenance" on the
+  [PyPI project page](https://pypi.org/project/weaver-kernel/).
+
+Consumers can verify the attestations with the
+[`pypi-attestations`](https://pypi.org/project/pypi-attestations/) CLI:
+
+```bash
+pip download --no-deps "weaver-kernel==<version>"
+python -m pypi_attestations verify pypi \
+  --repository https://github.com/dgenio/agent-kernel \
+  weaver_kernel-<version>-py3-none-any.whl
 ```
 
 ## Trusted Publisher Setup
