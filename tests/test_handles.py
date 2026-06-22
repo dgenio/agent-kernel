@@ -7,10 +7,12 @@ import datetime
 import pytest
 
 from weaver_kernel import (
+    BudgetConfigError,
     HandleConstraintViolation,
     HandleExpired,
     HandleNotFound,
     HandleStore,
+    HandleTooLarge,
 )
 from weaver_kernel.models import Handle
 from weaver_kernel.policy_reasons import DenialReason
@@ -344,3 +346,69 @@ def test_expand_fills_provenance_principal(store: HandleStore) -> None:
     frame = store.expand(handle, query={}, action_id="act-9", principal_id="agent-1")
     assert frame.provenance.principal_id == "agent-1"
     assert frame.provenance.action_id == "act-9"
+
+
+# ── Byte-size budgeting (#211) ───────────────────────────────────────────────────
+
+
+def test_current_bytes_starts_at_zero_and_tracks_stores() -> None:
+    store = HandleStore()
+    assert store.current_bytes == 0
+    store.store("cap.x", {"v": "x" * 100})
+    assert store.current_bytes > 100
+
+
+def test_max_entry_bytes_rejects_oversized_payload() -> None:
+    store = HandleStore(max_entry_bytes=100)
+    with pytest.raises(HandleTooLarge):
+        store.store("cap.x", {"v": "x" * 1000})
+    # Rejected data is never retained.
+    assert store.current_bytes == 0
+    assert len(store._meta) == 0
+
+
+def test_max_entry_bytes_allows_within_cap() -> None:
+    store = HandleStore(max_entry_bytes=10_000)
+    handle = store.store("cap.x", {"v": "x" * 1000})
+    assert store.get(handle.handle_id) == {"v": "x" * 1000}
+
+
+def test_max_total_bytes_evicts_oldest_until_within_budget() -> None:
+    store = HandleStore(max_total_bytes=2500)
+    h1 = store.store("cap.x", {"v": "a" * 1000})
+    h2 = store.store("cap.x", {"v": "b" * 1000})
+    h3 = store.store("cap.x", {"v": "c" * 1000})
+    # Three ~1009-byte entries exceed 2500; the oldest is evicted, never the
+    # just-stored one.
+    assert store.current_bytes <= 2500
+    with pytest.raises(HandleNotFound):
+        store.get(h1.handle_id)
+    assert store.get(h2.handle_id) == {"v": "b" * 1000}
+    assert store.get(h3.handle_id) == {"v": "c" * 1000}
+
+
+def test_expanding_byte_evicted_handle_raises_not_found() -> None:
+    store = HandleStore(max_total_bytes=2500)
+    h1 = store.store("cap.x", [{"id": i} for i in range(50)], principal_id="agent-1")
+    evicted_meta = store.get_meta(h1.handle_id)
+    store.store("cap.x", {"v": "b" * 1500})
+    store.store("cap.x", {"v": "c" * 1500})
+    with pytest.raises(HandleNotFound):
+        store.expand(evicted_meta, query={}, principal_id="agent-1")
+
+
+def test_evict_expired_releases_byte_accounting() -> None:
+    store = HandleStore()
+    store.store("cap.x", {"v": "x" * 500}, ttl_seconds=-1)
+    before = store.current_bytes
+    assert before > 0
+    store.evict_expired()
+    assert store.current_bytes == 0
+    assert before > store.current_bytes
+
+
+def test_byte_budget_rejects_invalid_config() -> None:
+    with pytest.raises(BudgetConfigError):
+        HandleStore(max_total_bytes=0)
+    with pytest.raises(BudgetConfigError):
+        HandleStore(max_entry_bytes=-5)

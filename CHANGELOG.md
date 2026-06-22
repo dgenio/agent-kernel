@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Context-firewall sizing, budgeting & summary fidelity.** A grouped pass over
+  how the firewall measures, bounds, and represents payloads:
+  - **Allocation-free size estimation (#207).** `firewall.estimated_size` walks
+    a value to approximate its serialised length instead of `json.dumps`-ing the
+    whole payload just to measure it; the raw-mode budget check now uses it, so
+    multi-MB results are no longer fully serialised for sizing.
+  - **Byte-aware handle budgeting (#211).** `HandleStore` accepts optional
+    `max_total_bytes` (evict oldest-first) and `max_entry_bytes` (reject an
+    over-cap payload with the new `HandleTooLarge` error). Both default to
+    `None`, leaving existing behaviour unchanged; `current_bytes` exposes
+    resident usage.
+  - **tiktoken token counter (#218).** `firewall.make_tiktoken_counter()`
+    implements the `TokenCounter` seam with a real tokenizer (configurable
+    encoding, default `cl100k_base`), wired via `BudgetManager(token_counter=…)`.
+    `tiktoken` is imported lazily so the base install stays dependency-light;
+    install the existing `weaver-kernel[tiktoken]` extra to use it.
+  - **Honest summaries (#174).** Boolean columns are summarised as true/false
+    counts instead of being averaged as numbers, and truncated fact lists carry
+    an explicit "N more facts omitted" marker.
 - **CI / supply-chain hardening.** A focused pass over the build pipeline and
   repository automation:
   - **Bare-install CI job (#208).** Installs `weaver-kernel` with no extras,

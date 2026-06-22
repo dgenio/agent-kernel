@@ -78,9 +78,13 @@ class BudgetExhausted(AgentKernelError):
 
 
 class BudgetConfigError(AgentKernelError):
-    """Raised when a :class:`~weaver_kernel.firewall.budget_manager.BudgetManager` is
-    constructed with invalid parameters, or asked to allocate/record/release
-    a negative amount.
+    """Raised when a budget is constructed with invalid parameters.
+
+    Covers the :class:`~weaver_kernel.firewall.budget_manager.BudgetManager`
+    (non-positive ``total_budget``/``default_request``, or a negative
+    allocate/record/release amount) and the
+    :class:`~weaver_kernel.handles.HandleStore` byte budgets (non-positive
+    ``max_total_bytes``/``max_entry_bytes``).
 
     Used in place of bare :class:`ValueError` so callers can catch budget
     configuration mistakes without swallowing unrelated stdlib errors.
@@ -126,6 +130,17 @@ class HandleNotFound(AgentKernelError):
 
 class HandleExpired(AgentKernelError):
     """Raised when a handle's TTL has elapsed."""
+
+
+class HandleTooLarge(AgentKernelError):
+    """Raised when a single handle payload exceeds the store's per-entry byte cap.
+
+    Fires from :meth:`~weaver_kernel.handles.HandleStore.store` only when the
+    store was configured with ``max_entry_bytes`` and the estimated size of the
+    data to store exceeds it. The data is *not* retained — rejecting an
+    over-cap payload outright (rather than silently truncating it) keeps handle
+    expansion faithful to the original dataset and bounds resident raw data.
+    """
 
 
 class HandleConstraintViolation(AgentKernelError):

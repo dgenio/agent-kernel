@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -18,6 +17,7 @@ from ..models import (
 )
 from .budgets import Budgets
 from .redaction import StreamRedactor, redact
+from .size_estimate import estimated_size
 from .summarize import summarize
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ class Firewall:
                     },
                 )
             else:
-                raw_size = len(json.dumps(data, default=str))
+                raw_size = estimated_size(data)
                 if raw_size > self._budgets.max_chars:
                     warnings.append(
                         f"raw output ({raw_size} chars) exceeds budget "

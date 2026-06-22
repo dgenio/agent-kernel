@@ -137,3 +137,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "weaver_contracts.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tiktoken.*"
+ignore_missing_imports = true
