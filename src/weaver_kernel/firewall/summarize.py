@@ -5,6 +5,7 @@ No LLM is used — summaries are produced by structural analysis of the data.
 
 from __future__ import annotations
 
+from itertools import islice
 from typing import Any
 
 
@@ -44,19 +45,27 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _truncate_facts(facts: list[str], max_facts: int) -> list[str]:
+def _truncate_facts(facts: list[str], max_facts: int, *, total: int | None = None) -> list[str]:
     """Cap *facts* at *max_facts*, surfacing omission explicitly.
 
     Silent truncation lets an LLM treat a partial summary as complete. When
     facts are dropped, the final slot becomes an explicit marker stating how
     many were omitted; an untruncated list is returned unchanged so it carries
     no marker (issue #174).
+
+    Args:
+        facts: The (possibly already-bounded) candidate fact strings.
+        max_facts: Maximum facts to return.
+        total: True number of candidate facts when *facts* was pre-capped by the
+            caller (so it never materialises one fact per item on the hot path).
+            Defaults to ``len(facts)``.
     """
     if max_facts <= 0:
         return []
-    if len(facts) <= max_facts:
-        return facts
-    omitted = len(facts) - (max_facts - 1)
+    candidate_total = len(facts) if total is None else total
+    if candidate_total <= max_facts:
+        return facts[:max_facts]
+    omitted = candidate_total - (max_facts - 1)
     return [*facts[: max_facts - 1], f"… ({omitted} more facts omitted; full data via handle)"]
 
 
@@ -117,7 +126,9 @@ def _summarize_list_of_dicts(rows: list[dict[str, Any]], *, max_facts: int) -> l
 
 def _summarize_dict(data: dict[str, Any], *, max_facts: int) -> list[str]:
     facts: list[str] = [f"Keys: {', '.join(sorted(data.keys())[:20])}"]
-    for k, v in data.items():
+    # Build at most ``max_facts`` value facts — never one per key — so a huge
+    # dict does not turn a bounded summary into an O(n) walk on the hot path.
+    for k, v in islice(data.items(), max_facts):
         if isinstance(v, (int, float)):
             facts.append(f"{k}: {v}")
         elif isinstance(v, str):
@@ -128,13 +139,15 @@ def _summarize_dict(data: dict[str, Any], *, max_facts: int) -> list[str]:
             facts.append(f"{k}: dict with keys [{', '.join(list(v.keys())[:5])}]")
         else:
             facts.append(f"{k}: {repr(v)[:80]}")
-    return _truncate_facts(facts, max_facts)
+    return _truncate_facts(facts, max_facts, total=1 + len(data))
 
 
 def _summarize_plain_list(data: list[Any], *, max_facts: int) -> list[str]:
+    # Only repr() up to ``max_facts`` elements; the total count is already
+    # surfaced by the "List of N items" header and threaded to the marker.
     facts = [f"List of {len(data)} items"]
-    facts.extend(repr(item)[:100] for item in data)
-    return _truncate_facts(facts, max_facts)
+    facts.extend(repr(item)[:100] for item in islice(data, max_facts))
+    return _truncate_facts(facts, max_facts, total=1 + len(data))
 
 
 def _summarize_string(data: str, *, max_facts: int) -> list[str]:

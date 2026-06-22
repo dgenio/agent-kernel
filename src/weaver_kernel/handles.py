@@ -28,7 +28,9 @@ class HandleStore:
     - ``max_entry_bytes`` rejects a single over-cap payload with
       :class:`~weaver_kernel.errors.HandleTooLarge` (the data is never stored).
     - ``max_total_bytes`` evicts oldest-first after each store until aggregate
-      estimated residency is within budget.
+      estimated residency is within budget. A single entry larger than the total
+      budget could never fit, so it is rejected with ``HandleTooLarge`` rather
+      than retained — guaranteeing ``current_bytes`` never exceeds the budget.
     """
 
     _EVICT_INTERVAL: int = 128  # run evict_expired() every N store() calls
@@ -88,15 +90,29 @@ class HandleStore:
             A :class:`Handle` referencing the stored data.
 
         Raises:
-            HandleTooLarge: If ``max_entry_bytes`` is set and the estimated size
-                of *data* exceeds it.
+            HandleTooLarge: If a byte budget is configured and the estimated
+                size of *data* exceeds the binding per-store ceiling — either
+                ``max_entry_bytes`` or ``max_total_bytes`` (a single entry larger
+                than the *total* budget can never fit and is rejected too, so the
+                store never ends up permanently over budget).
         """
-        size = estimated_size(data)
-        if self._max_entry_bytes is not None and size > self._max_entry_bytes:
-            raise HandleTooLarge(
-                f"Handle data for '{capability_id}' is ~{size} bytes, exceeding the "
-                f"per-entry cap of {self._max_entry_bytes} bytes; not stored."
-            )
+        # Both caps act as a per-store reject ceiling: a single entry larger than
+        # the total budget could never satisfy it. Early-exit at the ceiling so an
+        # over-cap payload that will be rejected anyway is not fully walked.
+        caps = [c for c in (self._max_entry_bytes, self._max_total_bytes) if c is not None]
+        if caps:
+            reject_at = min(caps)
+            size = estimated_size(data, limit=reject_at)
+            if size > reject_at:
+                cap_name = (
+                    "max_entry_bytes" if reject_at == self._max_entry_bytes else "max_total_bytes"
+                )
+                raise HandleTooLarge(
+                    f"Handle data for '{capability_id}' exceeds the {reject_at}-byte "
+                    f"{cap_name} ceiling; not stored."
+                )
+        else:
+            size = estimated_size(data)
 
         ttl = ttl_seconds if ttl_seconds is not None else self._default_ttl
         now = datetime.datetime.now(tz=datetime.timezone.utc)

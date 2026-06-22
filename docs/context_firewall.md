@@ -76,9 +76,11 @@ store = HandleStore(
 Sizes are estimated with the same `estimated_size` walk used for budgets.
 `max_total_bytes` evicts oldest-first after each store (never the just-stored
 entry); `max_entry_bytes` rejects an over-cap payload with `HandleTooLarge`
-rather than truncating it, keeping expansion faithful to the original dataset.
-Expanding an evicted handle raises the usual `HandleNotFound`. Tighter budgets
-mean more "handle expired/evicted" experiences — tune for your workload.
+rather than truncating it, keeping expansion faithful to the original dataset. A
+single entry larger than `max_total_bytes` can never fit, so it is rejected the
+same way — `current_bytes` therefore never exceeds `max_total_bytes`. Expanding
+an evicted handle raises the usual `HandleNotFound`. Tighter budgets mean more
+"handle expired/evicted" experiences — tune for your workload.
 
 ## Redaction
 

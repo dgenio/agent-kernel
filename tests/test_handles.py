@@ -407,6 +407,22 @@ def test_evict_expired_releases_byte_accounting() -> None:
     assert before > store.current_bytes
 
 
+def test_entry_larger_than_total_budget_is_rejected() -> None:
+    # A single entry that exceeds the *total* budget can never fit, so it is
+    # rejected rather than retained — current_bytes never exceeds the budget.
+    store = HandleStore(max_total_bytes=200)
+    with pytest.raises(HandleTooLarge):
+        store.store("cap.x", {"v": "x" * 1000})
+    assert store.current_bytes == 0
+
+
+def test_total_budget_never_exceeded_after_stores() -> None:
+    store = HandleStore(max_total_bytes=2500)
+    for marker in ("a", "b", "c", "d", "e"):
+        store.store("cap.x", {"v": marker * 1000})
+        assert store.current_bytes <= 2500
+
+
 def test_byte_budget_rejects_invalid_config() -> None:
     with pytest.raises(BudgetConfigError):
         HandleStore(max_total_bytes=0)

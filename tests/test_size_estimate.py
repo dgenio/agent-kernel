@@ -69,3 +69,18 @@ def test_deeply_nested_does_not_recurse() -> None:
         value = [value]
     # Iterative walk: no RecursionError even far past the recursion limit.
     assert estimated_size(value) > 5000
+
+
+def test_self_referential_list_terminates() -> None:
+    cyclic: list[object] = [1, 2]
+    cyclic.append(cyclic)  # a list that contains itself
+    # json.dumps would raise; the estimator counts each container once and
+    # returns a finite size instead of hanging.
+    assert estimated_size(cyclic) > 0
+
+
+def test_mutually_referential_dicts_terminate() -> None:
+    a: dict[str, object] = {}
+    b: dict[str, object] = {"a": a}
+    a["b"] = b
+    assert estimated_size(a) > 0

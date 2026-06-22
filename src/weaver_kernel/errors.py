@@ -133,13 +133,15 @@ class HandleExpired(AgentKernelError):
 
 
 class HandleTooLarge(AgentKernelError):
-    """Raised when a single handle payload exceeds the store's per-entry byte cap.
+    """Raised when a single handle payload exceeds the store's byte ceiling.
 
-    Fires from :meth:`~weaver_kernel.handles.HandleStore.store` only when the
-    store was configured with ``max_entry_bytes`` and the estimated size of the
-    data to store exceeds it. The data is *not* retained — rejecting an
-    over-cap payload outright (rather than silently truncating it) keeps handle
-    expansion faithful to the original dataset and bounds resident raw data.
+    Fires from :meth:`~weaver_kernel.handles.HandleStore.store` when a byte
+    budget is configured and the estimated size of the data exceeds the binding
+    per-store ceiling — ``max_entry_bytes``, or ``max_total_bytes`` (a single
+    entry larger than the whole budget can never fit). The data is *not*
+    retained — rejecting an over-cap payload outright (rather than silently
+    truncating it) keeps handle expansion faithful to the original dataset and
+    bounds resident raw data.
     """
 
 

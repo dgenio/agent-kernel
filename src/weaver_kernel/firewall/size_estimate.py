@@ -8,8 +8,10 @@ single allocation-free pass (with an optional early exit) replaces a full JSON
 serialisation that would double peak memory on large payloads.
 
 The estimate is intentionally approximate but **deterministic**: the same input
-always yields the same number, and the walk visits container members in their
-native (insertion) order. It is used both by
+always yields the same number (the total is order-independent). Self-referential
+structures are handled gracefully — each container is counted at most once, so a
+cycle can never hang the walk (unlike ``json.dumps``, which raises). It is used
+both by
 :mod:`~weaver_kernel.firewall.transform` (raw-mode budget warning, issue #207)
 and by :class:`~weaver_kernel.handles.HandleStore` (byte-size budgeting,
 issue #211).
@@ -40,6 +42,8 @@ def estimated_size(value: Any, *, limit: int | None = None) -> int:
     Walks *value* iteratively (so deeply nested structures cannot exhaust the
     recursion limit) summing approximate JSON character contributions. ``bool``
     is handled before ``int`` because ``bool`` is an ``int`` subclass in Python.
+    Each container is visited at most once, so self-referential inputs terminate
+    instead of looping forever.
 
     Args:
         value: Any value the firewall might serialise. Non-JSON types fall back
@@ -48,7 +52,8 @@ def estimated_size(value: Any, *, limit: int | None = None) -> int:
         limit: Optional early-exit threshold. When the running total exceeds
             *limit* the walk stops and returns a value greater than *limit* — use
             this when only the boolean ``size > limit`` decision is needed, not
-            the exact size.
+            the exact size. (Which member tips the total past *limit* is
+            unspecified, but the returned value is always ``> limit``.)
 
     Returns:
         A non-negative integer approximating ``len(json.dumps(value,
@@ -63,6 +68,7 @@ def estimated_size(value: Any, *, limit: int | None = None) -> int:
         9
     """
     total = 0
+    seen: set[int] = set()  # container ids already counted, to break cycles
     stack: list[Any] = [value]
     while stack:
         cur = stack.pop()
@@ -79,12 +85,18 @@ def estimated_size(value: Any, *, limit: int | None = None) -> int:
         elif isinstance(cur, (int, float)):
             total += len(str(cur))
         elif isinstance(cur, dict):
+            if id(cur) in seen:
+                continue
+            seen.add(id(cur))
             n = len(cur)
             total += _CONTAINER_DELIMS + max(0, n - 1) * _ITEM_SEP
             for key, val in cur.items():
                 total += len(str(key)) + _QUOTES + _KV_SEP
                 stack.append(val)
         elif isinstance(cur, (list, tuple)):
+            if id(cur) in seen:
+                continue
+            seen.add(id(cur))
             n = len(cur)
             total += _CONTAINER_DELIMS + max(0, n - 1) * _ITEM_SEP
             stack.extend(cur)
