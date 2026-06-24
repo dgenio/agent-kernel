@@ -6,10 +6,10 @@ import datetime
 import uuid
 from typing import Any
 
-from .errors import HandleConstraintViolation, HandleExpired, HandleNotFound
-from .firewall.redaction import redact
-from .models import Frame, Handle, Provenance, ResponseMode
-from .policy_reasons import DenialReason
+from .errors import BudgetConfigError, HandleExpired, HandleNotFound, HandleTooLarge
+from .firewall.size_estimate import estimated_size
+from .handle_query import expand_handle
+from .models import Frame, Handle, ResponseMode
 
 
 class HandleStore:
@@ -19,6 +19,18 @@ class HandleStore:
     or explicitly via :meth:`evict_expired`.  A *max_entries* cap prevents
     unbounded memory growth in long-lived processes — when the cap is exceeded
     the oldest entries are dropped after expired ones are cleared.
+
+    Two optional **byte budgets** bound memory by size rather than entry count,
+    since one deployment's 10k entries are kilobytes and another's are gigabytes
+    (issue #211). Both default to ``None`` (disabled), leaving behaviour
+    unchanged until configured:
+
+    - ``max_entry_bytes`` rejects a single over-cap payload with
+      :class:`~weaver_kernel.errors.HandleTooLarge` (the data is never stored).
+    - ``max_total_bytes`` evicts oldest-first after each store until aggregate
+      estimated residency is within budget. A single entry larger than the total
+      budget could never fit, so it is rejected with ``HandleTooLarge`` rather
+      than retained — guaranteeing ``current_bytes`` never exceeds the budget.
     """
 
     _EVICT_INTERVAL: int = 128  # run evict_expired() every N store() calls
@@ -28,12 +40,27 @@ class HandleStore:
         default_ttl_seconds: int = 3600,
         *,
         max_entries: int = 10_000,
+        max_total_bytes: int | None = None,
+        max_entry_bytes: int | None = None,
     ) -> None:
+        if max_total_bytes is not None and max_total_bytes <= 0:
+            raise BudgetConfigError("max_total_bytes must be positive when set")
+        if max_entry_bytes is not None and max_entry_bytes <= 0:
+            raise BudgetConfigError("max_entry_bytes must be positive when set")
         self._default_ttl = default_ttl_seconds
         self._max_entries = max_entries
+        self._max_total_bytes = max_total_bytes
+        self._max_entry_bytes = max_entry_bytes
         self._store_count = 0
         self._data: dict[str, Any] = {}
         self._meta: dict[str, Handle] = {}
+        self._sizes: dict[str, int] = {}
+        self._total_bytes = 0
+
+    @property
+    def current_bytes(self) -> int:
+        """Estimated total bytes of data currently resident in the store."""
+        return self._total_bytes
 
     # ── Storage ───────────────────────────────────────────────────────────────
 
@@ -61,7 +88,32 @@ class HandleStore:
 
         Returns:
             A :class:`Handle` referencing the stored data.
+
+        Raises:
+            HandleTooLarge: If a byte budget is configured and the estimated
+                size of *data* exceeds the binding per-store ceiling — either
+                ``max_entry_bytes`` or ``max_total_bytes`` (a single entry larger
+                than the *total* budget can never fit and is rejected too, so the
+                store never ends up permanently over budget).
         """
+        # Both caps act as a per-store reject ceiling: a single entry larger than
+        # the total budget could never satisfy it. Early-exit at the ceiling so an
+        # over-cap payload that will be rejected anyway is not fully walked.
+        caps = [c for c in (self._max_entry_bytes, self._max_total_bytes) if c is not None]
+        if caps:
+            reject_at = min(caps)
+            size = estimated_size(data, limit=reject_at)
+            if size > reject_at:
+                cap_name = (
+                    "max_entry_bytes" if reject_at == self._max_entry_bytes else "max_total_bytes"
+                )
+                raise HandleTooLarge(
+                    f"Handle data for '{capability_id}' exceeds the {reject_at}-byte "
+                    f"{cap_name} ceiling; not stored."
+                )
+        else:
+            size = estimated_size(data)
+
         ttl = ttl_seconds if ttl_seconds is not None else self._default_ttl
         now = datetime.datetime.now(tz=datetime.timezone.utc)
         handle = Handle(
@@ -75,21 +127,32 @@ class HandleStore:
         )
         self._data[handle.handle_id] = data
         self._meta[handle.handle_id] = handle
+        self._sizes[handle.handle_id] = size
+        self._total_bytes += size
 
         # Periodic eviction of expired entries
         self._store_count += 1
         if self._store_count % self._EVICT_INTERVAL == 0:
             self.evict_expired()
 
-        # Cap enforcement: evict oldest entries when over the limit
+        # Cap enforcement: evict oldest entries when over the entry limit
         if len(self._meta) > self._max_entries:
             self.evict_expired()  # clear expired first
             overflow = len(self._meta) - self._max_entries
             if overflow > 0:
-                oldest = sorted(self._meta, key=lambda hid: self._meta[hid].created_at)
-                for hid in oldest[:overflow]:
-                    self._data.pop(hid, None)
-                    self._meta.pop(hid, None)
+                for hid in self._oldest_ids()[:overflow]:
+                    self._drop(hid)
+
+        # Byte-budget enforcement: evict oldest until within the total budget,
+        # never evicting the entry we just stored (the caller holds its handle).
+        if self._max_total_bytes is not None and self._total_bytes > self._max_total_bytes:
+            self.evict_expired()
+            for hid in self._oldest_ids():
+                if self._total_bytes <= self._max_total_bytes:
+                    break
+                if hid == handle.handle_id:
+                    continue  # never evict the entry we just stored
+                self._drop(hid)
 
         return handle
 
@@ -114,8 +177,7 @@ class HandleStore:
         now = datetime.datetime.now(tz=datetime.timezone.utc)
         if handle.expires_at <= now:
             # Lazy eviction
-            del self._data[handle_id]
-            del self._meta[handle_id]
+            self._drop(handle_id)
             raise HandleExpired(
                 f"Handle '{handle_id}' expired at {handle.expires_at.isoformat()}."
             )
@@ -158,6 +220,9 @@ class HandleStore:
             - ``fields`` (list[str]): Only include these fields.
             - ``filter`` (dict[str, Any]): Basic equality filter (all conditions AND-ed).
 
+        The query pipeline lives in :func:`weaver_kernel.handle_query.expand_handle`;
+        this method binds it to the store's TTL-checked data fetch.
+
         Args:
             handle: The handle to expand.
             query: Query parameters controlling the expansion.
@@ -180,179 +245,14 @@ class HandleStore:
                 grant's persisted constraints (``max_rows``, ``allowed_fields``,
                 ``scope``) or is requested by a different principal.
         """
-        # ── Principal binding ─────────────────────────────────────────────────
-        # A handle bound to a principal is not a bearer credential. If the
-        # handle has a non-empty principal_id, the caller MUST present a
-        # matching principal_id — omitting it counts as a mismatch (otherwise
-        # any caller in the same process could expand by passing "").
-        if handle.principal_id and handle.principal_id != principal_id:
-            raise HandleConstraintViolation(
-                f"Handle '{handle.handle_id}' was granted to principal "
-                f"'{handle.principal_id}' and cannot be expanded by "
-                f"'{principal_id or '<unspecified>'}'.",
-                reason_code=DenialReason.HANDLE_PRINCIPAL_MISMATCH,
-            )
-
-        # ── Query input validation ────────────────────────────────────────────
-        # Validate user-supplied query types up front so callers see a stable
-        # HandleConstraintViolation (with INVALID_CONSTRAINT) instead of a
-        # bare TypeError/ValueError from inside the expansion logic. Public
-        # interfaces must not leak stdlib exceptions (see AGENTS.md).
-        raw_filter = query.get("filter")
-        if raw_filter is not None and not isinstance(raw_filter, dict):
-            raise HandleConstraintViolation(
-                f"Handle expand 'filter' must be a dict, got {type(raw_filter).__name__}.",
-                reason_code=DenialReason.INVALID_CONSTRAINT,
-            )
-        raw_fields = query.get("fields")
-        if raw_fields is not None and not isinstance(raw_fields, list | tuple):
-            raise HandleConstraintViolation(
-                f"Handle expand 'fields' must be a list, got {type(raw_fields).__name__}.",
-                reason_code=DenialReason.INVALID_CONSTRAINT,
-            )
-
-        # ── Grant-constraint rechecks ─────────────────────────────────────────
-        granted_max_rows = handle.constraints.get("max_rows")
-        granted_fields = handle.constraints.get("allowed_fields") or []
-        granted_scope = handle.constraints.get("scope") or {}
-
-        requested_fields: list[str] = list(raw_fields or [])
-        if granted_fields and requested_fields:
-            disallowed = [f for f in requested_fields if f not in granted_fields]
-            if disallowed:
-                raise HandleConstraintViolation(
-                    f"Handle '{handle.handle_id}' grant restricts fields to "
-                    f"{sorted(granted_fields)}; request asked for "
-                    f"{sorted(disallowed)}.",
-                    reason_code=DenialReason.HANDLE_CONSTRAINT_VIOLATION,
-                )
-
-        filter_in: dict[str, Any] = raw_filter or {}
-        if granted_scope:
-            for sk, sv in granted_scope.items():
-                if sk in filter_in and filter_in[sk] != sv:
-                    raise HandleConstraintViolation(
-                        f"Handle '{handle.handle_id}' is scoped to "
-                        f"{sk}={sv!r}; request filter "
-                        f"{sk}={filter_in[sk]!r} is outside that scope.",
-                        reason_code=DenialReason.HANDLE_CONSTRAINT_VIOLATION,
-                    )
-
-        data = self.get(handle.handle_id)
-        rows: list[Any] = data if isinstance(data, list) else [data]
-
-        # ── Filtering ──────────────────────────────────────────────────────────
-        # Grant scope is AND-merged into the request filter so the caller
-        # cannot bypass it by omitting the scope key.
-        filter_spec: dict[str, Any] = dict(filter_in)
-        for sk, sv in granted_scope.items():
-            filter_spec.setdefault(sk, sv)
-        if filter_spec:
-            rows = [
-                r
-                for r in rows
-                if isinstance(r, dict) and all(r.get(k) == v for k, v in filter_spec.items())
-            ]
-
-        # ── Pagination ────────────────────────────────────────────────────────
-        try:
-            offset = int(query.get("offset", 0))
-        except (TypeError, ValueError) as exc:
-            raise HandleConstraintViolation(
-                f"Handle expand 'offset' must be an integer, got {query.get('offset')!r}.",
-                reason_code=DenialReason.INVALID_CONSTRAINT,
-            ) from exc
-        if offset < 0:
-            raise HandleConstraintViolation(
-                f"Handle expand 'offset' must be non-negative, got {offset}.",
-                reason_code=DenialReason.INVALID_CONSTRAINT,
-            )
-        requested_limit_raw = query.get("limit")
-        requested_limit: int | None
-        if requested_limit_raw is None:
-            requested_limit = None
-        else:
-            try:
-                requested_limit = int(requested_limit_raw)
-            except (TypeError, ValueError) as exc:
-                raise HandleConstraintViolation(
-                    f"Handle expand 'limit' must be an integer, got {requested_limit_raw!r}.",
-                    reason_code=DenialReason.INVALID_CONSTRAINT,
-                ) from exc
-            # A negative limit would slice as rows[offset:offset+limit] and could
-            # return rows in excess of a (possibly zero) grant cap — reject it
-            # rather than silently bypassing max_rows.
-            if requested_limit < 0:
-                raise HandleConstraintViolation(
-                    f"Handle expand 'limit' must be non-negative, got {requested_limit}.",
-                    reason_code=DenialReason.INVALID_CONSTRAINT,
-                )
-        limit = len(rows) if requested_limit is None else requested_limit
-
-        if isinstance(granted_max_rows, int) and granted_max_rows >= 0:
-            if requested_limit is not None and requested_limit > granted_max_rows:
-                raise HandleConstraintViolation(
-                    f"Handle '{handle.handle_id}' grant caps rows at "
-                    f"{granted_max_rows}; request asked for "
-                    f"limit={requested_limit}.",
-                    reason_code=DenialReason.HANDLE_CONSTRAINT_VIOLATION,
-                )
-            limit = min(limit, granted_max_rows)
-
-        rows = rows[offset : offset + limit]
-
-        # ── Field selection ───────────────────────────────────────────────────
-        # If the grant restricts fields and the caller did not ask for any,
-        # apply the grant's allowed_fields as the default projection so
-        # disallowed fields cannot leak through an unscoped expand call.
-        effective_fields: list[str]
-        if requested_fields:
-            effective_fields = requested_fields
-        elif granted_fields:
-            effective_fields = list(granted_fields)
-        else:
-            effective_fields = []
-        if effective_fields:
-            rows = [
-                {k: v for k, v in r.items() if k in effective_fields} if isinstance(r, dict) else r
-                for r in rows
-            ]
-
-        if not rows:
-            table_preview: list[Any] = []
-        elif isinstance(rows[0], dict):
-            table_preview = rows
-        else:
-            table_preview = [{"value": r} for r in rows]
-
-        # ── Redaction ───────────────────────────────────────────────────────────
-        # expand() builds its Frame directly from the raw stored dataset, which
-        # is persisted pre-firewall. Field-level grant constraints
-        # (allowed_fields / scope) are already enforced by the projection above,
-        # so allowed_fields is intentionally not re-passed here; but a permitted
-        # field can still carry inline secrets (e.g. a Bearer token in a `note`
-        # value). Route the projected rows through the same redactor the
-        # Firewall applies on first invocation — using the firewall's configured
-        # max_depth when the caller threads it — so the I-01 boundary holds on
-        # the expansion path too (see docs/agent-context/invariants.md).
-        if max_depth is None:
-            redacted_preview, warnings = redact(table_preview)
-        else:
-            redacted_preview, warnings = redact(table_preview, max_depth=max_depth)
-
-        return Frame(
+        return expand_handle(
+            handle,
+            fetch_data=lambda: self.get(handle.handle_id),
+            query=query,
             action_id=action_id,
-            capability_id=handle.capability_id,
             response_mode=response_mode,
-            table_preview=redacted_preview,
-            warnings=warnings,
-            handle=handle,
-            provenance=Provenance(
-                capability_id=handle.capability_id,
-                principal_id=principal_id,
-                invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-                action_id=action_id,
-            ),
+            principal_id=principal_id,
+            max_depth=max_depth,
         )
 
     # ── Maintenance ───────────────────────────────────────────────────────────
@@ -366,6 +266,15 @@ class HandleStore:
         now = datetime.datetime.now(tz=datetime.timezone.utc)
         expired = [hid for hid, h in self._meta.items() if h.expires_at <= now]
         for hid in expired:
-            self._data.pop(hid, None)
-            self._meta.pop(hid, None)
+            self._drop(hid)
         return len(expired)
+
+    def _oldest_ids(self) -> list[str]:
+        """Handle IDs ordered oldest-first by creation time (deterministic)."""
+        return sorted(self._meta, key=lambda hid: self._meta[hid].created_at)
+
+    def _drop(self, handle_id: str) -> None:
+        """Remove a handle's data, metadata, and size accounting."""
+        self._data.pop(handle_id, None)
+        self._meta.pop(handle_id, None)
+        self._total_bytes -= self._sizes.pop(handle_id, 0)

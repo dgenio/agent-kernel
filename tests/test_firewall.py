@@ -179,6 +179,29 @@ def test_raw_mode_oversized_data_adds_warning() -> None:
     assert frame.raw_data == large_data  # type: ignore[union-attr]
 
 
+def test_raw_mode_warning_decision_holds_across_budget_boundary() -> None:
+    # #207: estimated_size() replaced len(json.dumps(...)) for the raw-mode
+    # budget warning. The estimate is approximate (±25%, see test_size_estimate),
+    # so the over/under *decision* — the only thing this size drives — is pinned
+    # with margin beyond the error band: a payload well under max_chars carries
+    # no warning, one well over does.
+    budgets = Budgets(max_chars=1000)
+    under = _transform(
+        {"payload": "x" * 200},
+        "raw",
+        principal_roles=["admin"],
+        budgets=budgets,
+    )
+    over = _transform(
+        {"payload": "x" * 5000},
+        "raw",
+        principal_roles=["admin"],
+        budgets=budgets,
+    )
+    assert not any("exceeds budget" in w for w in under.warnings)  # type: ignore[union-attr]
+    assert any("exceeds budget" in w for w in over.warnings)  # type: ignore[union-attr]
+
+
 # ── Table mode with non-list data ──────────────────────────────────────────────
 
 
@@ -295,6 +318,48 @@ def test_summarize_dict_max_facts() -> None:
     data = {"a": 1, "b": 2, "c": 3}
     facts = summarize(data, max_facts=2)
     assert len(facts) <= 2
+
+
+# ── summarize() bool handling + truncation marker (#174) ────────────────────────
+
+
+def test_summarize_bool_column_is_not_averaged() -> None:
+    rows = [{"active": True}, {"active": True}, {"active": False}]
+    facts = summarize(rows)
+    # A bool column must never be reported as a numeric mean/min/max.
+    assert not any("avg=" in f for f in facts)
+    assert any(f == "active: True=2, False=1" for f in facts)
+
+
+def test_summarize_numeric_column_still_averaged() -> None:
+    rows = [{"score": 10}, {"score": 20}, {"score": 30}]
+    facts = summarize(rows)
+    assert any(f == "score: min=10.00, max=30.00, avg=20.00" for f in facts)
+
+
+def test_summarize_truncation_marker_when_facts_omitted() -> None:
+    rows = [{"a": i, "b": i, "c": i, "d": i, "e": i} for i in range(5)]
+    facts = summarize(rows, max_facts=3)
+    assert len(facts) == 3
+    assert "more facts omitted" in facts[-1]
+
+
+def test_summarize_no_marker_when_all_facts_fit() -> None:
+    rows = [{"score": i} for i in range(3)]
+    facts = summarize(rows, max_facts=20)
+    assert not any("omitted" in f for f in facts)
+
+
+def test_summarize_exactly_max_facts_has_no_false_marker() -> None:
+    # "Keys" + "a: 1" + "b: 2" is exactly 3 facts; no truncation should occur.
+    facts = summarize({"a": 1, "b": 2}, max_facts=3)
+    assert facts == ["Keys: a, b", "a: 1", "b: 2"]
+
+
+def test_summarize_plain_list_marks_omitted_items() -> None:
+    facts = summarize(list(range(10)), max_facts=4)
+    assert facts[0] == "List of 10 items"
+    assert "more facts omitted" in facts[-1]
 
 
 # ── Token counting ─────────────────────────────────────────────────────────────

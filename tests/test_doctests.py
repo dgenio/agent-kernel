@@ -18,6 +18,7 @@ import importlib
 # false failures.
 _DOCTESTED_MODULES = [
     "weaver_kernel.firewall.token_counting",
+    "weaver_kernel.firewall.size_estimate",
 ]
 
 

@@ -5,6 +5,7 @@ No LLM is used — summaries are produced by structural analysis of the data.
 
 from __future__ import annotations
 
+from itertools import islice
 from typing import Any
 
 
@@ -36,6 +37,38 @@ def summarize(data: Any, *, max_facts: int = 20) -> list[str]:
     return [repr(data)[:200]]
 
 
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _is_number(value: Any) -> bool:
+    """True for real numbers, excluding ``bool`` (an ``int`` subclass)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _truncate_facts(facts: list[str], max_facts: int, *, total: int | None = None) -> list[str]:
+    """Cap *facts* at *max_facts*, surfacing omission explicitly.
+
+    Silent truncation lets an LLM treat a partial summary as complete. When
+    facts are dropped, the final slot becomes an explicit marker stating how
+    many were omitted; an untruncated list is returned unchanged so it carries
+    no marker (issue #174).
+
+    Args:
+        facts: The (possibly already-bounded) candidate fact strings.
+        max_facts: Maximum facts to return.
+        total: True number of candidate facts when *facts* was pre-capped by the
+            caller (so it never materialises one fact per item on the hot path).
+            Defaults to ``len(facts)``.
+    """
+    if max_facts <= 0:
+        return []
+    candidate_total = len(facts) if total is None else total
+    if candidate_total <= max_facts:
+        return facts[:max_facts]
+    omitted = candidate_total - (max_facts - 1)
+    return [*facts[: max_facts - 1], f"… ({omitted} more facts omitted; full data via handle)"]
+
+
 # ── Specialised handlers ──────────────────────────────────────────────────────
 
 
@@ -51,9 +84,15 @@ def _summarize_list_of_dicts(rows: list[dict[str, Any]], *, max_facts: int) -> l
     top_keys = sorted(key_counts, key=lambda k: -key_counts[k])[:10]
     facts.append(f"Top keys: {', '.join(top_keys)}")
 
-    # Numeric stats
+    # Numeric stats. ``bool`` is a subclass of ``int`` in Python, so a boolean
+    # column would otherwise be "averaged" into a meaningless mean (e.g. the
+    # mean of ``is_active`` = 0.7); exclude bools here and report them as
+    # true/false counts below instead (issue #174).
     numeric_keys = [
-        k for k in top_keys if all(isinstance(r.get(k), (int, float)) for r in rows if k in r)
+        k
+        for k in top_keys
+        if all(_is_number(r.get(k)) for r in rows if k in r)
+        and any(_is_number(r.get(k)) for r in rows if k in r)
     ]
     for k in numeric_keys[:5]:
         values = [float(r[k]) for r in rows if k in r]
@@ -62,14 +101,18 @@ def _summarize_list_of_dicts(rows: list[dict[str, Any]], *, max_facts: int) -> l
                 f"{k}: min={min(values):.2f}, max={max(values):.2f}, "
                 f"avg={sum(values) / len(values):.2f}"
             )
-        if len(facts) >= max_facts:
-            break
 
-    # Status / categorical counts (string fields with few distinct values)
+    # Categorical / boolean counts for the remaining string-or-bool columns.
     for k in top_keys[:5]:
         if k in numeric_keys:
             continue
-        values_str = [str(r[k]) for r in rows if k in r and isinstance(r[k], str)]
+        present = [r[k] for r in rows if k in r]
+        bool_vals = [v for v in present if isinstance(v, bool)]
+        if bool_vals and len(bool_vals) == len(present):
+            true_count = sum(1 for v in bool_vals if v)
+            facts.append(f"{k}: True={true_count}, False={len(bool_vals) - true_count}")
+            continue
+        values_str = [str(v) for v in present if isinstance(v, str)]
         if not values_str:
             continue
         distinct = sorted(set(values_str))
@@ -77,15 +120,15 @@ def _summarize_list_of_dicts(rows: list[dict[str, Any]], *, max_facts: int) -> l
             counts = {v: values_str.count(v) for v in distinct}
             summary = ", ".join(f"{v}={counts[v]}" for v in sorted(counts))
             facts.append(f"{k} distribution: {summary}")
-        if len(facts) >= max_facts:
-            break
 
-    return facts[:max_facts]
+    return _truncate_facts(facts, max_facts)
 
 
 def _summarize_dict(data: dict[str, Any], *, max_facts: int) -> list[str]:
     facts: list[str] = [f"Keys: {', '.join(sorted(data.keys())[:20])}"]
-    for k, v in list(data.items())[: max_facts - 1]:
+    # Build at most ``max_facts`` value facts — never one per key — so a huge
+    # dict does not turn a bounded summary into an O(n) walk on the hot path.
+    for k, v in islice(data.items(), max_facts):
         if isinstance(v, (int, float)):
             facts.append(f"{k}: {v}")
         elif isinstance(v, str):
@@ -96,16 +139,15 @@ def _summarize_dict(data: dict[str, Any], *, max_facts: int) -> list[str]:
             facts.append(f"{k}: dict with keys [{', '.join(list(v.keys())[:5])}]")
         else:
             facts.append(f"{k}: {repr(v)[:80]}")
-        if len(facts) >= max_facts:
-            break
-    return facts[:max_facts]
+    return _truncate_facts(facts, max_facts, total=1 + len(data))
 
 
 def _summarize_plain_list(data: list[Any], *, max_facts: int) -> list[str]:
+    # Only repr() up to ``max_facts`` elements; the total count is already
+    # surfaced by the "List of N items" header and threaded to the marker.
     facts = [f"List of {len(data)} items"]
-    for item in data[: max_facts - 1]:
-        facts.append(repr(item)[:100])
-    return facts[:max_facts]
+    facts.extend(repr(item)[:100] for item in islice(data, max_facts))
+    return _truncate_facts(facts, max_facts, total=1 + len(data))
 
 
 def _summarize_string(data: str, *, max_facts: int) -> list[str]:

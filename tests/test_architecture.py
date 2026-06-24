@@ -54,7 +54,6 @@ _SIZE_RATCHET: dict[str, int] = {
     "adapters/_base.py": 459,
     "kernel/_invoke.py": 400,
     "firewall/transform.py": 377,
-    "handles.py": 371,
     "adapters/openai.py": 358,
     "stores/sqlite.py": 350,
     "tokens.py": 336,

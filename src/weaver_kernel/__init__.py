@@ -40,9 +40,7 @@ Durable persistence & verifiable audit log::
     from weaver_kernel import SQLiteTraceStore, JsonlTraceStore
     from weaver_kernel import SQLiteRevocationStore, InMemoryRevocationStore
     from weaver_kernel import verify_chain, ChainVerificationResult, TraceRecord
-    from weaver_kernel import (
-        TraceStoreProtocol, RevocationStoreProtocol, HandleStoreProtocol,
-    )
+    from weaver_kernel import TraceStoreProtocol, RevocationStoreProtocol, HandleStoreProtocol
 
 LLM tool-format adapters::
 
@@ -62,7 +60,7 @@ Errors::
         DriverError, FirewallError, AdapterParseError,
         BudgetExhausted, BudgetConfigError,
         CapabilityNotFound, CapabilityAlreadyRegistered,
-        HandleNotFound, HandleExpired, HandleConstraintViolation,
+        HandleNotFound, HandleExpired, HandleTooLarge, HandleConstraintViolation,
         NamespaceNotFound, FederationError, ManifestError, ManifestSignatureError,
         TrustPolicyError, DiscoveryError,
     )
@@ -91,6 +89,7 @@ from .errors import (  # noqa: I001 - keep group ordering stable
     HandleConstraintViolation,
     HandleExpired,
     HandleNotFound,
+    HandleTooLarge,
     ManifestError,
     ManifestSignatureError,
     NamespaceNotFound,
@@ -246,6 +245,7 @@ __all__ = [
     "HandleConstraintViolation",
     "HandleExpired",
     "HandleNotFound",
+    "HandleTooLarge",
     "ManifestError",
     "ManifestSignatureError",
     "NamespaceNotFound",

@@ -19,6 +19,12 @@ Budgets(
 )
 ```
 
+The character size used for budget comparisons is computed by an allocation-free
+estimator (`weaver_kernel.firewall.estimated_size`) that walks the structure
+rather than serialising it with `json.dumps` — so a multi-MB raw result is never
+fully serialised just to measure it. The estimate is deterministic and tracks
+the serialised length closely; only threshold comparisons depend on it.
+
 ## Response modes
 
 | Mode | What you get | When to use |
@@ -50,6 +56,31 @@ expanded = kernel.expand(handle, query={"fields": ["id", "name"]}, principal=pri
 # Basic filtering
 expanded = kernel.expand(handle, query={"filter": {"status": "unpaid"}}, principal=principal)
 ```
+
+### Bounding handle memory by size
+
+The store holds *raw, pre-firewall* datasets, and entry count is a poor proxy
+for memory — one deployment's 10k entries are kilobytes, another's are
+gigabytes. `HandleStore` accepts two optional byte budgets (both `None` =
+disabled, so default behaviour is unchanged):
+
+```python
+from weaver_kernel import HandleStore
+
+store = HandleStore(
+    max_total_bytes=512 * 1024 * 1024,  # evict oldest-first until within budget
+    max_entry_bytes=64 * 1024 * 1024,   # reject a single over-cap payload
+)
+```
+
+Sizes are estimated with the same `estimated_size` walk used for budgets.
+`max_total_bytes` evicts oldest-first after each store (never the just-stored
+entry); `max_entry_bytes` rejects an over-cap payload with `HandleTooLarge`
+rather than truncating it, keeping expansion faithful to the original dataset. A
+single entry larger than `max_total_bytes` can never fit, so it is rejected the
+same way — `current_bytes` therefore never exceeds `max_total_bytes`. Expanding
+an evicted handle raises the usual `HandleNotFound`. Tighter budgets mean more
+"handle expired/evicted" experiences — tune for your workload.
 
 ## Redaction
 
@@ -84,10 +115,17 @@ never becomes a sensitive-data sink (see `docs/security.md`).
 ## Summarization
 
 Summaries are produced deterministically:
-- **list of dicts** → row count + top keys + numeric stats + categorical distributions
+- **list of dicts** → row count + top keys + numeric stats + categorical/boolean
+  distributions
 - **dict** → key list + per-value type/value
 - **string** → truncated to 500 chars
 - **other** → repr() truncated to 200 chars
+
+Boolean columns are reported as `True`/`False` counts, never averaged (a `bool`
+is an `int` subclass in Python, so "mean of `is_active` = 0.7" is nonsense). When
+the fact list is capped by `max_facts`, the final fact is an explicit omission
+marker (`… (N more facts omitted; full data via handle)`) so a truncated summary
+is never mistaken for a complete one.
 
 ## Cross-invocation budgets
 
@@ -129,21 +167,27 @@ remaining drops *below* 5% does `handle_only` take over.
 `budget_remaining` in the returned `DryRunResult`, so callers can preview
 what their next live invocation would actually return.
 
-Plug a different token counter (for example, a `tiktoken`-based one) via the
-`TokenCounter` protocol:
+The default counter (`default_token_counter`) is a character-based
+`len(json.dumps(value)) // 4` approximation with no extra dependencies. For real
+token counts, install the `tiktoken` extra and use the shipped factory:
 
 ```python
-import tiktoken                         # pip install weaver-kernel[tiktoken]
-enc = tiktoken.encoding_for_model("gpt-4o")
+from weaver_kernel.firewall import BudgetManager, make_tiktoken_counter
 
-def tiktoken_counter(value):
-    return len(enc.encode(str(value)))
-
-manager = BudgetManager(total_budget=128_000, token_counter=tiktoken_counter)
+# pip install weaver-kernel[tiktoken]
+manager = BudgetManager(
+    total_budget=128_000,
+    token_counter=make_tiktoken_counter(),              # default cl100k_base
+    # token_counter=make_tiktoken_counter("o200k_base"),  # GPT-4o / o-series
+)
 ```
 
-The default counter (`default_token_counter`) is a character-based
-`len(json.dumps(value)) // 4` approximation with no extra dependencies.
+`make_tiktoken_counter` resolves and caches the encoder eagerly, so a missing
+extra (`ImportError`) or an unknown encoding name (`FirewallError`) fails at
+construction rather than mid-budgeting. The encoding is explicit because models
+tokenize differently — name the one you budget against. `tiktoken` is imported
+lazily, so `import weaver_kernel` never pulls the heavyweight dependency. Any
+callable matching the `TokenCounter` protocol works too.
 
 ## Streaming
 
