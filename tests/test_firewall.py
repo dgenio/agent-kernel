@@ -179,6 +179,29 @@ def test_raw_mode_oversized_data_adds_warning() -> None:
     assert frame.raw_data == large_data  # type: ignore[union-attr]
 
 
+def test_raw_mode_warning_decision_holds_across_budget_boundary() -> None:
+    # #207: estimated_size() replaced len(json.dumps(...)) for the raw-mode
+    # budget warning. The estimate is approximate (±25%, see test_size_estimate),
+    # so the over/under *decision* — the only thing this size drives — is pinned
+    # with margin beyond the error band: a payload well under max_chars carries
+    # no warning, one well over does.
+    budgets = Budgets(max_chars=1000)
+    under = _transform(
+        {"payload": "x" * 200},
+        "raw",
+        principal_roles=["admin"],
+        budgets=budgets,
+    )
+    over = _transform(
+        {"payload": "x" * 5000},
+        "raw",
+        principal_roles=["admin"],
+        budgets=budgets,
+    )
+    assert not any("exceeds budget" in w for w in under.warnings)  # type: ignore[union-attr]
+    assert any("exceeds budget" in w for w in over.warnings)  # type: ignore[union-attr]
+
+
 # ── Table mode with non-list data ──────────────────────────────────────────────
 
 

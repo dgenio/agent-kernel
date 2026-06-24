@@ -10,8 +10,12 @@ serialisation that would double peak memory on large payloads.
 The estimate is intentionally approximate but **deterministic**: the same input
 always yields the same number (the total is order-independent). Self-referential
 structures are handled gracefully — each container is counted at most once, so a
-cycle can never hang the walk (unlike ``json.dumps``, which raises). It is used
-both by
+cycle can never hang the walk (unlike ``json.dumps``, which raises). Counting
+each container once also means a structure that legitimately reuses the same
+container in several positions (a DAG, not a cycle) is counted once, so the
+estimate is a *lower bound* for shared-reference inputs; firewall and handle
+payloads are deserialised JSON without shared references, where this does not
+arise. It is used by
 :mod:`~weaver_kernel.firewall.transform` (raw-mode budget warning, issue #207)
 and by :class:`~weaver_kernel.handles.HandleStore` (byte-size budgeting,
 issue #211).
