@@ -306,11 +306,12 @@ async def test_non_driver_error_is_audited_and_budget_released() -> None:
     with pytest.raises(DriverError, match="All drivers failed"):
         await k.invoke(token, principal=principal, args={})
 
-    # Budget reservation released (no leak), and a failure trace was recorded.
+    # Budget reservation released (no leak), and a failure trace was recorded
+    # attributing the last-attempted driver (#152).
     assert k.budget.remaining == before
     traces = k.list_traces()
     assert len(traces) == 1
-    assert traces[0].driver_id == ""
+    assert traces[0].driver_id == "raw_raiser"
     assert "unexpected library failure" in (traces[0].error or "")
 
 
@@ -379,6 +380,47 @@ async def test_invalid_invoke_timeout_constraint_rejected() -> None:
     token = k._token_provider.issue("cap", "u1", constraints={"invoke_timeout_s": -5})
     with pytest.raises(DriverError, match="invoke_timeout_s"):
         await k.invoke(token, principal=principal, args={})
+
+
+@pytest.mark.asyncio
+async def test_cancellation_is_audited_and_budget_released() -> None:
+    """Cancelling an in-flight invoke releases the reservation and is audited (#152)."""
+    driver = _SlowDriver()
+    k = _single_driver_kernel(driver, budget=10_000)
+    k.register_driver(driver)
+    assert k.budget is not None
+    before = k.budget.remaining
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+    task = asyncio.create_task(k.invoke(token, principal=principal, args={}))
+    await asyncio.sleep(0.05)  # let the task reach the (slow) driver
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert k.budget.remaining == before
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert "cancelled" in (traces[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_stream_timeout_records_error_reason() -> None:
+    """A streaming timeout records the real failure reason, not a generic note (#191)."""
+    driver = _SlowDriver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1", constraints={"invoke_timeout_s": 0.01})
+    with pytest.raises(DriverError, match="timed out"):
+        async for _ in k.invoke_stream(token, principal=principal, args={}):
+            pass
+
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert "timed out" in (traces[0].error or "")
 
 
 # ── Confused-deputy prevention ─────────────────────────────────────────────────

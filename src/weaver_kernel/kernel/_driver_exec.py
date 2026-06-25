@@ -83,12 +83,15 @@ async def execute_with_fallback(
             ``DriverError`` and treated as a failed attempt.
 
     Returns:
-        ``(raw_result, driver_id, last_error, fell_back)``. ``raw_result`` is
-        ``None`` if every driver failed; ``fell_back`` is ``True`` when at least
-        one earlier driver raised before the one that ultimately ran (or before
-        all-failed), so callers can count fallback activations. A route entry
-        whose driver is unregistered (``drivers.get(driver_id) is None``) is
-        skipped silently and does **not** set ``fell_back``.
+        ``(raw_result, driver_id, last_error, fell_back)``. On success
+        ``driver_id`` is the driver that ran; on failure (``raw_result is
+        None``) it is the **last driver attempted** (``""`` only if every route
+        entry was unregistered), so callers can attribute the failure in the
+        audit trace. ``fell_back`` is ``True`` when at least one earlier driver
+        raised before the one that ultimately ran (or before all-failed), so
+        callers can count fallback activations. A route entry whose driver is
+        unregistered (``drivers.get(driver_id) is None``) is skipped silently
+        and does **not** set ``fell_back``.
 
         A ``DriverError`` *and* any other exception a driver raises both count
         as a failed attempt (#152); the latter is preserved as ``last_error``
@@ -96,11 +99,13 @@ async def execute_with_fallback(
         rather than letting it escape un-audited.
     """
     last_error: Exception | None = None
+    last_driver_id = ""
     failed_attempts = 0
     for driver_id in plan.driver_ids:
         driver = drivers.get(driver_id)
         if driver is None:
             continue
+        last_driver_id = driver_id
         try:
             if timeout is None:
                 raw_result = await driver.execute(ctx)
@@ -145,7 +150,7 @@ async def execute_with_fallback(
             last_error = exc
             failed_attempts += 1
             continue
-    return None, "", last_error, failed_attempts > 0
+    return None, last_driver_id, last_error, failed_attempts > 0
 
 
 __all__ = ["execute_with_fallback", "resolve_invoke_timeout", "INVOKE_TIMEOUT_CONSTRAINT"]

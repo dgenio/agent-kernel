@@ -36,7 +36,12 @@ from ..models import (
 )
 from ..tokens import CapabilityToken
 from ._driver_exec import resolve_invoke_timeout
-from ._invoke import _frame_result_summary, _redact_args_for_trace, resolve_effective_mode
+from ._invoke import (
+    _frame_result_summary,
+    _redact_args_for_trace,
+    _redact_trace_text,
+    resolve_effective_mode,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
@@ -102,6 +107,7 @@ async def invoke_stream_impl(
     redacted_any = False
     handle: Handle | None = None
     last_frame: Frame | None = None
+    stream_error: str | None = None
     try:
         if streaming_driver is not None:
             async for frame in _stream_chunks(
@@ -155,7 +161,20 @@ async def invoke_stream_impl(
             redacted_any = redacted_any or bool(frame.warnings)
             last_frame = frame
             yield frame
+    except Exception as exc:
+        # Preserve the real failure reason (e.g. a timeout DriverError) so the
+        # trace records *why* the stream ended, not just that it produced no
+        # chunks (#191).
+        stream_error = str(exc)
+        raise
     finally:
+        error: str | None
+        if stream_error is not None:
+            error = _redact_trace_text(stream_error)
+        elif yielded_any:
+            error = None
+        else:
+            error = "stream produced no chunks"
         kernel._traces.record(
             ActionTrace(
                 action_id=action_id,
@@ -169,7 +188,7 @@ async def invoke_stream_impl(
                 sensitivity=capability.sensitivity,
                 handle_id=handle.handle_id if handle else None,
                 result_summary=(_frame_result_summary(last_frame) if last_frame else None),
-                error=None if yielded_any else "stream produced no chunks",
+                error=error,
             )
         )
         kernel._stats.on_invocation(

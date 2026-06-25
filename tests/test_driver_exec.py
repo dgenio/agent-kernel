@@ -94,7 +94,7 @@ async def test_unexpected_exception_is_captured_not_raised() -> None:
         drivers, _plan("bad"), ctx=_ctx(), log_ctx={}
     )
     assert raw is None
-    assert driver_id == ""
+    assert driver_id == "bad"  # last driver attempted, for audit attribution
     assert last_error is boom
     assert fell_back is True
 

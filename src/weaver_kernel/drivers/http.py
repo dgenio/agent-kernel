@@ -144,10 +144,12 @@ class HTTPDriver:
                 timeout=effective_timeout,
             ) as response:
                 if response.is_error:
-                    await response.aread()
+                    # Bound the error-body read too: an arbitrarily large error
+                    # body must not be buffered just to build the message (#194).
+                    snippet = await self._read_error_snippet(response)
                     raise DriverError(
                         f"HTTPDriver '{self._driver_id}': HTTP {response.status_code} "
-                        f"from {endpoint.url}: {response.text[:200]}"
+                        f"from {endpoint.url}: {snippet}"
                     )
                 body = await self._read_bounded(response, url=endpoint.url)
                 status_code = response.status_code
@@ -168,6 +170,27 @@ class HTTPDriver:
             data=data,
             metadata={"status_code": status_code, "url": endpoint.url},
         )
+
+    async def _read_error_snippet(self, response: httpx.Response, *, max_bytes: int = 512) -> str:
+        """Read at most ``max_bytes`` of an error body for the failure message.
+
+        Streams and stops early so an oversized error body cannot be buffered in
+        full — the size guard must hold on the failure path too (#194). Only the
+        first 200 characters are surfaced in the error message.
+
+        Args:
+            response: The open streaming response (already known to be an error).
+            max_bytes: Hard cap on bytes read before giving up.
+
+        Returns:
+            A decoded, length-bounded snippet of the error body.
+        """
+        chunks = bytearray()
+        async for chunk in response.aiter_bytes():
+            chunks.extend(chunk)
+            if len(chunks) >= max_bytes:
+                break
+        return bytes(chunks).decode("utf-8", "replace")[:200]
 
     async def _read_bounded(self, response: httpx.Response, *, url: str) -> bytes:
         """Read the response body, aborting if it exceeds ``max_response_bytes``.

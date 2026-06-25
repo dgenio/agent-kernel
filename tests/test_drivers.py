@@ -237,6 +237,23 @@ async def test_httpdriver_http_error_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_httpdriver_error_body_is_bounded() -> None:
+    """An oversized error body is not buffered in full; the message is bounded (#194)."""
+    driver = HTTPDriver(max_response_bytes=10)
+    driver.register_endpoint("fail_big", HTTPEndpoint(url="http://localhost:9999/fail"))
+    client = _mock_http_client(body=b"E" * 100_000, status_code=500, is_error=True)
+
+    with patch("weaver_kernel.drivers.http.httpx.AsyncClient", return_value=client):
+        ctx = ExecutionContext(
+            capability_id="cap.x", principal_id="u1", args={"operation": "fail_big"}
+        )
+        with pytest.raises(DriverError, match="HTTP 500") as excinfo:
+            await driver.execute(ctx)
+    # Only a bounded snippet is surfaced, regardless of the 100 KB body.
+    assert len(str(excinfo.value)) < 300
+
+
+@pytest.mark.asyncio
 async def test_httpdriver_non_json_response_raises() -> None:
     """A 200 with a non-JSON body surfaces as a typed DriverError (#197)."""
     driver = HTTPDriver()
