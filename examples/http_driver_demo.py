@@ -63,6 +63,7 @@ def _start_server(port: int) -> HTTPServer:
 async def main() -> None:
     port = 18765
     server = _start_server(port)
+    http_driver = HTTPDriver(driver_id="catalog_api")
 
     try:
         registry = CapabilityRegistry()
@@ -76,7 +77,6 @@ async def main() -> None:
             )
         )
 
-        http_driver = HTTPDriver(driver_id="catalog_api")
         http_driver.register_endpoint(
             "catalog.list_products",
             HTTPEndpoint(url=f"http://127.0.0.1:{port}/products", method="GET"),
@@ -131,6 +131,8 @@ async def main() -> None:
 
         print("\n✓ http_driver_demo.py complete.")
     finally:
+        # The driver owns a pooled httpx client; close it on shutdown (#194).
+        await http_driver.aclose()
         server.shutdown()
 
 

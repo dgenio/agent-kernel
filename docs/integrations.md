@@ -92,18 +92,54 @@ asyncio.run(main())
 
 ## HTTPDriver
 
-The built-in `HTTPDriver` supports GET, POST, PUT, DELETE:
+The built-in `HTTPDriver` supports GET, POST, PUT, DELETE (and any other method
+via the generic path):
 
 ```python
 from weaver_kernel.drivers.http import HTTPDriver, HTTPEndpoint
 
-driver = HTTPDriver(driver_id="my_api")
+driver = HTTPDriver(
+    driver_id="my_api",
+    # Optional response-size guard: reject bodies larger than this before they
+    # are fully buffered, so an unbounded upstream cannot exhaust memory (#194).
+    max_response_bytes=5_000_000,
+)
 driver.register_endpoint("users.list", HTTPEndpoint(
     url="https://api.example.com/users",
     method="GET",
     headers={"Authorization": "Bearer ..."},
 ))
 kernel.register_driver(driver)
+```
+
+The driver holds a single long-lived `httpx.AsyncClient` so requests reuse the
+connection pool and keep-alive instead of opening a fresh connection per call
+(#194). You own its lifecycle — call `await driver.aclose()` on shutdown (e.g.
+in a `finally` block) to release the pool.
+
+A non-JSON body from a JSON endpoint raises a typed `DriverError` rather than
+leaking a decode error (#197). For text APIs, set `response_format="text"` on
+the endpoint to receive the decoded body verbatim:
+
+```python
+driver.register_endpoint("status.page", HTTPEndpoint(
+    url="https://api.example.com/status",
+    response_format="text",
+))
+```
+
+### Bounding execution time
+
+Any driver — HTTP, MCP, or custom — can be bounded by a per-invocation
+deadline. Set the `invoke_timeout_s` constraint when the policy issues the
+grant; because constraints are signed into the capability token, the deadline
+is tamper-evident and travels with the grant. An attempt that exceeds it is
+turned into a `DriverError`, so the kernel still records a failure trace and
+releases any reserved budget (#191):
+
+```python
+# A policy engine that attaches a 10s deadline to issued tokens:
+decision.constraints["invoke_timeout_s"] = 10.0
 ```
 
 ## Custom drivers
