@@ -397,7 +397,9 @@ async def test_cancellation_is_audited_and_budget_released() -> None:
     await asyncio.sleep(0.05)  # let the task reach the (slow) driver
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        # Awaiting the cancelled task re-raises CancelledError — that *is* the
+        # effect under test (assigned to ``_`` so static analysis sees it).
+        _ = await task
 
     assert k.budget.remaining == before
     traces = k.list_traces()
