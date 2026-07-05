@@ -18,16 +18,134 @@
 | Handle scope escape (expand exceeds grant) | Handles persist grant constraints; `HandleStore.expand` rechecks `max_rows`, `allowed_fields`, `scope`, and principal binding (#76) |
 | Sensitive data reaching the audit log via args/errors | `ActionTrace.args` and driver `error` text are run through the firewall redactor for **every** capability; memory payloads (`payload`/`content`/`value`/`memory`/`text`/`body`) are additionally stripped wholesale for `memory.*` capabilities (#75, #172) |
 | Scanned content / raw result reaching audit log | `ActionTrace.result_summary` is built only from the post-firewall `Frame` (counts and flags, never raw driver data), so the audit trail records an invocation's outcome without re-introducing the data the firewall removed |
+| Runaway loop draining a single grant (agent loops `invoke()` on one token) | Opt-in, default-off per-invocation rate limit (`Kernel(invoke_rate_limits=...)`), enforced before every driver call, independent of the grant-time limit (#170) |
+| Over-broad argument use within an authorized capability (e.g. `files.read` used outside an approved path) | Signed `constraints["args"]` (`allowed_keys`, `pinned`, `prefix`) enforced before the driver runs; tampering invalidates the token's HMAC (#183) |
+| Compromised or rotated signing secret invalidating every live token at once | `HMACTokenProvider` accepts a `{key_id: secret}` `KeyRing` with one active key; retired keys still verify during a rotation's overlap window (#185) |
 
 ## Token scopes
 
 A `CapabilityToken` binds:
 - `capability_id` — which capability is authorized
 - `principal_id` — who the token was issued to
-- `constraints` — max_rows, allowed_fields, etc. (signed into the token)
-- `expires_at` — validity window
+- `constraints` — `max_rows`, `allowed_fields`, `args` (see below), etc. (signed into the token)
+- `expires_at` — validity window, from a fixed default or a per-grant `ttl_s` (see below)
+- `key_id` — which signing key produced the signature (see Signing-key rotation)
 
 Any change to these fields invalidates the HMAC signature.
+
+## Per-grant TTL (#203)
+
+`Kernel.grant_capability(..., ttl_s=...)` lets a caller request a token
+lifetime shorter (or, if permitted, longer) than the token provider's fixed
+default (1 hour) — least privilege is temporal as well as scoped. `ttl_s` is
+optional; omitting it preserves today's behavior exactly.
+
+A `DefaultPolicyEngine` configured with `max_ttl_s={SafetyClass.WRITE: 300.0,
+...}` validates the request via an optional `resolve_ttl()` method: a
+non-positive `ttl_s` or one exceeding the configured maximum is **denied**
+(`PolicyDenied`, `reason_code="ttl_exceeds_max"` or `"invalid_constraint"`) —
+never silently clamped, so a caller is never handed a shorter-lived token than
+it asked for without knowing it. `resolve_ttl` is deliberately *not* part of
+the `PolicyEngine` protocol: a policy engine that doesn't implement it simply
+leaves `ttl_s` unvalidated, so adding this feature never breaks a third-party
+engine (the same non-breaking pattern used for `ExplainingPolicyEngine`).
+
+Very short TTLs can expire mid-task for slow tools — consider pairing a short
+`ttl_s` with a signed `invoke_timeout_s` constraint (see `docs/capabilities.md`)
+so the token outlives the deadline it's meant to bound.
+
+## Per-invocation rate limiting (#170)
+
+`DefaultPolicyEngine`'s sliding-window rate limit (see Security disclaimers,
+below) applies only at grant time: once issued, a token is unlimited-use until
+it expires. `Kernel(invoke_rate_limits={SafetyClass.READ: (60, 60.0), ...})`
+adds an **opt-in, default-off** second limit enforced on the invoke path
+itself, before every driver call, so an agent that grants once and loops
+`invoke()` cannot exceed the configured rate regardless of the token's TTL.
+
+- Disabled by default — passing nothing preserves current behavior exactly.
+- Keyed by `(principal_id, capability_id)`, the same key shape as the
+  grant-time limiter, and backed by the same `RateLimiter` primitive (inject a
+  clock via `Kernel(invoke_rate_limiter=RateLimiter(clock=...))` for tests).
+- A violation raises `RateLimitExceeded` (`reason_code="invoke_rate_limited"`)
+  and records an audited `"deny"` trace — never a silent drop.
+- `dry_run=True` never checks or consumes this limit.
+- Like the grant-time limiter, state is in-memory and per-process only — no
+  distributed or persistent rate-limit state across replicas.
+
+## Signed argument-level constraints (#183)
+
+A capability token authorizes a *capability*, but by default any arguments —
+a grant for `files.read` permits reading anything the driver can reach for
+the token's lifetime. `constraints["args"]`, signed into the token at grant
+time, narrows that down to a small, deterministic vocabulary evaluated
+identically by `Kernel.invoke()` and dry-run (never a general expression
+language, to keep evaluation reviewable and side-effect-free):
+
+| Key | Effect |
+|-----|--------|
+| `allowed_keys` | A list of argument names; any other key in `args` is rejected. |
+| `pinned` | A `{key: value}` map; a **present** key's value must equal the pinned value exactly. |
+| `prefix` | A `{key: prefix}` map; a **present** key's value must be a string starting with the prefix. |
+
+A key absent from the invocation's `args` never violates `pinned`/`prefix` —
+those constrain a value the caller *chose to pass*, not argument presence.
+All three operate on top-level keys only (v1 scope). A violation raises
+`TokenScopeError` (`reason_code="arg_constraint_violation"`) **before** the
+driver executes and before budget is reserved, with an audited `"deny"`
+trace. Because the constraint lives inside the signed payload, tampering with
+it (like tampering with any other constraint) invalidates the token's HMAC.
+
+`DeclarativePolicyEngine` needs no code changes to attach `args` constraints —
+`constraints` is already a free-form mapping merged into the issued token, so
+a YAML/TOML rule can include a nested `args` block directly (see
+`examples/policies/default.yaml`/`.toml`).
+
+## Signing-key rotation (#185)
+
+`HMACTokenProvider` can hold more than one named secret so
+`WEAVER_KERNEL_SECRET` can be rotated without invalidating every outstanding
+token at once:
+
+```python
+provider = HMACTokenProvider(
+    secrets={"2026-a": "old-secret", "2026-b": "new-secret"},
+    active_key_id="2026-b",
+)
+```
+
+- New tokens are always signed under `active_key_id`, whose id (never the
+  secret) is stamped into the token's `key_id` field — inside the signed
+  payload, so tampering with it invalidates the signature like any other
+  field.
+- `verify()` resolves the secret by the token's own `key_id`. A `key_id` that
+  isn't in the configured set fails closed as `TokenInvalid` — verification
+  never falls back to a different secret.
+- Verifying a token signed under a non-active (retired-but-still-configured)
+  key logs `token_verified_non_active_key` at INFO with the key id (never the
+  secret), so an operator can tell when it's safe to drop the old key
+  entirely from `secrets`.
+- A single `secret=...` (or no argument at all) keeps working exactly as
+  before — that's a one-key ring under `key_id=""`.
+- Precedence for the implicit (no `secrets=` argument) case:
+  `WEAVER_KERNEL_SECRETS` (a JSON object of `{key_id: secret}`) takes priority
+  over the legacy single `WEAVER_KERNEL_SECRET` env var.
+
+**Recommended rotation procedure:** add the new key alongside the old one
+(`secrets={"old": ..., "new": ...}`, `active_key_id` still `"old"`) → deploy →
+flip `active_key_id` to `"new"` → deploy → after the longest outstanding
+token's TTL has elapsed, remove `"old"` from `secrets` entirely.
+
+**Breaking change for in-flight tokens across this upgrade.** The `key_id`
+field is part of the signed payload for *every* token, including ones issued
+by a single-secret, pre-#185 provider (`key_id=""`). A token issued by
+code *before* this change was signed over a payload shape that didn't include
+`key_id` at all, so it will fail verification as `TokenInvalid` after
+upgrading — even under the same secret. Given the project's current alpha
+status (see `CHANGELOG.md`), this is treated the same as the 0.10.0 import
+rename: a clean break, not a compatibility shim. Tokens are short-lived
+(1 hour by default) — expect at most one TTL window of "please re-grant"
+errors immediately after a rolling deploy.
 
 ## Confused deputy prevention
 
@@ -169,8 +287,10 @@ per revoked token. Both in-memory structures are bounded:
   secret longer than that bound is force-committed and may be severed at the cut,
   so an extremely long unbroken token can escape per-segment detection — a
   deliberate memory-vs-safety trade.
-- Rate limiting is enforced per `(principal_id, capability_id)` pair using a sliding window.
-  Default limits: 60 READ / 10 WRITE / 2 DESTRUCTIVE invocations per 60-second window.
-  Principals with the `"service"` role receive 10× the default limits. Limits are
-  configurable via `DefaultPolicyEngine(rate_limits=...)`. There is no distributed or
-  persistent rate-limit state — limits reset on process restart.
+- Grant-time rate limiting is enforced per `(principal_id, capability_id)` pair
+  using a sliding window. Default limits: 60 READ / 10 WRITE / 2 DESTRUCTIVE
+  invocations per 60-second window. Principals with the `"service"` role
+  receive 10× the default limits. Limits are configurable via
+  `DefaultPolicyEngine(rate_limits=...)`. An optional, separate invoke-time
+  limit is also available — see "Per-invocation rate limiting" above. Neither
+  has distributed or persistent state — both reset on process restart.

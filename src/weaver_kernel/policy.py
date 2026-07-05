@@ -19,6 +19,7 @@ from .models import (
     Principal,
 )
 from .policy_reasons import AllowReason, DenialReason
+from .policy_ttl import check_ttl
 from .rate_limit import DEFAULT_RATE_LIMITS, SERVICE_RATE_MULTIPLIER, RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ class DefaultPolicyEngine:
         *,
         rate_limits: dict[SafetyClass, tuple[int, float]] | None = None,
         clock: Callable[[], float] | None = None,
+        max_ttl_s: dict[SafetyClass, float] | None = None,
     ) -> None:
         """Initialise the policy engine.
 
@@ -143,6 +145,9 @@ class DefaultPolicyEngine:
                 unspecified safety classes retain their default limits.
             clock: Monotonic clock callable for rate-limiter.
                 Defaults to :func:`time.monotonic`.
+            max_ttl_s: Per-safety-class ceiling on a requested grant TTL
+                (#203), enforced by :meth:`resolve_ttl`. A safety class
+                absent from this mapping has no maximum.
         """
         limits = dict(_DEFAULT_RATE_LIMITS)
         if rate_limits is not None:
@@ -156,6 +161,7 @@ class DefaultPolicyEngine:
                 )
         self._rate_limits = limits
         self._limiter = RateLimiter(clock=clock)
+        self._max_ttl_s = max_ttl_s
 
     @staticmethod
     def _deny(
@@ -176,6 +182,47 @@ class DefaultPolicyEngine:
             },
         )
         return PolicyDenied(reason, reason_code=reason_code)
+
+    def resolve_ttl(
+        self,
+        capability: Capability,
+        principal: Principal,
+        ttl_s: float | None,
+    ) -> float | None:
+        """Validate a requested grant TTL against the configured maximum (#203).
+
+        Not part of the :class:`PolicyEngine` protocol — an optional, richer
+        capability that :meth:`~weaver_kernel.Kernel.grant_capability` looks
+        up via ``getattr`` before issuing a token, the same non-breaking
+        pattern used for :class:`ExplainingPolicyEngine`. A policy engine
+        that doesn't implement it simply leaves *ttl_s* unvalidated.
+
+        Args:
+            capability: The capability being granted; its ``safety_class``
+                selects the applicable entry in :attr:`max_ttl_s`.
+            principal: The requesting principal (used only for the denial
+                log/audit context).
+            ttl_s: The caller-requested TTL in seconds, or ``None`` for the
+                token provider's own default.
+
+        Returns:
+            *ttl_s* unchanged — never clamped. ``None`` in, ``None`` out.
+
+        Raises:
+            PolicyDenied: If *ttl_s* is not positive, or exceeds the
+                configured :attr:`max_ttl_s` for ``capability.safety_class``.
+        """
+        violation = check_ttl(
+            ttl_s, max_ttl_s=self._max_ttl_s, safety_class=capability.safety_class
+        )
+        if violation is not None:
+            raise self._deny(
+                violation.message,
+                principal_id=principal.principal_id,
+                capability_id=capability.capability_id,
+                reason_code=violation.reason_code,
+            )
+        return ttl_s
 
     def evaluate(
         self,

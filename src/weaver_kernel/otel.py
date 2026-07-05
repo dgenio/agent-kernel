@@ -204,6 +204,7 @@ def instrument_kernel(
         principal: Any,
         *,
         justification: str,
+        ttl_s: float | None = None,
     ) -> Any:
         attributes: dict[str, Any] = {
             ATTR_PRINCIPAL: principal.principal_id,
@@ -211,7 +212,7 @@ def instrument_kernel(
         }
         with tracer.start_as_current_span("weaver_kernel.grant", attributes=attributes) as span:
             try:
-                return original_grant(request, principal, justification=justification)
+                return original_grant(request, principal, justification=justification, ttl_s=ttl_s)
             except Exception as exc:
                 reason_code = getattr(exc, "reason_code", "") or ""
                 denials.add(

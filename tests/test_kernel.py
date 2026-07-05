@@ -16,9 +16,13 @@ from weaver_kernel import (
     Kernel,
     PolicyDenied,
     Principal,
+    RateLimiter,
+    RateLimitExceeded,
     SafetyClass,
     StaticRouter,
     TokenExpired,
+    TokenInvalid,
+    TokenScopeError,
 )
 from weaver_kernel.drivers.base import ExecutionContext
 from weaver_kernel.errors import FirewallError
@@ -273,8 +277,15 @@ class _BoomFirewall(Firewall):
         raise FirewallError("transform boom")
 
 
-def _single_driver_kernel(driver: object, *, budget: int | None = None) -> Kernel:
-    """Build a kernel routing ``cap`` to *driver*, optionally with a budget."""
+def _single_driver_kernel(
+    driver: object,
+    *,
+    budget: int | None = None,
+    invoke_rate_limits: dict[SafetyClass, tuple[int, float]] | None = None,
+    invoke_rate_limiter: RateLimiter | None = None,
+) -> Kernel:
+    """Build a kernel routing ``cap`` to *driver*, optionally with a budget
+    and/or invoke-time rate limiting (#170)."""
     registry = CapabilityRegistry()
     registry.register(
         Capability(
@@ -289,6 +300,8 @@ def _single_driver_kernel(driver: object, *, budget: int | None = None) -> Kerne
         router=StaticRouter(routes={"cap": [driver.driver_id]}),  # type: ignore[attr-defined]
         token_provider=HMACTokenProvider(secret="test-secret"),
         budget_manager=BudgetManager(total_budget=budget) if budget is not None else None,
+        invoke_rate_limits=invoke_rate_limits,
+        invoke_rate_limiter=invoke_rate_limiter,
     )
 
 
@@ -423,6 +436,284 @@ async def test_stream_timeout_records_error_reason() -> None:
     traces = k.list_traces()
     assert len(traces) == 1
     assert "timed out" in (traces[0].error or "")
+
+
+# ── Invoke-time rate limiting (#170) ─────────────────────────────────────────
+
+
+def _ok_driver() -> InMemoryDriver:
+    driver = InMemoryDriver(driver_id="ok")
+    driver.register_handler("cap", lambda ctx: {"value": 1})
+    return driver
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_disabled_by_default() -> None:
+    """Without invoke_rate_limits configured, invoke() has no per-call limit."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+    for _ in range(100):
+        await k.invoke(token, principal=principal, args={})  # never raises
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_denies_after_window_exceeded() -> None:
+    """Repeated invoke() on one token is denied once the window limit is hit (#170)."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver, invoke_rate_limits={SafetyClass.READ: (2, 60.0)})
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+
+    await k.invoke(token, principal=principal, args={})
+    await k.invoke(token, principal=principal, args={})
+    with pytest.raises(RateLimitExceeded) as exc_info:
+        await k.invoke(token, principal=principal, args={})
+    assert exc_info.value.reason_code == "invoke_rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_records_deny_trace() -> None:
+    """A rate-limited invocation still produces an audited ``"deny"`` trace (I-02)."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver, invoke_rate_limits={SafetyClass.READ: (1, 60.0)})
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+
+    await k.invoke(token, principal=principal, args={})
+    with pytest.raises(RateLimitExceeded):
+        await k.invoke(token, principal=principal, args={})
+
+    deny_traces = [t for t in k.list_traces() if t.event_type == "deny"]
+    assert len(deny_traces) == 1
+    assert deny_traces[0].reason_code == "invoke_rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_window_resets() -> None:
+    """The window slides: an invocation succeeds again once it elapses."""
+    time_ref = [0.0]
+    limiter = RateLimiter(clock=lambda: time_ref[0])
+    driver = _ok_driver()
+    k = _single_driver_kernel(
+        driver,
+        invoke_rate_limits={SafetyClass.READ: (1, 10.0)},
+        invoke_rate_limiter=limiter,
+    )
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+
+    await k.invoke(token, principal=principal, args={})
+    with pytest.raises(RateLimitExceeded):
+        await k.invoke(token, principal=principal, args={})
+
+    time_ref[0] = 11.0  # advance past the 10s window
+    await k.invoke(token, principal=principal, args={})  # succeeds again
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_dry_run_does_not_consume() -> None:
+    """A dry-run never counts against the invoke-time rate limit (#170)."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver, invoke_rate_limits={SafetyClass.READ: (1, 60.0)})
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+
+    for _ in range(5):
+        await k.invoke(token, principal=principal, args={}, dry_run=True)
+    # The real limit (1) is still fully available after five dry-runs.
+    await k.invoke(token, principal=principal, args={})
+    with pytest.raises(RateLimitExceeded):
+        await k.invoke(token, principal=principal, args={})
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_scoped_per_principal_and_capability() -> None:
+    """The limit is keyed by (principal_id, capability_id), not global."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver, invoke_rate_limits={SafetyClass.READ: (1, 60.0)})
+    k.register_driver(driver)
+    token_u1 = k._token_provider.issue("cap", "u1")
+    token_u2 = k._token_provider.issue("cap", "u2")
+
+    await k.invoke(token_u1, principal=Principal(principal_id="u1"), args={})
+    with pytest.raises(RateLimitExceeded):
+        await k.invoke(token_u1, principal=Principal(principal_id="u1"), args={})
+    # u2's own limit is untouched.
+    await k.invoke(token_u2, principal=Principal(principal_id="u2"), args={})
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_concurrent_calls_do_not_exceed_limit() -> None:
+    """Concurrent invoke() calls near the limit boundary never over-admit (no
+    check-then-record race): exactly `limit` of N concurrent calls succeed."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver, invoke_rate_limits={SafetyClass.READ: (3, 60.0)})
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+
+    results = await asyncio.gather(
+        *[k.invoke(token, principal=principal, args={}) for _ in range(10)],
+        return_exceptions=True,
+    )
+    successes = [r for r in results if not isinstance(r, Exception)]
+    failures = [r for r in results if isinstance(r, RateLimitExceeded)]
+    assert len(successes) == 3
+    assert len(failures) == 7
+
+
+# ── Signed argument-level constraints (#183) ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_allowed_keys_violation_denied() -> None:
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"allowed_keys": ["safe_key"]}}
+    )
+    with pytest.raises(TokenScopeError) as exc_info:
+        await k.invoke(token, principal=principal, args={"safe_key": 1, "extra": 2})
+    assert exc_info.value.reason_code == "arg_constraint_violation"
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_allowed_args_pass_through() -> None:
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"allowed_keys": ["safe_key"]}}
+    )
+    frame = await k.invoke(token, principal=principal, args={"safe_key": 1})
+    assert frame.action_id != ""
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_pinned_violation_denied() -> None:
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"pinned": {"path": "/safe/x"}}}
+    )
+    with pytest.raises(TokenScopeError, match="pinned"):
+        await k.invoke(token, principal=principal, args={"path": "/etc/passwd"})
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_prefix_violation_denied() -> None:
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"prefix": {"path": "/safe/"}}}
+    )
+    with pytest.raises(TokenScopeError, match="prefix"):
+        await k.invoke(token, principal=principal, args={"path": "/etc/passwd"})
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_violation_never_reaches_driver() -> None:
+    """A violating invoke is denied before the driver executes at all."""
+
+    class _CountingDriver(InMemoryDriver):
+        def __init__(self) -> None:
+            super().__init__(driver_id="ok")
+            self.calls = 0
+            self.register_handler("cap", self._handle)
+
+        def _handle(self, ctx: ExecutionContext) -> dict[str, int]:
+            self.calls += 1
+            return {"value": 1}
+
+    driver = _CountingDriver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"allowed_keys": ["safe_key"]}}
+    )
+    with pytest.raises(TokenScopeError):
+        await k.invoke(token, principal=principal, args={"extra": 1})
+    assert driver.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_records_deny_trace_with_reason_code() -> None:
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"allowed_keys": ["safe_key"]}}
+    )
+    with pytest.raises(TokenScopeError):
+        await k.invoke(token, principal=principal, args={"extra": 1})
+
+    deny_traces = [t for t in k.list_traces() if t.event_type == "deny"]
+    assert len(deny_traces) == 1
+    assert deny_traces[0].reason_code == "arg_constraint_violation"
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_dry_run_predicts_same_denial() -> None:
+    """Dry-run raises the identical error a real invoke would (#183)."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"allowed_keys": ["safe_key"]}}
+    )
+    with pytest.raises(TokenScopeError, match="extra"):
+        await k.invoke(token, principal=principal, args={"extra": 1}, dry_run=True)
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_tampering_invalidates_signature() -> None:
+    """Mutating a live token's args constraint invalidates its HMAC (I-06)."""
+    driver = _ok_driver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue(
+        "cap", "u1", constraints={"args": {"allowed_keys": ["safe_key"]}}
+    )
+    token.constraints["args"]["allowed_keys"] = ["anything"]  # tamper post-issuance
+    with pytest.raises(TokenInvalid):
+        await k.invoke(token, principal=principal, args={"anything": 1})
+
+
+def test_validate_arg_constraints_pinned_match_passes() -> None:
+    from weaver_kernel.kernel._arg_constraints import validate_arg_constraints
+
+    validate_arg_constraints({"args": {"pinned": {"path": "/safe/x"}}}, {"path": "/safe/x"})
+
+
+def test_validate_arg_constraints_prefix_match_passes() -> None:
+    from weaver_kernel.kernel._arg_constraints import validate_arg_constraints
+
+    validate_arg_constraints({"args": {"prefix": {"path": "/safe/"}}}, {"path": "/safe/file.txt"})
+
+
+def test_validate_arg_constraints_prefix_non_string_value_denied() -> None:
+    from weaver_kernel.kernel._arg_constraints import validate_arg_constraints
+
+    with pytest.raises(TokenScopeError, match="must be a string"):
+        validate_arg_constraints({"args": {"prefix": {"count": "/safe/"}}}, {"count": 42})
 
 
 # ── Confused-deputy prevention ─────────────────────────────────────────────────

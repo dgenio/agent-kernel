@@ -56,7 +56,7 @@ Errors::
     from weaver_kernel import (
         AgentKernelError,
         TokenExpired, TokenInvalid, TokenScopeError, TokenRevoked,
-        PolicyDenied, PolicyConfigError,
+        PolicyDenied, PolicyConfigError, RateLimitExceeded,
         DriverError, FirewallError, AdapterParseError,
         BudgetExhausted, BudgetConfigError,
         CapabilityNotFound, CapabilityAlreadyRegistered,
@@ -95,6 +95,7 @@ from .errors import (  # noqa: I001 - keep group ordering stable
     NamespaceNotFound,
     PolicyConfigError,
     PolicyDenied,
+    RateLimitExceeded,
     TokenExpired,
     TokenInvalid,
     TokenRevoked,
@@ -155,6 +156,7 @@ from .otel import OTEL_AVAILABLE, instrument_kernel
 from .policy import DefaultPolicyEngine, ExplainingPolicyEngine, PolicyEngine
 from .policy_dsl import DeclarativePolicyEngine, PolicyMatch, PolicyRule
 from .policy_reasons import AllowReason, DenialReason
+from .rate_limit import RateLimiter
 from .registry import CapabilityRegistry
 from .replay import (
     DecisionDiff,
@@ -251,6 +253,7 @@ __all__ = [
     "NamespaceNotFound",
     "PolicyConfigError",
     "PolicyDenied",
+    "RateLimitExceeded",
     "TokenExpired",
     "TokenInvalid",
     "TokenRevoked",
@@ -277,6 +280,7 @@ __all__ = [
     "PolicyEngine",
     "PolicyMatch",
     "PolicyRule",
+    "RateLimiter",
     # tokens
     "HMACTokenProvider",
     # router

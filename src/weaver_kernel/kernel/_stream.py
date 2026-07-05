@@ -36,12 +36,8 @@ from ..models import (
 )
 from ..tokens import CapabilityToken
 from ._driver_exec import resolve_invoke_timeout
-from ._invoke import (
-    _frame_result_summary,
-    _redact_args_for_trace,
-    _redact_trace_text,
-    resolve_effective_mode,
-)
+from ._invoke import resolve_effective_mode
+from ._trace_record import _frame_result_summary, _redact_args_for_trace, _redact_trace_text
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel

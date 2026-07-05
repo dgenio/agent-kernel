@@ -15,7 +15,8 @@ from collections.abc import AsyncIterator
 from typing import Any, Literal, overload
 
 from ..drivers.base import Driver, StreamingDriver
-from ..errors import AgentKernelError, PolicyDenied
+from ..enums import SafetyClass
+from ..errors import AgentKernelError
 from ..federation import TrustPolicy
 from ..firewall.budget_manager import BudgetManager
 from ..firewall.transform import Firewall
@@ -35,6 +36,7 @@ from ..models import (
     RoutePlan,
 )
 from ..policy import DefaultPolicyEngine, PolicyEngine
+from ..rate_limit import RateLimiter
 from ..registry import CapabilityRegistry
 from ..router import Router, StaticRouter
 from ..stats import KernelStats, StatsSnapshot
@@ -42,13 +44,14 @@ from ..stores import TraceStoreProtocol
 from ..tokens import CapabilityToken, HMACTokenProvider, TokenProvider
 from ..trace import TraceStore
 from ..trace_query import TraceQuery
-from ._audit import record_denial_trace, record_expansion_trace
+from ._audit import record_expansion_trace
 from ._dry_run import build_dry_run_result
 from ._federation import (
     perform_advertise,
     perform_discover_peers,
     perform_import_remote,
 )
+from ._grant import perform_grant
 from ._invoke import perform_invoke
 from ._stream import invoke_stream_impl
 
@@ -86,7 +89,34 @@ class Kernel:
         trace_store: TraceStoreProtocol | None = None,
         budget_manager: BudgetManager | None = None,
         kernel_id: str = "agent-kernel",
+        invoke_rate_limits: dict[SafetyClass, tuple[int, float]] | None = None,
+        invoke_rate_limiter: RateLimiter | None = None,
     ) -> None:
+        """Construct a kernel.
+
+        Args:
+            registry: The capability registry to serve requests from.
+            policy: Grant-time authorization engine. Defaults to
+                :class:`~weaver_kernel.DefaultPolicyEngine`.
+            token_provider: Issues and verifies capability tokens. Defaults
+                to :class:`~weaver_kernel.HMACTokenProvider`.
+            router: Resolves a capability id to a driver route plan.
+            firewall: Transforms driver output into a bounded :class:`Frame`.
+            handle_store: Backing store for paginated result handles.
+            trace_store: Backing store for the audit trail.
+            budget_manager: Optional cross-invocation context-budget tracker.
+            kernel_id: Stable identifier this kernel advertises as.
+            invoke_rate_limits: Opt-in per-invocation sliding-window rate
+                limits by :class:`~weaver_kernel.SafetyClass` (#170).
+                ``None`` (the default) disables invoke-time limiting entirely
+                — only :meth:`grant_capability`'s grant-time limit applies,
+                preserving today's behavior. A safety class absent from this
+                mapping is also left unlimited at invoke time.
+            invoke_rate_limiter: The :class:`~weaver_kernel.RateLimiter`
+                backing *invoke_rate_limits*. Defaults to a fresh limiter;
+                pass one explicitly to inject a clock in tests or to share
+                state with another limiter.
+        """
         self._registry = registry
         self._policy: PolicyEngine = policy or DefaultPolicyEngine()
         self._token_provider: TokenProvider = token_provider or HMACTokenProvider()
@@ -98,6 +128,8 @@ class Kernel:
         self._drivers: dict[str, Driver] = {}
         self._kernel_id = kernel_id
         self._stats = KernelStats()
+        self._invoke_limits = invoke_rate_limits
+        self._invoke_limiter = invoke_rate_limiter or RateLimiter()
 
     @property
     def kernel_id(self) -> str:
@@ -137,6 +169,7 @@ class Kernel:
         principal: Principal,
         *,
         justification: str,
+        ttl_s: float | None = None,
     ) -> CapabilityGrant:
         """Evaluate the policy and, if approved, issue a signed token.
 
@@ -146,61 +179,17 @@ class Kernel:
         "who was refused what, and why" (#175). A trace-store write failure is
         logged but never masks the denial. Denials are also counted in
         :attr:`stats`.
+
+        Args:
+            request: The capability request to grant.
+            principal: The principal requesting the grant.
+            justification: Free-text justification for the grant.
+            ttl_s: Requested token lifetime in seconds (#203). ``None`` (the
+                default) uses the token provider's own default — unchanged
+                behavior. The policy engine may deny (never clamp) an
+                excessive value via an optional ``resolve_ttl`` method.
         """
-        capability = self._registry.get(request.capability_id)
-        try:
-            decision = self._policy.evaluate(
-                request, capability, principal, justification=justification
-            )
-        except PolicyDenied as exc:
-            self._stats.on_denial(exc.reason_code)
-            # The denial is authoritative and already fails closed (no token is
-            # issued). Recording its audit trace is best-effort: a trace-store
-            # write failure must never mask the PolicyDenied the caller expects.
-            try:
-                record_denial_trace(
-                    capability_id=request.capability_id,
-                    principal_id=principal.principal_id,
-                    reason_code=exc.reason_code,
-                    message=str(exc),
-                    trace_store=self._trace_store,
-                )
-            except Exception:
-                logger.warning(
-                    "deny_trace_record_failed",
-                    extra={
-                        "capability_id": request.capability_id,
-                        "principal_id": principal.principal_id,
-                        "reason_code": exc.reason_code,
-                    },
-                    exc_info=True,
-                )
-            raise
-        audit_id = str(uuid.uuid4())
-        token = self._token_provider.issue(
-            capability.capability_id,
-            principal.principal_id,
-            constraints=decision.constraints,
-            audit_id=audit_id,
-        )
-        logger.info(
-            "grant_capability",
-            extra={
-                "principal_id": principal.principal_id,
-                "capability_id": capability.capability_id,
-                "safety_class": capability.safety_class.value,
-                "audit_id": audit_id,
-                "token_id": token.token_id,
-            },
-        )
-        self._stats.on_grant()
-        return CapabilityGrant(
-            request=request,
-            principal=principal,
-            decision=decision,
-            token=token,
-            audit_id=audit_id,
-        )
+        return perform_grant(self, request, principal, justification=justification, ttl_s=ttl_s)
 
     def get_token(
         self,

@@ -149,6 +149,14 @@ path if you change either:
    `"summary"` — see `firewall/transform.py`). Dry-run downgrades the same
    way, so non-admin callers cannot probe for raw-mode availability via
    `DryRunResult`.
+4. **Signed argument constraints are checked identically.** A token's
+   `constraints["args"]` (`allowed_keys`/`pinned`/`prefix`) is validated the
+   same way at dry-run as at real-invoke, so a dry-run's predicted outcome
+   never diverges from what `invoke()` would actually do — see
+   [docs/security.md](security.md#signed-argument-level-constraints-183).
+   The opt-in per-invocation rate limit is the one exception: dry-run never
+   checks or consumes it (see
+   [docs/security.md](security.md#per-invocation-rate-limiting-170)).
 
 The driver's `execute()` is never called in dry-run, so the mode is free of
 side effects regardless of driver type (`InMemoryDriver`, `HTTPDriver`,
@@ -188,6 +196,28 @@ present"), and `min_justification` (minimum stripped length). On `allow`, the
 rule's `constraints` are merged into the resulting `PolicyDecision`. On
 `deny`, `reason` is embedded in the raised `PolicyDenied`.
 
+`constraints` is a free-form mapping, so a rule can attach any signed
+constraint the kernel understands — not just `max_rows`/`allowed_fields`, but
+also a nested `args` block for [signed argument-level
+constraints](security.md#signed-argument-level-constraints-183):
+
+```yaml
+- name: allow-support-scoped-update
+  action: allow
+  match:
+    safety_class: [WRITE]
+    roles: [support]
+    min_justification: 10
+  constraints:
+    args:
+      allowed_keys: [ticket_id, status]
+```
+
+No parser or engine change is needed for this — `constraints` already flows
+into the issued token unmodified. See
+[`examples/policies/default.yaml`](../examples/policies/default.yaml) for the
+full worked rule.
+
 The DSL has no negation/missing-attribute operator today, so a policy that
 should deny "when an attribute is missing" should be expressed as an allow
 rule requiring the attribute paired with `default: deny`. See
@@ -197,6 +227,17 @@ worked example.
 `pyyaml` and `tomli` are **optional** — they live behind the `[policy]`
 extra. `import weaver_kernel` always works; calling `from_yaml` / `from_toml`
 without the parser installed raises `PolicyConfigError` with an install hint.
+
+## Per-grant TTL
+
+```python
+grant = kernel.grant_capability(request, principal, justification="...", ttl_s=60.0)
+```
+
+`ttl_s` requests a token lifetime shorter (or longer, if policy allows) than
+the fixed default. Omit it for unchanged behavior. See [docs/security.md —
+Per-grant TTL](security.md#per-grant-ttl-203) for the policy-side
+`max_ttl_s` validation and denial semantics.
 
 ## Denial explanations
 

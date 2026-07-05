@@ -97,6 +97,19 @@ class DenialReason(_StrEnumCompat):
     ``memory_reader_sensitive`` role.
     """
 
+    # Invoke-time enforcement (#170, #183, #203)
+    INVOKE_RATE_LIMITED = "invoke_rate_limited"
+    """The per-invocation sliding-window rate limit was exceeded. Distinct
+    from :attr:`RATE_LIMITED`, which is the grant-time limit."""
+
+    ARG_CONSTRAINT_VIOLATION = "arg_constraint_violation"
+    """An invocation's arguments violated a signed ``constraints["args"]``
+    rule (``allowed_keys``, ``pinned``, or ``prefix``)."""
+
+    TTL_EXCEEDS_MAX = "ttl_exceeds_max"
+    """A requested grant TTL (``ttl_s``) exceeded the policy-configured
+    maximum for the capability's safety class."""
+
 
 class AllowReason(_StrEnumCompat):
     """Stable codes describing why a policy decision allowed a request."""

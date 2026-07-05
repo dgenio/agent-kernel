@@ -17,7 +17,15 @@ class TokenInvalid(AgentKernelError):
 
 
 class TokenScopeError(AgentKernelError):
-    """Raised when a token is used by the wrong principal or for the wrong capability."""
+    """Raised when a token is used outside the scope it was signed for.
+
+    Covers a wrong principal or capability, and an invocation whose arguments
+    violate a signed argument-level constraint (``constraints["args"]``).
+    """
+
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        super().__init__(message)
+        self.reason_code: str | None = reason_code
 
 
 class TokenRevoked(AgentKernelError):
@@ -50,6 +58,22 @@ class PolicyDenied(AgentKernelError):
 
 class PolicyConfigError(AgentKernelError):
     """Raised when a declarative policy file is malformed or unreadable."""
+
+
+class RateLimitExceeded(AgentKernelError):
+    """Raised when an invoke-time rate or use limit rejects an invocation.
+
+    Distinct from :class:`PolicyDenied` (a grant-time refusal): this fires
+    from :meth:`~weaver_kernel.Kernel.invoke` itself, before a driver runs,
+    when the kernel has opt-in per-invocation limiting configured. Carries a
+    stable ``reason_code`` (typically
+    :attr:`~weaver_kernel.policy_reasons.DenialReason.INVOKE_RATE_LIMITED`)
+    so callers can branch without matching the message.
+    """
+
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        super().__init__(message)
+        self.reason_code: str | None = reason_code
 
 
 # ── Driver errors ─────────────────────────────────────────────────────────────

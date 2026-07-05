@@ -26,6 +26,7 @@ from ..models import (
 )
 from ..policy_reasons import AllowReason
 from ..tokens import CapabilityToken
+from ._arg_constraints import validate_arg_constraints
 
 _COST_MAP: dict[SafetyClass, Literal["low", "medium", "high"]] = {
     SafetyClass.READ: "low",
@@ -50,7 +51,15 @@ def build_dry_run_result(
     uses: admin gate for ``raw`` first, then budget escalation if a
     :class:`BudgetManager` is attached. Operation resolution mirrors the
     drivers' own ``args.get("operation", capability_id)`` convention.
+
+    Raises:
+        TokenScopeError: If *args* violates the token's signed
+            ``constraints["args"]`` — the same check :func:`perform_invoke`
+            makes, so a dry-run's predicted outcome always matches invoke's
+            actual one (#183). Invoke-time rate limiting is *not* checked
+            here: a dry-run must never consume that limit.
     """
+    validate_arg_constraints(token.constraints, args)
     driver_id = plan.driver_ids[0] if plan.driver_ids else ""
     operation = str(args.get("operation", token.capability_id))
 

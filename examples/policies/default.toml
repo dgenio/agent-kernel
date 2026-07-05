@@ -66,3 +66,19 @@ action = "deny"
 reason = "SECRETS access is restricted to service-role principals"
 [rules.match]
 sensitivity = ["SECRETS"]
+
+# Argument-level constraints (#183): `constraints` is a free-form table
+# merged into the issued token, so a declarative rule can pin down *which*
+# arguments an invocation may use — not just which capability. Here, a
+# support role may update a ticket's status field only, never arbitrary
+# fields, without a separate capability per allowed field.
+[[rules]]
+name = "allow-support-scoped-update"
+action = "allow"
+[rules.match]
+safety_class = ["WRITE"]
+sensitivity = ["NONE"]
+roles = ["support"]
+min_justification = 10
+[rules.constraints.args]
+allowed_keys = ["ticket_id", "status"]

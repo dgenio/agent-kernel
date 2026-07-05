@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import datetime
-import hashlib
-import hmac
 import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ._secrets import _get_secret
-from .errors import TokenExpired, TokenInvalid, TokenRevoked, TokenScopeError
+from ._token_signing import KeyRing, parse_token_dict, sign_token, verify_token
 from .stores import InMemoryRevocationStore, RevocationStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -38,6 +35,13 @@ class CapabilityToken:
     constraints: dict[str, Any] = field(default_factory=dict)
     audit_id: str = ""
     signature: str = ""
+    key_id: str = ""
+    """Which signing key this token was signed with (#185).
+
+    Opaque to callers; used only by :class:`HMACTokenProvider` to select the
+    right secret out of its :class:`~weaver_kernel._token_signing.KeyRing`
+    during verification. ``""`` for a single-key (non-rotating) provider.
+    """
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
@@ -51,6 +55,7 @@ class CapabilityToken:
             "expires_at": self.expires_at.isoformat(),
             "constraints": self.constraints,
             "audit_id": self.audit_id,
+            "key_id": self.key_id,
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -65,21 +70,18 @@ class CapabilityToken:
             "constraints": self.constraints,
             "audit_id": self.audit_id,
             "signature": self.signature,
+            "key_id": self.key_id,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CapabilityToken:
-        """Reconstruct a token from a plain dict."""
-        return cls(
-            token_id=data["token_id"],
-            capability_id=data["capability_id"],
-            principal_id=data["principal_id"],
-            issued_at=datetime.datetime.fromisoformat(data["issued_at"]),
-            expires_at=datetime.datetime.fromisoformat(data["expires_at"]),
-            constraints=data.get("constraints", {}),
-            audit_id=data.get("audit_id", ""),
-            signature=data.get("signature", ""),
-        )
+        """Reconstruct a token from a plain dict.
+
+        Raises:
+            TokenInvalid: If a required field is missing or malformed. See
+                :func:`~weaver_kernel._token_signing.parse_token_dict`.
+        """
+        return parse_token_dict(data)
 
 
 # ── Protocol ──────────────────────────────────────────────────────────────────
@@ -94,7 +96,7 @@ class TokenProvider(Protocol):
         principal_id: str,
         *,
         constraints: dict[str, Any] | None = None,
-        ttl_seconds: int = 3600,
+        ttl_seconds: float = 3600,
         audit_id: str = "",
     ) -> CapabilityToken:
         """Issue a new token.
@@ -160,9 +162,13 @@ class TokenProvider(Protocol):
 class HMACTokenProvider:
     """Issues and verifies HMAC-SHA256 capability tokens.
 
-    The signing secret is read from the ``WEAVER_KERNEL_SECRET`` environment
-    variable.  If the variable is absent a random development secret is
-    generated and a warning is logged.
+    By default, the signing secret is read from the ``WEAVER_KERNEL_SECRET``
+    environment variable; if absent, a random development secret is generated
+    and a warning is logged. Pass *secrets* + *active_key_id* to enable
+    signing-key rotation (#185): tokens carry the id of the key that signed
+    them, so verification can accept a set of keys — including ones retired
+    from active issuance — while new tokens are always signed with the
+    active key.
     """
 
     def __init__(
@@ -170,25 +176,27 @@ class HMACTokenProvider:
         secret: str | None = None,
         *,
         revocation_store: RevocationStoreProtocol | None = None,
+        secrets: dict[str, str] | None = None,
+        active_key_id: str | None = None,
     ) -> None:
-        self._secret = secret  # None → use env / dev fallback at call time
+        """Construct a provider.
+
+        Args:
+            secret: A single legacy secret (no rotation). Mutually exclusive
+                with *secrets* in practice — when *secrets* is given, *secret*
+                is ignored. ``None`` resolves from the environment.
+            revocation_store: Where revoked/tracked token state lives.
+                Defaults to an in-memory store.
+            secrets: A ``{key_id: secret}`` map for key rotation. When given,
+                *active_key_id* selects which key new tokens are signed with.
+            active_key_id: The key id new tokens are signed under. Required
+                when *secrets* has more than one entry; defaults to the sole
+                key otherwise.
+        """
+        self._key_ring = KeyRing(secrets, active_key_id=active_key_id, legacy_secret=secret)
         # Revocation state lives behind a protocol so it can be made durable
         # (e.g. SQLiteRevocationStore) without weakening verify-before-invoke.
         self._revocation: RevocationStoreProtocol = revocation_store or InMemoryRevocationStore()
-
-    @staticmethod
-    def _log_verify_failure(token_id: str, reason: str, **extra: Any) -> None:
-        """Log a token verification failure at WARNING."""
-        logger.warning(
-            "token_verify_failed",
-            extra={"token_id": token_id, "reason": reason, **extra},
-        )
-
-    def _secret_bytes(self) -> bytes:
-        return (self._secret or _get_secret()).encode()
-
-    def _sign(self, payload: str) -> str:
-        return hmac.new(self._secret_bytes(), payload.encode(), hashlib.sha256).hexdigest()
 
     def issue(
         self,
@@ -196,7 +204,7 @@ class HMACTokenProvider:
         principal_id: str,
         *,
         constraints: dict[str, Any] | None = None,
-        ttl_seconds: int = 3600,
+        ttl_seconds: float = 3600,
         audit_id: str = "",
     ) -> CapabilityToken:
         """Issue a new signed token.
@@ -209,9 +217,11 @@ class HMACTokenProvider:
             audit_id: Audit trail ID to embed in the token.
 
         Returns:
-            A freshly signed :class:`CapabilityToken`.
+            A freshly signed :class:`CapabilityToken`, signed with the
+            provider's active signing key.
         """
         now = datetime.datetime.now(tz=datetime.timezone.utc)
+        key_id = self._key_ring.active_key_id
         token = CapabilityToken(
             token_id=str(uuid.uuid4()),
             capability_id=capability_id,
@@ -220,8 +230,9 @@ class HMACTokenProvider:
             expires_at=now + datetime.timedelta(seconds=ttl_seconds),
             constraints=constraints or {},
             audit_id=audit_id,
+            key_id=key_id,
         )
-        token.signature = self._sign(token._signable_payload())
+        token.signature = sign_token(token, key_ring=self._key_ring, key_id=key_id)
         self._revocation.track(principal_id, token.token_id, token.expires_at)
         logger.debug(
             "token_issued",
@@ -292,45 +303,14 @@ class HMACTokenProvider:
         Raises:
             TokenRevoked: If the token has been revoked.
             TokenExpired: If ``token.expires_at`` is in the past.
-            TokenInvalid: If the HMAC signature does not verify.
+            TokenInvalid: If the token's ``key_id`` is unknown, or the HMAC
+                signature does not verify.
             TokenScopeError: If principal or capability do not match.
         """
-        # 0. Revocation (fast lookup before any crypto)
-        if self._revocation.is_revoked(token.token_id):
-            self._log_verify_failure(token.token_id, "revoked")
-            raise TokenRevoked(f"Token '{token.token_id}' has been revoked.")
-
-        # 1. Expiry
-        now = datetime.datetime.now(tz=datetime.timezone.utc)
-        if token.expires_at <= now:
-            self._log_verify_failure(
-                token.token_id, "expired", expires_at=token.expires_at.isoformat()
-            )
-            raise TokenExpired(
-                f"Token '{token.token_id}' expired at {token.expires_at.isoformat()}."
-            )
-
-        # 2. Signature
-        expected_sig = self._sign(token._signable_payload())
-        if not hmac.compare_digest(expected_sig, token.signature):
-            self._log_verify_failure(token.token_id, "invalid_signature")
-            raise TokenInvalid(
-                f"Token '{token.token_id}' has an invalid signature. "
-                "The token may have been tampered with."
-            )
-
-        # 3. Principal binding (confused-deputy prevention)
-        if token.principal_id != expected_principal_id:
-            self._log_verify_failure(token.token_id, "principal_mismatch")
-            raise TokenScopeError(
-                f"Token '{token.token_id}' was issued for principal "
-                f"'{token.principal_id}', not '{expected_principal_id}'."
-            )
-
-        # 4. Capability binding
-        if token.capability_id != expected_capability_id:
-            self._log_verify_failure(token.token_id, "capability_mismatch")
-            raise TokenScopeError(
-                f"Token '{token.token_id}' was issued for capability "
-                f"'{token.capability_id}', not '{expected_capability_id}'."
-            )
+        verify_token(
+            token,
+            key_ring=self._key_ring,
+            revocation=self._revocation,
+            expected_principal_id=expected_principal_id,
+            expected_capability_id=expected_capability_id,
+        )

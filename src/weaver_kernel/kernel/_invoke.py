@@ -16,19 +16,16 @@ Split out of :mod:`kernel` to keep the public API module ≤ 300 lines
 from __future__ import annotations
 
 import asyncio
-import datetime
 import logging
 import uuid
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from ..drivers.base import ExecutionContext
-from ..enums import SensitivityTag
-from ..errors import DriverError
+from ..enums import SafetyClass
+from ..errors import DriverError, RateLimitExceeded, TokenScopeError
 from ..firewall.budget_manager import BudgetManager
-from ..firewall.redaction import redact
 from ..models import (
-    ActionTrace,
     Capability,
     Frame,
     Handle,
@@ -36,75 +33,16 @@ from ..models import (
     ResponseMode,
     RoutePlan,
 )
-from ..stores import TraceStoreProtocol
+from ..policy_reasons import DenialReason
 from ..tokens import CapabilityToken
+from ._arg_constraints import validate_arg_constraints
 from ._driver_exec import execute_with_fallback, resolve_invoke_timeout
+from ._trace_record import _frame_result_summary, record_failure_trace, record_success_trace
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
 
 logger = logging.getLogger("weaver_kernel.kernel")
-
-_MEMORY_CAPABILITY_PREFIX = "memory."
-_MEMORY_SENSITIVE_ARG_KEYS: frozenset[str] = frozenset(
-    {"payload", "content", "value", "memory", "text", "body"}
-)
-
-
-def _redact_args_for_trace(capability_id: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Redact sensitive values from :class:`ActionTrace.args` before storage.
-
-    The trace store is the long-lived audit record; if invocation arguments
-    carry user content, secrets passed as parameters, or PII, storing them raw
-    makes the store itself a sensitive-data sink — undermining the I-01
-    boundary the :class:`Firewall` enforces on *outputs*. Two layers apply:
-
-    1. **Memory payload stripping.** Memory capabilities (``capability_id``
-       starting with ``"memory."``) carry durable free text under known keys
-       (``payload``, ``content``, …); those values are replaced wholesale with
-       ``"[REDACTED]"`` (keys preserved so audit can confirm a payload was
-       provided).
-    2. **General pattern/field redaction for every capability.** All args are
-       then passed through the same :func:`~weaver_kernel.firewall.redaction.redact`
-       used on driver output, so inline secrets/PII and sensitive field names
-       are scrubbed regardless of the capability namespace (#172).
-    """
-    if capability_id.startswith(_MEMORY_CAPABILITY_PREFIX):
-        args = {
-            k: ("[REDACTED]" if k.lower() in _MEMORY_SENSITIVE_ARG_KEYS else v)
-            for k, v in args.items()
-        }
-    redacted, _ = redact(args)
-    return cast(dict[str, Any], redacted)
-
-
-def _redact_trace_text(text: str) -> str:
-    """Scrub inline secrets/PII from free text before it enters a trace.
-
-    ``DriverError`` messages can embed raw response bodies (e.g. up to 200
-    characters of an HTTP error body), so error text recorded on an
-    :class:`ActionTrace` is run through the firewall's string redactor first.
-    """
-    redacted, _ = redact(text)
-    return cast(str, redacted)
-
-
-def _frame_result_summary(frame: Frame) -> dict[str, Any]:
-    """Build a redaction-safe result summary from a *firewalled* Frame.
-
-    Records only counts and flags taken from the already-transformed Frame —
-    never raw driver data — so it preserves the I-01 boundary the Firewall
-    enforces and keeps sensitive payloads out of the audit trail. Stored on
-    :attr:`~weaver_kernel.models.ActionTrace.result_summary` so an invocation's
-    outcome (e.g. a safety check's pass/block decision) is auditable via
-    :meth:`~weaver_kernel.Kernel.explain`.
-    """
-    return {
-        "fact_count": len(frame.facts),
-        "row_count": len(frame.table_preview),
-        "warning_count": len(frame.warnings),
-        "has_handle": frame.handle is not None,
-    }
 
 
 def resolve_effective_mode(
@@ -131,72 +69,87 @@ def resolve_effective_mode(
     return effective
 
 
-def record_failure_trace(
-    *,
-    action_id: str,
-    capability_id: str,
-    principal_id: str,
-    token_id: str,
-    args: dict[str, Any],
-    response_mode: ResponseMode,
-    error_message: str,
-    trace_store: TraceStoreProtocol,
-    sensitivity: SensitivityTag = SensitivityTag.NONE,
-    driver_id: str = "",
+def _check_invoke_rate_limit(
+    kernel: Kernel, *, principal_id: str, capability_id: str, safety_class: SafetyClass
 ) -> None:
-    """Persist an :class:`ActionTrace` for a failed run.
+    """Enforce the opt-in per-invocation rate limit, if configured (#170).
 
-    Args:
-        driver_id: The driver implicated in the failure — the one that ran and
-            then failed downstream, or the last one attempted when every driver
-            failed. Empty only when no driver was reached.
+    A no-op unless the kernel was constructed with ``invoke_rate_limits``.
+    Checks and records against the same limiter *synchronously* (no
+    ``await`` in between) so two concurrent ``invoke()`` calls on the same
+    principal+capability cannot both pass the check before either records —
+    see the concurrency caveat in ``docs/security.md``.
+
+    Raises:
+        RateLimitExceeded: If the sliding-window limit for *safety_class*
+            would be exceeded by this invocation.
     """
-    trace_store.record(
-        ActionTrace(
-            action_id=action_id,
-            capability_id=capability_id,
-            principal_id=principal_id,
-            token_id=token_id,
-            invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-            args=_redact_args_for_trace(capability_id, args),
-            response_mode=response_mode,
-            driver_id=driver_id,
-            sensitivity=sensitivity,
-            error=_redact_trace_text(error_message),
+    limits = kernel._invoke_limits
+    if limits is None:
+        return
+    limit_window = limits.get(safety_class)
+    if limit_window is None:
+        return
+    limit, window_seconds = limit_window
+    key = f"{principal_id}:{capability_id}"
+    limiter = kernel._invoke_limiter
+    if not limiter.check(key, limit, window_seconds):
+        raise RateLimitExceeded(
+            f"Per-invocation rate limit exceeded for '{principal_id}' on "
+            f"'{capability_id}' ({limit} per {window_seconds}s).",
+            reason_code=str(DenialReason.INVOKE_RATE_LIMITED),
         )
-    )
+    limiter.record(key)
 
 
-def record_success_trace(
+def _enforce_pre_execution(
+    kernel: Kernel,
     *,
-    action_id: str,
-    capability_id: str,
-    principal_id: str,
-    token_id: str,
+    token: CapabilityToken,
     args: dict[str, Any],
+    principal: Principal,
+    capability: Capability,
+    action_id: str,
+    effective_mode: ResponseMode,
     response_mode: ResponseMode,
-    driver_id: str,
-    handle_id: str | None,
-    result_summary: dict[str, Any] | None,
-    trace_store: TraceStoreProtocol,
-    sensitivity: SensitivityTag = SensitivityTag.NONE,
 ) -> None:
-    """Persist an :class:`ActionTrace` for a successful invocation."""
-    trace_store.record(
-        ActionTrace(
-            action_id=action_id,
-            capability_id=capability_id,
-            principal_id=principal_id,
-            token_id=token_id,
-            invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
-            args=_redact_args_for_trace(capability_id, args),
-            response_mode=response_mode,
-            driver_id=driver_id,
-            sensitivity=sensitivity,
-            handle_id=handle_id,
-            result_summary=result_summary,
+    """Run checks that must pass *before* a driver runs or budget is reserved.
+
+    Argument constraints (#183) and, if configured, the per-invocation rate
+    limit (#170). A violation records a ``"deny"`` failure trace (I-02) and
+    re-raises — never a bare exception escaping unaudited.
+
+    Raises:
+        TokenScopeError: If *args* violates the token's ``constraints["args"]``.
+        RateLimitExceeded: If invoke-time rate limiting is enabled and the
+            window limit for this principal+capability is exceeded.
+    """
+    try:
+        validate_arg_constraints(token.constraints, args)
+        _check_invoke_rate_limit(
+            kernel,
+            principal_id=principal.principal_id,
+            capability_id=token.capability_id,
+            safety_class=capability.safety_class,
         )
-    )
+    except (TokenScopeError, RateLimitExceeded) as exc:
+        record_failure_trace(
+            action_id=action_id,
+            capability_id=token.capability_id,
+            principal_id=principal.principal_id,
+            token_id=token.token_id,
+            args=args,
+            response_mode=effective_mode,
+            error_message=str(exc),
+            trace_store=kernel._traces,
+            sensitivity=capability.sensitivity,
+            reason_code=exc.reason_code,
+            event_type="deny",
+        )
+        kernel._stats.on_invocation(
+            failed=True, fallback=False, redacted=False, downgraded=effective_mode != response_mode
+        )
+        raise
 
 
 async def perform_invoke(
@@ -237,6 +190,19 @@ async def perform_invoke(
         response_mode=response_mode,
         principal=principal,
         budget_manager=kernel.budget,
+    )
+    # #170, #183: argument constraints and (if configured) the per-invocation
+    # rate limit are enforced before budget reservation, so a violation never
+    # leaks a reservation and never reaches a driver.
+    _enforce_pre_execution(
+        kernel,
+        token=token,
+        args=args,
+        principal=principal,
+        capability=capability,
+        action_id=action_id,
+        effective_mode=effective_mode,
+        response_mode=response_mode,
     )
     reserved_tokens: int | None = None
     if kernel.budget is not None:

@@ -14,9 +14,10 @@ Scope note: only grant-time denials are recorded here. Expansion-time access
 failures (principal/constraint violations raised by ``HandleStore.expand``)
 still surface as exceptions and logs, not ``"deny"`` traces.
 
-The redaction helpers are shared with :mod:`._invoke` so an expansion's query
-arguments and a denial's message pass through the same firewall scrub used for
-invocation traces — the audit store never becomes a sensitive-data sink.
+The redaction helpers are shared with :mod:`._trace_record` so an expansion's
+query arguments and a denial's message pass through the same firewall scrub
+used for invocation traces — the audit store never becomes a sensitive-data
+sink.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import uuid
 
 from ..models import ActionTrace, Frame
 from ..stores import TraceStoreProtocol
-from ._invoke import _frame_result_summary, _redact_args_for_trace, _redact_trace_text
+from ._trace_record import _frame_result_summary, _redact_args_for_trace, _redact_trace_text
 
 
 def _now() -> datetime.datetime:

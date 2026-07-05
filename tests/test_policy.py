@@ -11,8 +11,10 @@ import pytest
 from weaver_kernel import (
     AgentKernelError,
     Capability,
+    CapabilityRegistry,
     DeclarativePolicyEngine,
     DefaultPolicyEngine,
+    Kernel,
     PolicyConfigError,
     PolicyDenied,
     Principal,
@@ -586,6 +588,126 @@ def test_rate_limit_window_slides() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# DefaultPolicyEngine.resolve_ttl() (#203)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_resolve_ttl_none_passes_through() -> None:
+    """No requested TTL is never a violation, with or without a configured max."""
+    eng = DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 60.0})
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    assert eng.resolve_ttl(cap, p, None) is None
+
+
+def test_resolve_ttl_no_max_configured_passes_through() -> None:
+    """Without max_ttl_s configured, any positive ttl_s is returned unchanged."""
+    eng = DefaultPolicyEngine()
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    assert eng.resolve_ttl(cap, p, 999999.0) == 999999.0
+
+
+def test_resolve_ttl_within_max_returned_unchanged() -> None:
+    eng = DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 120.0})
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    assert eng.resolve_ttl(cap, p, 60.0) == 60.0
+
+
+def test_resolve_ttl_rejects_non_positive() -> None:
+    eng = DefaultPolicyEngine()
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    with pytest.raises(PolicyDenied, match="must be positive"):
+        eng.resolve_ttl(cap, p, 0.0)
+    with pytest.raises(PolicyDenied, match="must be positive"):
+        eng.resolve_ttl(cap, p, -1.0)
+
+
+def test_resolve_ttl_rejects_over_max_with_stable_reason_code() -> None:
+    eng = DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 60.0})
+    p = Principal(principal_id="u1")
+    cap = _cap("cap.r", SafetyClass.READ)
+    with pytest.raises(PolicyDenied, match="exceeds") as exc_info:
+        eng.resolve_ttl(cap, p, 3600.0)
+    assert exc_info.value.reason_code == "ttl_exceeds_max"
+
+
+def test_resolve_ttl_max_is_per_safety_class() -> None:
+    """A max_ttl_s entry for READ must not constrain WRITE."""
+    eng = DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 60.0})
+    p = Principal(principal_id="u1", roles=["writer"])
+    cap = _cap("cap.w", SafetyClass.WRITE)
+    assert eng.resolve_ttl(cap, p, 3600.0) == 3600.0
+
+
+def test_grant_capability_ttl_s_sets_token_expiry(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """grant_capability(ttl_s=...) yields a token expiring ~ttl_s after issuance."""
+    request = kernel.request_capabilities("list invoices")[0]
+    grant = kernel.grant_capability(request, reader_principal, justification="x", ttl_s=60.0)
+    delta = (grant.token.expires_at - grant.token.issued_at).total_seconds()
+    assert delta == pytest.approx(60.0)
+
+
+def test_grant_capability_default_ttl_unchanged_without_ttl_s(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """Omitting ttl_s preserves the token provider's own default (1 hour)."""
+    request = kernel.request_capabilities("list invoices")[0]
+    grant = kernel.grant_capability(request, reader_principal, justification="x")
+    delta = (grant.token.expires_at - grant.token.issued_at).total_seconds()
+    assert delta == pytest.approx(3600.0)
+
+
+def test_grant_capability_ttl_over_policy_max_denied() -> None:
+    """An excessive ttl_s is denied via the policy's resolve_ttl, not silently clamped."""
+    registry = CapabilityRegistry()
+    registry.register(_cap("cap.r", SafetyClass.READ))
+    kernel = Kernel(registry, policy=DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 60.0}))
+    p = Principal(principal_id="u1")
+    request = CapabilityRequest(capability_id="cap.r", goal="test")
+    with pytest.raises(PolicyDenied, match="exceeds"):
+        kernel.grant_capability(request, p, justification="x", ttl_s=3600.0)
+
+
+class _NoResolveTtlEngine:
+    """A minimal PolicyEngine that implements only `evaluate()` — no `resolve_ttl`.
+
+    Verifies grant_capability(ttl_s=...) degrades gracefully (ttl_s passed
+    through unvalidated) against an engine that predates #203, confirming
+    resolve_ttl is a non-breaking, optional Protocol extension.
+    """
+
+    def evaluate(
+        self,
+        request: CapabilityRequest,
+        capability: Capability,
+        principal: Principal,
+        *,
+        justification: str,
+    ):
+        from weaver_kernel.models import PolicyDecision
+        from weaver_kernel.policy_reasons import AllowReason
+
+        return PolicyDecision(allowed=True, reason="ok", reason_code=str(AllowReason.RULE_ALLOW))
+
+
+def test_grant_capability_ttl_s_passthrough_without_resolve_ttl() -> None:
+    """A policy engine without resolve_ttl leaves ttl_s unvalidated (non-breaking)."""
+    registry = CapabilityRegistry()
+    registry.register(_cap("cap.r", SafetyClass.READ))
+    kernel = Kernel(registry, policy=_NoResolveTtlEngine())
+    p = Principal(principal_id="u1")
+    request = CapabilityRequest(capability_id="cap.r", goal="test")
+    grant = kernel.grant_capability(request, p, justification="x", ttl_s=42.0)
+    delta = (grant.token.expires_at - grant.token.issued_at).total_seconds()
+    assert delta == pytest.approx(42.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # DefaultPolicyEngine.explain()
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -815,6 +937,26 @@ def test_declarative_constraints_merged() -> None:
     p = Principal(principal_id="u1")
     dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.READ), p, justification="")
     assert dec.constraints["max_rows"] == 10
+
+
+def test_declarative_args_constraint_attached_and_enforced() -> None:
+    """A declarative rule's nested `constraints.args` (#183) round-trips into a
+    signed token and is enforced by Kernel.invoke — no parser/engine changes
+    needed, since `constraints` is already a free-form mapping (#183 item 3).
+    """
+    engine = _dce(
+        [
+            {
+                "name": "scoped-write",
+                "match": {"safety_class": ["WRITE"]},
+                "action": "allow",
+                "constraints": {"args": {"allowed_keys": ["ticket_id", "status"]}},
+            }
+        ]
+    )
+    p = Principal(principal_id="u1")
+    dec = engine.evaluate(_req("c"), _cap("c", SafetyClass.WRITE), p, justification="")
+    assert dec.constraints["args"] == {"allowed_keys": ["ticket_id", "status"]}
 
 
 # ── config validation errors ──────────────────────────────────────────────────

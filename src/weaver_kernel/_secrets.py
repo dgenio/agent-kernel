@@ -11,15 +11,28 @@ generated.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
 import threading
+from typing import Any
+
+from .errors import AgentKernelError
 
 logger = logging.getLogger(__name__)
 
 SECRET_ENV_VAR = "WEAVER_KERNEL_SECRET"
 """Environment variable holding the HMAC secret used for tokens and audit chains."""
+
+SECRETS_ENV_VAR = "WEAVER_KERNEL_SECRETS"
+"""Environment variable holding a JSON object of ``{key_id: secret}`` for
+signing-key rotation (#185). Takes precedence over :data:`SECRET_ENV_VAR`
+when set. A rotation adds the new key alongside the old one, switches which
+key new tokens are issued under (see
+:class:`~weaver_kernel.tokens.HMACTokenProvider`'s ``active_key_id``), and
+retires the old key only after the longest outstanding token's TTL elapses.
+"""
 
 _DEV_SECRET: str | None = None
 _DEV_SECRET_LOCK = threading.Lock()
@@ -62,3 +75,41 @@ def resolve_hmac_secret(explicit: str | None = None) -> str:
     if explicit:
         return explicit
     return _get_secret()
+
+
+def resolve_hmac_secrets_map() -> dict[str, str]:
+    """Resolve a ``key_id -> secret`` map for multi-key signing/rotation.
+
+    Precedence:
+
+    1. :data:`SECRETS_ENV_VAR` (``WEAVER_KERNEL_SECRETS``) — a JSON object
+       mapping each ``key_id`` to its secret, e.g. ``{"2026-a": "...",
+       "2026-b": "..."}``.
+    2. A single legacy key under ``key_id=""``, resolved the same way as
+       :func:`resolve_hmac_secret` (``WEAVER_KERNEL_SECRET``, else a
+       process-lived dev fallback with a one-time warning).
+
+    Returns:
+        A non-empty ``{key_id: secret}`` mapping.
+
+    Raises:
+        AgentKernelError: If :data:`SECRETS_ENV_VAR` is set but is not a JSON
+            object of string keys to string values.
+    """
+    raw = os.environ.get(SECRETS_ENV_VAR)
+    if not raw:
+        return {"": _get_secret()}
+    try:
+        parsed: Any = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise AgentKernelError(f"{SECRETS_ENV_VAR} must be valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in parsed.items()
+    ):
+        raise AgentKernelError(
+            f"{SECRETS_ENV_VAR} must be a JSON object mapping string key ids to "
+            f"string secrets, got {raw!r}."
+        )
+    if not parsed:
+        raise AgentKernelError(f"{SECRETS_ENV_VAR} must not be an empty object.")
+    return parsed

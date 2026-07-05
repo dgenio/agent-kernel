@@ -8,6 +8,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Capability-token lifecycle hardening.** A grouped pass over grant TTL,
+  invoke-time enforcement, and key rotation:
+  - **Signing-key rotation (#185).** `HMACTokenProvider` accepts a `{key_id:
+    secret}` `KeyRing` and an `active_key_id`; a token issued under a
+    previous key still verifies during the rotation's overlap window, and an
+    unknown `key_id` fails closed as `TokenInvalid`. A single `secret=...`
+    (or none) keeps working exactly as before. New optional
+    `WEAVER_KERNEL_SECRETS` env var (JSON `{key_id: secret}`) takes
+    precedence over the legacy `WEAVER_KERNEL_SECRET`.
+  - **Typed errors from `CapabilityToken.from_dict` (#200).** Malformed
+    input (missing field, non-string field, invalid timestamp, non-object
+    `constraints`) now raises `TokenInvalid` with a descriptive message
+    instead of a bare `KeyError`/`ValueError`. Valid round-trips are
+    unchanged.
+  - **Per-grant TTL (#203).** `Kernel.grant_capability(..., ttl_s=...)` sets
+    a token's lifetime per grant. `DefaultPolicyEngine(max_ttl_s={...})`
+    validates it via a new, protocol-optional `resolve_ttl()` method — an
+    excessive or non-positive `ttl_s` is denied (`PolicyDenied`), never
+    silently clamped. Omitting `ttl_s` preserves today's default TTL exactly.
+  - **Signed argument-level constraints (#183).** A token's
+    `constraints["args"]` (`allowed_keys`, `pinned`, `prefix`) is enforced by
+    `Kernel.invoke()` before a driver runs and before budget is reserved,
+    raising `TokenScopeError` with a stable reason code and an audited
+    `"deny"` trace on violation. Dry-run predicts the identical outcome.
+    `DeclarativePolicyEngine` needed no code changes — `constraints` is
+    already a free-form mapping — see the new example rule in
+    `examples/policies/default.{yaml,toml}`.
+  - **Opt-in per-invocation rate limiting (#170).** `Kernel(invoke_rate_limits=
+    {SafetyClass: (limit, window_s)})` enforces a second, invoke-time sliding
+    window independent of the existing grant-time limit — default off, so
+    behavior is unchanged unless configured. A violation raises the new
+    `RateLimitExceeded` with a stable reason code; `dry_run=True` never
+    consumes it.
+  - **ADR: token signing format evolution (#224).** `docs/adr/0001-token-signing-evolution.md`
+    evaluates HMAC (status quo), macaroon-style caveat chaining, and Biscuit
+    against this kernel's invariants and constraints — recommending status
+    quo + re-issuance now, macaroon-style chaining as the future path if an
+    offline-delegation need materializes, and explicitly deferring Biscuit
+    (mandatory dependency, weakened default revocation posture, no current
+    consumer). Investigation only — no code or dependency change.
 - **Fail-closed driver execution.** A grouped pass over the invocation path so
   the kernel's "controlled, audited execution" promise (I-02) holds on *every*
   exit, not just the happy path:
@@ -115,6 +155,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Companion: `examples/trace_replay_demo.py`.
 
 ### Changed
+- **`CapabilityToken`'s signed payload now includes `key_id` (#185).**
+  `_signable_payload()` adds `key_id` to the HMAC input for every token,
+  including single-key (`key_id=""`) providers. **Breaking for tokens issued
+  by pre-upgrade code:** a token signed before this change fails verification
+  as `TokenInvalid` after upgrading, even under the same secret, since the
+  signed payload shape differs. Tokens are short-lived (1 hour by default) —
+  expect at most one TTL window of re-grant errors immediately after a
+  rolling deploy. Treated the same as the 0.10.0 import rename: an accepted
+  break at this project's current alpha stage, not a compatibility shim.
 - **CI aligned with `make ci` and hardened (#209, #210, #232).** The `ci.yml`
   test job now invokes the Makefile targets (`fmt-check`/`lint`/`type`/`test`/
   `example`) instead of re-implementing them, so the local gate and CI cannot
