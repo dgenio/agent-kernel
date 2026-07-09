@@ -52,7 +52,7 @@ _SIZE_RATCHET: dict[str, int] = {
     "policy.py": 652,
     "kernel/__init__.py": 541,
     "adapters/_base.py": 459,
-    "kernel/_invoke.py": 400,
+    "kernel/_invoke.py": 390,
     "firewall/transform.py": 377,
     "adapters/openai.py": 358,
     "stores/sqlite.py": 350,

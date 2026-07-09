@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from weaver_kernel import (
+    BudgetManager,
     Capability,
     CapabilityRegistry,
     DriverError,
@@ -17,7 +20,10 @@ from weaver_kernel import (
     StaticRouter,
     TokenExpired,
 )
-from weaver_kernel.models import CapabilityRequest
+from weaver_kernel.drivers.base import ExecutionContext
+from weaver_kernel.errors import FirewallError
+from weaver_kernel.firewall.transform import Firewall
+from weaver_kernel.models import CapabilityRequest, RawResult
 
 # ── Full flow: request → grant → invoke → expand → explain ─────────────────────
 
@@ -226,6 +232,247 @@ async def test_all_drivers_fail_raises_driver_error() -> None:
     token = token_provider.issue("test.fail", "u1")
     with pytest.raises(DriverError):
         await k.invoke(token, principal=principal, args={})
+
+
+# ── Fail-closed driver execution: audit + budget release (#152, #191) ──────────
+
+
+class _RawRaisingDriver:
+    """A driver whose ``execute`` raises a non-DriverError (e.g. a library bug)."""
+
+    def __init__(self, driver_id: str = "raw_raiser") -> None:
+        self._driver_id = driver_id
+
+    @property
+    def driver_id(self) -> str:
+        return self._driver_id
+
+    async def execute(self, ctx: ExecutionContext) -> RawResult:
+        raise ValueError("unexpected library failure")
+
+
+class _SlowDriver:
+    """A driver that sleeps past any reasonable per-invocation deadline."""
+
+    def __init__(self, driver_id: str = "slow") -> None:
+        self._driver_id = driver_id
+
+    @property
+    def driver_id(self) -> str:
+        return self._driver_id
+
+    async def execute(self, ctx: ExecutionContext) -> RawResult:
+        await asyncio.sleep(1.0)
+        return RawResult(capability_id=ctx.capability_id, data="late")
+
+
+class _BoomFirewall(Firewall):
+    """A Firewall whose ``transform`` always fails — to exercise the post-driver path."""
+
+    def transform(self, *args: object, **kwargs: object):  # type: ignore[override]
+        raise FirewallError("transform boom")
+
+
+class _DriverErrorFirewall(Firewall):
+    """A Firewall whose ``transform`` raises a ``DriverError`` post-driver.
+
+    Exercises the branch where a ``DriverError`` originates *after* the driver
+    ran (not the all-drivers-failed path), which must still be audited (#152).
+    """
+
+    def transform(self, *args: object, **kwargs: object):  # type: ignore[override]
+        raise DriverError("post-driver boom")
+
+
+def _single_driver_kernel(driver: object, *, budget: int | None = None) -> Kernel:
+    """Build a kernel routing ``cap`` to *driver*, optionally with a budget."""
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="cap",
+            name="Cap",
+            description="A capability under test",
+            safety_class=SafetyClass.READ,
+        )
+    )
+    return Kernel(
+        registry=registry,
+        router=StaticRouter(routes={"cap": [driver.driver_id]}),  # type: ignore[attr-defined]
+        token_provider=HMACTokenProvider(secret="test-secret"),
+        budget_manager=BudgetManager(total_budget=budget) if budget is not None else None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_driver_error_is_audited_and_budget_released() -> None:
+    """A driver raising a non-DriverError is audited and the reservation freed (#152)."""
+    driver = _RawRaisingDriver()
+    k = _single_driver_kernel(driver, budget=10_000)
+    k.register_driver(driver)
+    assert k.budget is not None
+    before = k.budget.remaining
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+    with pytest.raises(DriverError, match="All drivers failed"):
+        await k.invoke(token, principal=principal, args={})
+
+    # Budget reservation released (no leak), and a failure trace was recorded
+    # attributing the last-attempted driver (#152).
+    assert k.budget.remaining == before
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert traces[0].driver_id == "raw_raiser"
+    assert "unexpected library failure" in (traces[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_firewall_failure_is_audited_and_budget_released() -> None:
+    """A post-driver firewall failure is audited and the reservation freed (#152)."""
+    driver = InMemoryDriver(driver_id="ok")
+    driver.register_handler("cap", lambda ctx: {"value": 1})
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="cap",
+            name="Cap",
+            description="A capability under test",
+            safety_class=SafetyClass.READ,
+        )
+    )
+    k = Kernel(
+        registry=registry,
+        router=StaticRouter(routes={"cap": ["ok"]}),
+        token_provider=HMACTokenProvider(secret="test-secret"),
+        firewall=_BoomFirewall(),
+        budget_manager=BudgetManager(total_budget=10_000),
+    )
+    k.register_driver(driver)
+    assert k.budget is not None
+    before = k.budget.remaining
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+    with pytest.raises(FirewallError, match="transform boom"):
+        await k.invoke(token, principal=principal, args={})
+
+    assert k.budget.remaining == before
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert "transform boom" in (traces[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_post_driver_driver_error_is_audited_and_budget_released() -> None:
+    """A DriverError raised *after* the driver ran is audited, not just re-raised (#152)."""
+    driver = InMemoryDriver(driver_id="ok")
+    driver.register_handler("cap", lambda ctx: {"value": 1})
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="cap",
+            name="Cap",
+            description="A capability under test",
+            safety_class=SafetyClass.READ,
+        )
+    )
+    k = Kernel(
+        registry=registry,
+        router=StaticRouter(routes={"cap": ["ok"]}),
+        token_provider=HMACTokenProvider(secret="test-secret"),
+        firewall=_DriverErrorFirewall(),
+        budget_manager=BudgetManager(total_budget=10_000),
+    )
+    k.register_driver(driver)
+    assert k.budget is not None
+    before = k.budget.remaining
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+    with pytest.raises(DriverError, match="post-driver boom"):
+        await k.invoke(token, principal=principal, args={})
+
+    # The post-driver DriverError is audited exactly once (not escaped) and the
+    # reservation is released — the driver that ran is attributed.
+    assert k.budget.remaining == before
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert traces[0].driver_id == "ok"
+    assert "post-driver boom" in (traces[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_invoke_timeout_constraint_aborts_slow_driver() -> None:
+    """A per-grant ``invoke_timeout_s`` constraint bounds execution (#191)."""
+    driver = _SlowDriver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1", constraints={"invoke_timeout_s": 0.01})
+    with pytest.raises(DriverError, match="timed out after 0.01s"):
+        await k.invoke(token, principal=principal, args={})
+
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert "timed out" in (traces[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_invalid_invoke_timeout_constraint_rejected() -> None:
+    """A malformed ``invoke_timeout_s`` constraint fails fast with a typed error (#191)."""
+    driver = InMemoryDriver(driver_id="ok")
+    driver.register_handler("cap", lambda ctx: {"value": 1})
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1", constraints={"invoke_timeout_s": -5})
+    with pytest.raises(DriverError, match="invoke_timeout_s"):
+        await k.invoke(token, principal=principal, args={})
+
+
+@pytest.mark.asyncio
+async def test_cancellation_is_audited_and_budget_released() -> None:
+    """Cancelling an in-flight invoke releases the reservation and is audited (#152)."""
+    driver = _SlowDriver()
+    k = _single_driver_kernel(driver, budget=10_000)
+    k.register_driver(driver)
+    assert k.budget is not None
+    before = k.budget.remaining
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+    task = asyncio.create_task(k.invoke(token, principal=principal, args={}))
+    await asyncio.sleep(0.05)  # let the task reach the (slow) driver
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        # Awaiting the cancelled task re-raises CancelledError — that *is* the
+        # effect under test (assigned to ``_`` so static analysis sees it).
+        _ = await task
+
+    assert k.budget.remaining == before
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert "cancelled" in (traces[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_stream_timeout_records_error_reason() -> None:
+    """A streaming timeout records the real failure reason, not a generic note (#191)."""
+    driver = _SlowDriver()
+    k = _single_driver_kernel(driver)
+    k.register_driver(driver)
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1", constraints={"invoke_timeout_s": 0.01})
+    with pytest.raises(DriverError, match="timed out"):
+        async for _ in k.invoke_stream(token, principal=principal, args={}):
+            pass
+
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert "timed out" in (traces[0].error or "")
 
 
 # ── Confused-deputy prevention ─────────────────────────────────────────────────

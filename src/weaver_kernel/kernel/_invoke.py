@@ -15,13 +15,14 @@ Split out of :mod:`kernel` to keep the public API module ≤ 300 lines
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import uuid
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
-from ..drivers.base import Driver, ExecutionContext
+from ..drivers.base import ExecutionContext
 from ..enums import SensitivityTag
 from ..errors import DriverError
 from ..firewall.budget_manager import BudgetManager
@@ -32,12 +33,12 @@ from ..models import (
     Frame,
     Handle,
     Principal,
-    RawResult,
     ResponseMode,
     RoutePlan,
 )
 from ..stores import TraceStoreProtocol
 from ..tokens import CapabilityToken
+from ._driver_exec import execute_with_fallback, resolve_invoke_timeout
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
@@ -130,45 +131,6 @@ def resolve_effective_mode(
     return effective
 
 
-async def execute_with_fallback(
-    drivers: dict[str, Driver],
-    plan: RoutePlan,
-    *,
-    ctx: ExecutionContext,
-    log_ctx: dict[str, str],
-) -> tuple[RawResult | None, str, Exception | None, bool]:
-    """Iterate the route plan's drivers until one succeeds.
-
-    Returns:
-        ``(raw_result, driver_id, last_error, fell_back)``. ``raw_result`` is
-        ``None`` if every driver failed; ``fell_back`` is ``True`` when at least
-        one earlier driver raised before the one that ultimately ran (or before
-        all-failed), so callers can count fallback activations. Only a
-        ``DriverError`` counts as a failed attempt: a route entry whose driver is
-        unregistered (``drivers.get(driver_id) is None``) is skipped silently and
-        does **not** set ``fell_back``.
-    """
-    last_error: Exception | None = None
-    failed_attempts = 0
-    for driver_id in plan.driver_ids:
-        driver = drivers.get(driver_id)
-        if driver is None:
-            continue
-        try:
-            raw_result = await driver.execute(ctx)
-            logger.debug("driver_success", extra={**log_ctx, "driver_id": driver_id})
-            return raw_result, driver_id, None, failed_attempts > 0
-        except DriverError as exc:
-            logger.warning(
-                "driver_failure",
-                extra={**log_ctx, "driver_id": driver_id, "error": str(exc)},
-            )
-            last_error = exc
-            failed_attempts += 1
-            continue
-    return None, "", last_error, failed_attempts > 0
-
-
 def record_failure_trace(
     *,
     action_id: str,
@@ -180,8 +142,15 @@ def record_failure_trace(
     error_message: str,
     trace_store: TraceStoreProtocol,
     sensitivity: SensitivityTag = SensitivityTag.NONE,
+    driver_id: str = "",
 ) -> None:
-    """Persist an :class:`ActionTrace` for a run where no driver succeeded."""
+    """Persist an :class:`ActionTrace` for a failed run.
+
+    Args:
+        driver_id: The driver implicated in the failure — the one that ran and
+            then failed downstream, or the last one attempted when every driver
+            failed. Empty only when no driver was reached.
+    """
     trace_store.record(
         ActionTrace(
             action_id=action_id,
@@ -191,7 +160,7 @@ def record_failure_trace(
             invoked_at=datetime.datetime.now(tz=datetime.timezone.utc),
             args=_redact_args_for_trace(capability_id, args),
             response_mode=response_mode,
-            driver_id="",
+            driver_id=driver_id,
             sensitivity=sensitivity,
             error=_redact_trace_text(error_message),
         )
@@ -260,6 +229,10 @@ async def perform_invoke(
             the recorded :class:`ActionTrace`.
     """
     action_id = str(uuid.uuid4())
+    # Resolve the optional per-invocation deadline (#191) before reserving
+    # budget so an invalid signed constraint fails fast without leaking a
+    # reservation.
+    invoke_timeout = resolve_invoke_timeout(token.constraints)
     effective_mode = resolve_effective_mode(
         response_mode=response_mode,
         principal=principal,
@@ -292,45 +265,53 @@ async def perform_invoke(
         action_id=action_id,
     )
     downgraded = effective_mode != response_mode
-    raw_result, used_driver_id, last_error, fell_back = await execute_with_fallback(
-        kernel._driver_map, plan, ctx=ctx, log_ctx=log_ctx
-    )
+    used_driver_id = ""
+    fell_back = False
 
-    if raw_result is None:
-        if kernel.budget is not None and reserved_tokens is not None:
-            await kernel.budget.release(reserved_tokens)
-        err_msg = str(last_error) if last_error else "No drivers available."
-        logger.warning("invoke_failure", extra={**log_ctx, "error": err_msg})
+    def _record_invoke_failure(message: str, driver_id: str) -> None:
+        """Log + audit a failed invocation, recording the effective mode (#152)."""
+        logger.warning("invoke_failure", extra={**log_ctx, "error": message})
         record_failure_trace(
             action_id=action_id,
             capability_id=token.capability_id,
             principal_id=principal.principal_id,
             token_id=token.token_id,
             args=args,
-            response_mode=response_mode,
-            error_message=err_msg,
+            response_mode=effective_mode,
+            error_message=message,
             trace_store=kernel._traces,
             sensitivity=capability.sensitivity,
+            driver_id=driver_id,
         )
         kernel._stats.on_invocation(
             failed=True, fallback=fell_back, redacted=False, downgraded=downgraded
         )
-        raise DriverError(
-            f"All drivers failed for capability '{token.capability_id}'. Last error: {err_msg}"
-        )
 
+    # I-02: every exit past the budget reservation — a driver failure, a fault
+    # in the post-driver pipeline (handle creation, firewall transform, token
+    # counting), or task cancellation — must release the reservation exactly
+    # once and leave an audit trace. The reservation is freed in a single
+    # ``finally`` (which also covers ``CancelledError``, not an ``Exception``);
+    # each path records its own failure trace before propagating (#152, #191).
     handle: Handle | None = None
-    if effective_mode != "raw":
-        handle = kernel._handles.store(
-            capability_id=token.capability_id,
-            data=raw_result.data,
-            principal_id=principal.principal_id,
-            constraints=token.constraints,
-        )
-        kernel._stats.on_handle_store()
-
-    reservation_consumed = False
+    reservation_settled = False
     try:
+        raw_result, used_driver_id, last_error, fell_back = await execute_with_fallback(
+            kernel._driver_map, plan, ctx=ctx, log_ctx=log_ctx, timeout=invoke_timeout
+        )
+        if raw_result is None:
+            err_msg = str(last_error) if last_error else "No drivers available."
+            raise DriverError(
+                f"All drivers failed for capability '{token.capability_id}'. Last error: {err_msg}"
+            )
+        if effective_mode != "raw":
+            handle = kernel._handles.store(
+                capability_id=token.capability_id,
+                data=raw_result.data,
+                principal_id=principal.principal_id,
+                constraints=token.constraints,
+            )
+            kernel._stats.on_handle_store()
         frame = kernel._fw.transform(
             raw_result,
             action_id=action_id,
@@ -343,9 +324,19 @@ async def perform_invoke(
         if kernel.budget is not None and reserved_tokens is not None:
             actual_tokens = kernel.budget.count_tokens(_frame_payload(frame))
             await kernel.budget.record_usage(actual_tokens, reserved=reserved_tokens)
-        reservation_consumed = True
+        reservation_settled = True  # consumed via record_usage (or no budget configured)
+    except DriverError as exc:
+        # Audit every DriverError exit (all-failed or post-driver) so I-02 holds (#152).
+        _record_invoke_failure(str(exc), used_driver_id)
+        raise
+    except asyncio.CancelledError:
+        _record_invoke_failure("invocation cancelled", used_driver_id)
+        raise
+    except Exception as exc:
+        _record_invoke_failure(str(exc), used_driver_id)
+        raise
     finally:
-        if not reservation_consumed and kernel.budget is not None and reserved_tokens is not None:
+        if not reservation_settled and kernel.budget is not None and reserved_tokens is not None:
             await kernel.budget.release(reserved_tokens)
 
     record_success_trace(
@@ -394,7 +385,6 @@ def _frame_payload(frame: Frame) -> Any:
 __all__ = [
     "perform_invoke",
     "resolve_effective_mode",
-    "execute_with_fallback",
     "record_failure_trace",
     "record_success_trace",
 ]

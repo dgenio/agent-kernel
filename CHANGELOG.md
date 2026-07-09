@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Fail-closed driver execution.** A grouped pass over the invocation path so
+  the kernel's "controlled, audited execution" promise (I-02) holds on *every*
+  exit, not just the happy path:
+  - **Audit + budget release on any driver fault (#152).** `execute_with_fallback`
+    now treats *any* exception a driver raises — not only `DriverError` — as a
+    failed attempt, so an unexpected error is captured and surfaced instead of
+    escaping un-audited with the budget reservation leaked. The post-driver
+    pipeline in `perform_invoke` (handle creation, firewall transform, token
+    counting) is likewise wrapped: a fault there releases the reservation
+    exactly once and records a failure `ActionTrace` before re-raising.
+  - **Per-invocation deadline (#191).** An optional `invoke_timeout_s` token
+    constraint bounds each driver attempt (single-shot and streaming, including
+    a stream inactivity timeout) via `asyncio.wait_for`. A timeout becomes a
+    synthetic `DriverError`, so the existing fallback and failure-trace paths
+    apply unchanged. Signed into the token, so the deadline is tamper-evident
+    and bound to the grant. Defaults to off.
+  - **Pooled HTTP client + response-size guard (#194).** `HTTPDriver` holds a
+    single long-lived `httpx.AsyncClient` (connection pooling, configurable
+    `httpx.Limits`) instead of building one per request, with an `aclose()` for
+    shutdown. An optional `max_response_bytes` streams and aborts oversized
+    bodies with a `DriverError` before they are fully buffered.
+  - **Defensive HTTP body parsing (#197).** A JSON endpoint returning a
+    non-JSON body now raises a typed `DriverError` (with content-type and a
+    redaction-safe snippet) instead of leaking `json.JSONDecodeError`. A new
+    `HTTPEndpoint.response_format="text"` supports text APIs deliberately.
 - **Context-firewall sizing, budgeting & summary fidelity.** A grouped pass over
   how the firewall measures, bounds, and represents payloads:
   - **Allocation-free size estimation (#207).** `firewall.estimated_size` walks

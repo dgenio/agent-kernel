@@ -15,6 +15,7 @@ trace guarantees as the streaming path.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import uuid
@@ -34,7 +35,13 @@ from ..models import (
     RoutePlan,
 )
 from ..tokens import CapabilityToken
-from ._invoke import _frame_result_summary, _redact_args_for_trace, resolve_effective_mode
+from ._driver_exec import resolve_invoke_timeout
+from ._invoke import (
+    _frame_result_summary,
+    _redact_args_for_trace,
+    _redact_trace_text,
+    resolve_effective_mode,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import Kernel
@@ -54,6 +61,7 @@ async def invoke_stream_impl(
 ) -> AsyncIterator[Frame]:
     """Stream Frames for one capability invocation."""
     action_id = str(uuid.uuid4())
+    invoke_timeout = resolve_invoke_timeout(token.constraints)
     initial_mode = resolve_effective_mode(
         response_mode=response_mode,
         principal=principal,
@@ -99,6 +107,7 @@ async def invoke_stream_impl(
     redacted_any = False
     handle: Handle | None = None
     last_frame: Frame | None = None
+    stream_error: str | None = None
     try:
         if streaming_driver is not None:
             async for frame in _stream_chunks(
@@ -109,6 +118,7 @@ async def invoke_stream_impl(
                 principal=principal,
                 response_mode=initial_mode,
                 action_id=action_id,
+                timeout=invoke_timeout,
             ):
                 yielded_any = True
                 redacted_any = redacted_any or bool(frame.warnings)
@@ -119,7 +129,16 @@ async def invoke_stream_impl(
             fallback_driver = kernel._driver_map.get(fallback_driver_id)
             if fallback_driver is None:
                 raise DriverError(f"No driver available for capability '{token.capability_id}'.")
-            raw = await fallback_driver.execute(ctx)
+            try:
+                if invoke_timeout is None:
+                    raw = await fallback_driver.execute(ctx)
+                else:
+                    raw = await asyncio.wait_for(fallback_driver.execute(ctx), invoke_timeout)
+            except asyncio.TimeoutError as exc:
+                raise DriverError(
+                    f"Driver '{fallback_driver_id}' timed out after {invoke_timeout}s "
+                    f"for capability '{token.capability_id}'."
+                ) from exc
             if initial_mode != "raw":
                 handle = kernel._handles.store(
                     capability_id=token.capability_id,
@@ -142,7 +161,20 @@ async def invoke_stream_impl(
             redacted_any = redacted_any or bool(frame.warnings)
             last_frame = frame
             yield frame
+    except Exception as exc:
+        # Preserve the real failure reason (e.g. a timeout DriverError) so the
+        # trace records *why* the stream ended, not just that it produced no
+        # chunks (#191).
+        stream_error = str(exc)
+        raise
     finally:
+        error: str | None
+        if stream_error is not None:
+            error = _redact_trace_text(stream_error)
+        elif yielded_any:
+            error = None
+        else:
+            error = "stream produced no chunks"
         kernel._traces.record(
             ActionTrace(
                 action_id=action_id,
@@ -156,7 +188,7 @@ async def invoke_stream_impl(
                 sensitivity=capability.sensitivity,
                 handle_id=handle.handle_id if handle else None,
                 result_summary=(_frame_result_summary(last_frame) if last_frame else None),
-                error=None if yielded_any else "stream produced no chunks",
+                error=error,
             )
         )
         kernel._stats.on_invocation(
@@ -186,6 +218,7 @@ async def _stream_chunks(
     principal: Principal,
     response_mode: ResponseMode,
     action_id: str,
+    timeout: float | None = None,
 ) -> AsyncIterator[Frame]:
     """Yield firewalled frames for each chunk the driver produces.
 
@@ -197,6 +230,11 @@ async def _stream_chunks(
     honouring ``apply_stream``'s stateless contract. If the driver ends
     without an explicit ``__is_final__`` marker, a final sentinel chunk is
     injected so consumers can detect end-of-stream uniformly.
+
+    When *timeout* is set, it is applied as an *inactivity* deadline between
+    chunks (#191): a driver that stalls longer than ``timeout`` seconds waiting
+    for the next chunk is aborted with a ``DriverError`` so a hung stream
+    cannot freeze the agent loop indefinitely.
     """
     effective_mode = resolve_effective_mode(
         response_mode=response_mode,
@@ -206,7 +244,20 @@ async def _stream_chunks(
 
     async def _raw_chunks() -> AsyncIterator[dict[str, Any]]:
         saw_final = False
-        async for chunk in driver.execute_stream(ctx):
+        iterator = aiter(driver.execute_stream(ctx))
+        while True:
+            try:
+                if timeout is None:
+                    chunk = await anext(iterator)
+                else:
+                    chunk = await asyncio.wait_for(anext(iterator), timeout)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError as exc:
+                raise DriverError(
+                    f"Stream for capability '{token.capability_id}' timed out after "
+                    f"{timeout}s waiting for the next chunk."
+                ) from exc
             if chunk.get("__is_final__"):
                 saw_final = True
             yield chunk
