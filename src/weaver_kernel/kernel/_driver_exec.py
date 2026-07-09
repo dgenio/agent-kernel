@@ -118,9 +118,11 @@ async def execute_with_fallback(
                 "driver_timeout",
                 extra={**log_ctx, "driver_id": driver_id, "timeout_s": timeout},
             )
+            # ``timeout`` is None only if the driver itself raised TimeoutError
+            # (not our deadline) — avoid the misleading "after None s".
+            detail = f"after {timeout}s" if timeout is not None else "waiting for the driver"
             last_error = DriverError(
-                f"Driver '{driver_id}' timed out after {timeout}s "
-                f"for capability '{ctx.capability_id}'."
+                f"Driver '{driver_id}' timed out {detail} for capability '{ctx.capability_id}'."
             )
             failed_attempts += 1
             continue

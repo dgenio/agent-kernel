@@ -234,7 +234,7 @@ async def _stream_chunks(
     When *timeout* is set, it is applied as an *inactivity* deadline between
     chunks (#191): a driver that stalls longer than ``timeout`` seconds waiting
     for the next chunk is aborted with a ``DriverError`` so a hung stream
-    cannot freeze the agent loop with a budget reservation held.
+    cannot freeze the agent loop indefinitely.
     """
     effective_mode = resolve_effective_mode(
         response_mode=response_mode,

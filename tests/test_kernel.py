@@ -273,6 +273,17 @@ class _BoomFirewall(Firewall):
         raise FirewallError("transform boom")
 
 
+class _DriverErrorFirewall(Firewall):
+    """A Firewall whose ``transform`` raises a ``DriverError`` post-driver.
+
+    Exercises the branch where a ``DriverError`` originates *after* the driver
+    ran (not the all-drivers-failed path), which must still be audited (#152).
+    """
+
+    def transform(self, *args: object, **kwargs: object):  # type: ignore[override]
+        raise DriverError("post-driver boom")
+
+
 def _single_driver_kernel(driver: object, *, budget: int | None = None) -> Kernel:
     """Build a kernel routing ``cap`` to *driver*, optionally with a budget."""
     registry = CapabilityRegistry()
@@ -349,6 +360,45 @@ async def test_firewall_failure_is_audited_and_budget_released() -> None:
     traces = k.list_traces()
     assert len(traces) == 1
     assert "transform boom" in (traces[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_post_driver_driver_error_is_audited_and_budget_released() -> None:
+    """A DriverError raised *after* the driver ran is audited, not just re-raised (#152)."""
+    driver = InMemoryDriver(driver_id="ok")
+    driver.register_handler("cap", lambda ctx: {"value": 1})
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            capability_id="cap",
+            name="Cap",
+            description="A capability under test",
+            safety_class=SafetyClass.READ,
+        )
+    )
+    k = Kernel(
+        registry=registry,
+        router=StaticRouter(routes={"cap": ["ok"]}),
+        token_provider=HMACTokenProvider(secret="test-secret"),
+        firewall=_DriverErrorFirewall(),
+        budget_manager=BudgetManager(total_budget=10_000),
+    )
+    k.register_driver(driver)
+    assert k.budget is not None
+    before = k.budget.remaining
+
+    principal = Principal(principal_id="u1")
+    token = k._token_provider.issue("cap", "u1")
+    with pytest.raises(DriverError, match="post-driver boom"):
+        await k.invoke(token, principal=principal, args={})
+
+    # The post-driver DriverError is audited exactly once (not escaped) and the
+    # reservation is released — the driver that ran is attributed.
+    assert k.budget.remaining == before
+    traces = k.list_traces()
+    assert len(traces) == 1
+    assert traces[0].driver_id == "ok"
+    assert "post-driver boom" in (traces[0].error or "")
 
 
 @pytest.mark.asyncio

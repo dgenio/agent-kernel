@@ -301,7 +301,6 @@ async def perform_invoke(
         )
         if raw_result is None:
             err_msg = str(last_error) if last_error else "No drivers available."
-            _record_invoke_failure(err_msg, used_driver_id)
             raise DriverError(
                 f"All drivers failed for capability '{token.capability_id}'. Last error: {err_msg}"
             )
@@ -326,8 +325,10 @@ async def perform_invoke(
             actual_tokens = kernel.budget.count_tokens(_frame_payload(frame))
             await kernel.budget.record_usage(actual_tokens, reserved=reserved_tokens)
         reservation_settled = True  # consumed via record_usage (or no budget configured)
-    except DriverError:
-        raise  # already audited by _record_invoke_failure above
+    except DriverError as exc:
+        # Audit every DriverError exit (all-failed or post-driver) so I-02 holds (#152).
+        _record_invoke_failure(str(exc), used_driver_id)
+        raise
     except asyncio.CancelledError:
         _record_invoke_failure("invocation cancelled", used_driver_id)
         raise
