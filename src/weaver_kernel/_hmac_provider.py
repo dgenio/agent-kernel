@@ -3,8 +3,9 @@
 Extracted from :mod:`weaver_kernel.tokens` to keep that module within the
 AGENTS.md 300-line budget. :class:`~weaver_kernel.tokens.CapabilityToken` and
 the :class:`~weaver_kernel.tokens.TokenProvider` Protocol remain in
-:mod:`weaver_kernel.tokens`, which re-exports this class so
-``from weaver_kernel.tokens import HMACTokenProvider`` keeps working.
+:mod:`weaver_kernel.tokens`. This module imports from ``tokens`` (a one-way
+dependency), so ``tokens`` does *not* re-export this class — that would form an
+import cycle. Import it from :mod:`weaver_kernel` (public) instead.
 """
 
 from __future__ import annotations

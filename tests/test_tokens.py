@@ -441,3 +441,13 @@ def test_from_dict_non_string_timestamp_rejected() -> None:
     data["issued_at"] = 123
     with pytest.raises(TokenInvalid, match="must be an ISO-8601 string"):
         CapabilityToken.from_dict(data)
+
+
+def test_from_dict_naive_timestamp_coerced_to_utc() -> None:
+    """A naive timestamp is treated as UTC so verify() never hits a naive/aware TypeError."""
+    data = _valid_token_dict()
+    data["issued_at"] = "2026-01-01T00:00:00"  # no timezone
+    data["expires_at"] = "2099-01-01T00:00:00"
+    token = CapabilityToken.from_dict(data)
+    assert token.issued_at.tzinfo is datetime.timezone.utc
+    assert token.expires_at.tzinfo is datetime.timezone.utc

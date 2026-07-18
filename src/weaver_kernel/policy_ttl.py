@@ -31,7 +31,18 @@ def validate_max_ttl_s(max_ttl_s: MaxTTLConfig) -> None:
     """
     if max_ttl_s is None:
         return
-    values = max_ttl_s.values() if isinstance(max_ttl_s, dict) else [max_ttl_s]
+    if isinstance(max_ttl_s, dict):
+        # Fail closed on non-SafetyClass keys: resolve_max_ttl_s() looks up by
+        # SafetyClass, so a stray string key (e.g. from config parsing) would be
+        # silently ignored and the cap never applied.
+        for key in max_ttl_s:
+            if not isinstance(key, SafetyClass):
+                raise AgentKernelError(
+                    f"Invalid max_ttl_s: keys must be SafetyClass members, got {key!r}."
+                )
+        values = list(max_ttl_s.values())
+    else:
+        values = [max_ttl_s]
     for value in values:
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise AgentKernelError(

@@ -19,10 +19,11 @@ import os
 import sys
 from dataclasses import dataclass
 
+from .._hmac_provider import HMACTokenProvider
 from .._secrets import SECRET_ENV_VAR
 from ..models import ActionTrace
 from ..stores.audit_chain import build_record, verify_chain
-from ..tokens import CapabilityToken, HMACTokenProvider
+from ..tokens import CapabilityToken
 
 OK = "ok"
 WARN = "warn"

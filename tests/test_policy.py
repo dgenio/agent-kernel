@@ -1870,3 +1870,8 @@ def test_max_ttl_s_none_is_uncapped() -> None:
 def test_max_ttl_s_non_positive_rejected_at_construction(bad: object) -> None:
     with pytest.raises(AgentKernelError, match="max_ttl_s"):
         DefaultPolicyEngine(max_ttl_s=bad)  # type: ignore[arg-type]
+
+
+def test_max_ttl_s_non_safetyclass_key_rejected() -> None:
+    with pytest.raises(AgentKernelError, match="keys must be SafetyClass"):
+        DefaultPolicyEngine(max_ttl_s={"read": 60})  # type: ignore[dict-item]

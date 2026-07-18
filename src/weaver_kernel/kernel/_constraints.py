@@ -80,20 +80,29 @@ def enforce_arg_constraints(args: dict[str, Any], constraints: dict[str, Any]) -
     if not isinstance(spec, dict):
         raise _violation(f"malformed 'args' constraint: expected an object, got {spec!r}.")
 
+    # A malformed rule value is a security-scoping misconfiguration — fail closed
+    # (deny) rather than silently ignoring it (fail open) or crashing with an
+    # untyped TypeError that would escape the audited denial path.
     allowed = spec.get("allowed_keys")
     if allowed is not None:
-        extra = sorted(set(args) - set(allowed))
+        if not isinstance(allowed, (list, tuple, set)):
+            raise _violation("malformed 'args.allowed_keys' constraint: expected a list.")
+        extra = sorted(k for k in args if k not in set(allowed))
         if extra:
             raise _violation(f"arguments {extra} are not permitted by the token's allowed_keys.")
 
     pinned = spec.get("pinned")
-    if isinstance(pinned, dict):
+    if pinned is not None:
+        if not isinstance(pinned, dict):
+            raise _violation("malformed 'args.pinned' constraint: expected an object.")
         for key, expected in pinned.items():
             if key not in args or args[key] != expected:
                 raise _violation(f"argument '{key}' must equal the token's pinned value.")
 
     prefix = spec.get("prefix")
-    if isinstance(prefix, dict):
+    if prefix is not None:
+        if not isinstance(prefix, dict):
+            raise _violation("malformed 'args.prefix' constraint: expected an object.")
         for key, required_prefix in prefix.items():
             value = args.get(key)
             if not isinstance(value, str) or not value.startswith(required_prefix):

@@ -1,13 +1,15 @@
-"""HMAC signing and serialization helpers for capability tokens.
+"""HMAC signing and token-parsing helpers.
 
 Extracted from :mod:`weaver_kernel.tokens` to keep that module within the
-AGENTS.md 300-line budget and to isolate the crypto/serialization concern:
-building the canonical signable payload, HMAC signing, and parsing an untrusted
-serialized token into validated fields — raising :class:`TokenInvalid` rather
-than leaking a bare ``KeyError``/``ValueError`` (#200).
+AGENTS.md 300-line budget and to isolate the crypto/deserialization concern:
+HMAC signing, and parsing an untrusted serialized token into validated
+constructor kwargs — raising :class:`TokenInvalid` rather than leaking a bare
+``KeyError``/``ValueError`` (#200).
 
-The signed payload includes the ``key_id`` so signing-key rotation (#185) is
-tamper-evident: a token cannot be re-labelled to verify against a different key.
+This module is a leaf: it imports nothing from :mod:`weaver_kernel.tokens` (not
+even under ``TYPE_CHECKING``), so the ``tokens`` → ``_token_signing`` dependency
+stays acyclic. Canonical payload building lives on
+:meth:`CapabilityToken._signable_payload` in ``tokens.py``.
 """
 
 from __future__ import annotations
@@ -15,39 +17,12 @@ from __future__ import annotations
 import datetime
 import hashlib
 import hmac
-import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .errors import TokenInvalid
 
-if TYPE_CHECKING:  # pragma: no cover
-    from .tokens import CapabilityToken
-
 KeyRing = dict[str, str]
 """Mapping of key id → HMAC secret used for signing-key rotation (#185)."""
-
-
-def build_signable_payload(token: CapabilityToken) -> str:
-    """Return the canonical JSON string used as the HMAC message.
-
-    Args:
-        token: The token whose bound fields (principal, capability, constraints,
-            expiry, and signing ``key_id``) form the signature input.
-
-    Returns:
-        A deterministic, key-sorted JSON string.
-    """
-    payload = {
-        "token_id": token.token_id,
-        "capability_id": token.capability_id,
-        "principal_id": token.principal_id,
-        "issued_at": token.issued_at.isoformat(),
-        "expires_at": token.expires_at.isoformat(),
-        "constraints": token.constraints,
-        "audit_id": token.audit_id,
-        "key_id": token.key_id,
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def sign(secret: str, payload: str) -> str:
@@ -88,7 +63,12 @@ def _optional_str(data: dict[str, Any], field: str) -> str:
 
 
 def _require_timestamp(data: dict[str, Any], field: str) -> datetime.datetime:
-    """Return a required ISO-8601 timestamp field, raising :class:`TokenInvalid`."""
+    """Return a required ISO-8601 timestamp field, raising :class:`TokenInvalid`.
+
+    A naive (timezone-less) timestamp is treated as UTC — matching how the
+    revocation stores handle naive datetimes — so a malformed/untrusted token can
+    never turn into a naive-vs-aware ``TypeError`` at ``verify()`` time.
+    """
     if field not in data:
         raise TokenInvalid(f"malformed token payload: missing field '{field}'.")
     raw = data[field]
@@ -98,11 +78,14 @@ def _require_timestamp(data: dict[str, Any], field: str) -> datetime.datetime:
             f"got {type(raw).__name__}."
         )
     try:
-        return datetime.datetime.fromisoformat(raw)
+        parsed = datetime.datetime.fromisoformat(raw)
     except ValueError as exc:
         raise TokenInvalid(
             f"malformed token payload: invalid timestamp in field '{field}': {raw!r}."
         ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
 
 
 def parse_token_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -143,4 +126,4 @@ def parse_token_fields(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = ["KeyRing", "build_signable_payload", "sign", "parse_token_fields"]
+__all__ = ["KeyRing", "sign", "parse_token_fields"]

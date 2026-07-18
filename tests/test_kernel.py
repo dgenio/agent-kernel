@@ -1607,3 +1607,27 @@ async def test_malformed_args_constraint_denied(
         await kernel.invoke(
             token, principal=reader_principal, args={"operation": "billing.list_invoices"}
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spec,needle",
+    [
+        ({"allowed_keys": 5}, "allowed_keys"),
+        ({"pinned": ["not", "a", "dict"]}, "pinned"),
+        ({"prefix": ["not", "a", "dict"]}, "prefix"),
+    ],
+)
+async def test_malformed_arg_constraint_nested_type_fails_closed(
+    kernel: Kernel, reader_principal: Principal, spec: dict, needle: str
+) -> None:
+    """A malformed nested arg-constraint denies (fail closed), never an untyped crash."""
+    token = kernel.get_token(_req_with_args(spec), reader_principal, justification="")
+    with pytest.raises(TokenScopeError) as exc_info:
+        await kernel.invoke(
+            token, principal=reader_principal, args={"operation": "billing.list_invoices"}
+        )
+    assert exc_info.value.reason_code == "arg_constraint_violation"
+    assert needle in str(exc_info.value)
+    # And it is audited (I-02), reached no driver.
+    assert any(t.error and t.driver_id == "" for t in kernel.list_traces())

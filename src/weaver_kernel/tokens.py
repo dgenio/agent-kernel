@@ -3,17 +3,20 @@
 
 The concrete :class:`HMACTokenProvider` lives in
 :mod:`weaver_kernel._hmac_provider` (extracted to honour the AGENTS.md
-300-line module budget) and is re-exported here so
-``from weaver_kernel.tokens import HMACTokenProvider`` keeps working.
+300-line module budget). Import it from :mod:`weaver_kernel` (public) or
+:mod:`weaver_kernel._hmac_provider`. It is intentionally *not* re-exported here:
+``_hmac_provider`` imports this module, so re-exporting would create an import
+cycle (flagged by CodeQL).
 """
 
 from __future__ import annotations
 
 import datetime
+import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ._token_signing import build_signable_payload, parse_token_fields
+from ._token_signing import parse_token_fields
 
 # ── Token dataclass ───────────────────────────────────────────────────────────
 
@@ -40,8 +43,22 @@ class CapabilityToken:
     # ── Serialization ─────────────────────────────────────────────────────────
 
     def _signable_payload(self) -> str:
-        """Return the canonical JSON string used as the HMAC message."""
-        return build_signable_payload(self)
+        """Return the canonical JSON string used as the HMAC message.
+
+        The signing ``key_id`` is included so a token cannot be re-labelled to
+        verify against a different rotation key (#185).
+        """
+        payload = {
+            "token_id": self.token_id,
+            "capability_id": self.capability_id,
+            "principal_id": self.principal_id,
+            "issued_at": self.issued_at.isoformat(),
+            "expires_at": self.expires_at.isoformat(),
+            "constraints": self.constraints,
+            "audit_id": self.audit_id,
+            "key_id": self.key_id,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the token to a plain dict (suitable for JSON transport)."""
@@ -147,10 +164,4 @@ class TokenProvider(Protocol):
         ...
 
 
-# ── Implementation (re-exported) ──────────────────────────────────────────────
-
-# HMACTokenProvider lives in a sibling module to keep this file within the
-# AGENTS.md 300-line budget; re-exported so its public import path is unchanged.
-from ._hmac_provider import HMACTokenProvider  # noqa: E402
-
-__all__ = ["CapabilityToken", "TokenProvider", "HMACTokenProvider"]
+__all__ = ["CapabilityToken", "TokenProvider"]

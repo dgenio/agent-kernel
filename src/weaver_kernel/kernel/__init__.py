@@ -14,6 +14,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, overload
 
+from .._hmac_provider import HMACTokenProvider
 from ..drivers.base import Driver, StreamingDriver
 from ..enums import SafetyClass
 from ..errors import AgentKernelError
@@ -41,7 +42,7 @@ from ..registry import CapabilityRegistry
 from ..router import Router, StaticRouter
 from ..stats import KernelStats, StatsSnapshot
 from ..stores import TraceStoreProtocol
-from ..tokens import CapabilityToken, HMACTokenProvider, TokenProvider
+from ..tokens import CapabilityToken, TokenProvider
 from ..trace import TraceStore
 from ..trace_query import TraceQuery
 from ._audit import record_expansion_trace
