@@ -19,6 +19,7 @@ from .models import (
     Principal,
 )
 from .policy_reasons import AllowReason
+from .policy_ttl import validate_max_ttl_s
 from .rate_limit import DEFAULT_RATE_LIMITS, SERVICE_RATE_MULTIPLIER, RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,7 @@ class DefaultPolicyEngine:
         *,
         rate_limits: dict[SafetyClass, tuple[int, float]] | None = None,
         clock: Callable[[], float] | None = None,
+        max_ttl_s: int | dict[SafetyClass, int] | None = None,
     ) -> None:
         """Initialise the policy engine.
 
@@ -136,8 +138,9 @@ class DefaultPolicyEngine:
                 unspecified safety classes retain their default limits.
             clock: Monotonic clock callable for rate-limiter.
                 Defaults to :func:`time.monotonic`.
+            max_ttl_s: Maximum per-grant token TTL in seconds — one cap or a per-safety-class map; ``None`` = uncapped. A longer request is denied, not clamped (#203).
         """
-        limits = dict(_DEFAULT_RATE_LIMITS)
+        limits = dict(DEFAULT_RATE_LIMITS)
         if rate_limits is not None:
             limits.update(rate_limits)
         for sc, (count, window) in limits.items():
@@ -147,11 +150,15 @@ class DefaultPolicyEngine:
                     f"limit must be >= 1 and window must be > 0, "
                     f"got limit={count}, window={window}."
                 )
+        validate_max_ttl_s(max_ttl_s)
         self._rate_limits = limits
         self._limiter = RateLimiter(clock=clock)
         self._rule_chain = DefaultPolicyRuleChain(
             rate_limits=self._rate_limits, limiter=self._limiter
         )
+        # Per-grant TTL cap (#203): read by perform_grant to bound/deny requested
+        # token lifetimes. ``None`` = uncapped. Validated above.
+        self.max_ttl_s = max_ttl_s
 
     @staticmethod
     def _deny(

@@ -19,6 +19,7 @@ from weaver_kernel import (
     SafetyClass,
     StaticRouter,
     TokenExpired,
+    TokenScopeError,
 )
 from weaver_kernel.drivers.base import ExecutionContext
 from weaver_kernel.errors import FirewallError
@@ -1233,3 +1234,376 @@ def test_kernel_query_traces(kernel: Kernel, reader_principal: Principal) -> Non
     assert denied[0].capability_id == "billing.delete_invoice"
     # Filtering by a principal who did nothing yields nothing.
     assert kernel.query_traces(TraceQuery(principal_id="ghost")) == []
+
+
+# ── Per-grant TTL (#203) ───────────────────────────────────────────────────────
+
+
+def _read_req() -> CapabilityRequest:
+    return CapabilityRequest(capability_id="billing.list_invoices", goal="lookup")
+
+
+def test_grant_ttl_s_sets_token_expiry(kernel: Kernel, reader_principal: Principal) -> None:
+    grant = kernel.grant_capability(_read_req(), reader_principal, justification="", ttl_s=60)
+    delta = (grant.token.expires_at - grant.token.issued_at).total_seconds()
+    assert delta == 60
+
+
+def test_grant_default_ttl_unchanged(kernel: Kernel, reader_principal: Principal) -> None:
+    grant = kernel.grant_capability(_read_req(), reader_principal, justification="")
+    delta = (grant.token.expires_at - grant.token.issued_at).total_seconds()
+    assert delta == 3600
+
+
+def test_grant_get_token_threads_ttl(kernel: Kernel, reader_principal: Principal) -> None:
+    token = kernel.get_token(_read_req(), reader_principal, justification="", ttl_s=120)
+    assert (token.expires_at - token.issued_at).total_seconds() == 120
+
+
+@pytest.mark.parametrize("bad_ttl", [0, -5])
+def test_grant_non_positive_ttl_denied(
+    kernel: Kernel, reader_principal: Principal, bad_ttl: int
+) -> None:
+    with pytest.raises(PolicyDenied) as exc_info:
+        kernel.grant_capability(_read_req(), reader_principal, justification="", ttl_s=bad_ttl)
+    assert exc_info.value.reason_code == "invalid_constraint"
+
+
+def _capped_kernel(registry: CapabilityRegistry, memory_driver: InMemoryDriver) -> Kernel:
+    from weaver_kernel import DefaultPolicyEngine
+
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    k = Kernel(
+        registry=registry,
+        policy=DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 30}),
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+    )
+    k.register_driver(memory_driver)
+    return k
+
+
+def test_grant_ttl_over_max_denied(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    capped = _capped_kernel(registry, memory_driver)
+    with pytest.raises(PolicyDenied) as exc_info:
+        capped.grant_capability(_read_req(), reader_principal, justification="", ttl_s=120)
+    assert exc_info.value.reason_code == "ttl_exceeded"
+
+
+def test_grant_ttl_within_max_allowed(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    capped = _capped_kernel(registry, memory_driver)
+    grant = capped.grant_capability(_read_req(), reader_principal, justification="", ttl_s=30)
+    assert (grant.token.expires_at - grant.token.issued_at).total_seconds() == 30
+
+
+def test_grant_ttl_denial_is_audited(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    capped = _capped_kernel(registry, memory_driver)
+    with pytest.raises(PolicyDenied):
+        capped.grant_capability(_read_req(), reader_principal, justification="", ttl_s=999)
+    traces = capped.list_traces()
+    assert any(t.event_type == "deny" and t.reason_code == "ttl_exceeded" for t in traces), (
+        "TTL denial should be recorded as a deny audit trace"
+    )
+
+
+def test_grant_ttl_graceful_when_engine_has_no_max(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    """A policy engine without ``max_ttl_s`` imposes no cap; ttl_s is still honored."""
+    from weaver_kernel.models import PolicyDecision
+
+    class _StubPolicy:
+        def evaluate(self, request, capability, principal, *, justification):  # type: ignore[no-untyped-def]
+            return PolicyDecision(allowed=True, reason="ok", constraints={})
+
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    k = Kernel(
+        registry=registry,
+        policy=_StubPolicy(),  # type: ignore[arg-type]
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+    )
+    k.register_driver(memory_driver)
+    grant = k.grant_capability(_read_req(), reader_principal, justification="", ttl_s=99999)
+    assert (grant.token.expires_at - grant.token.issued_at).total_seconds() == 99999
+    # A non-positive TTL is still rejected regardless of engine capabilities.
+    with pytest.raises(PolicyDenied):
+        k.grant_capability(_read_req(), reader_principal, justification="", ttl_s=-1)
+
+
+# ── Signed argument-level constraints at invoke time (#183) ────────────────────
+
+
+def _req_with_args(spec: dict[str, object]) -> CapabilityRequest:
+    return CapabilityRequest(
+        capability_id="billing.list_invoices", goal="lookup", constraints={"args": spec}
+    )
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_allowed_keys_violation_denied(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    token = kernel.get_token(
+        _req_with_args({"allowed_keys": ["operation"]}), reader_principal, justification=""
+    )
+    with pytest.raises(TokenScopeError) as exc_info:
+        await kernel.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices", "leak": "x"},
+        )
+    assert exc_info.value.reason_code == "arg_constraint_violation"
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_allowed_keys_compliant_passes(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    token = kernel.get_token(
+        _req_with_args({"allowed_keys": ["operation"]}), reader_principal, justification=""
+    )
+    frame = await kernel.invoke(
+        token, principal=reader_principal, args={"operation": "billing.list_invoices"}
+    )
+    assert frame.action_id != ""
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_pinned_mismatch_denied(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    token = kernel.get_token(
+        _req_with_args({"pinned": {"customer_id": "c123"}}), reader_principal, justification=""
+    )
+    with pytest.raises(TokenScopeError, match="pinned"):
+        await kernel.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices", "customer_id": "c999"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_pinned_missing_key_fails_closed(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    token = kernel.get_token(
+        _req_with_args({"pinned": {"customer_id": "c123"}}), reader_principal, justification=""
+    )
+    with pytest.raises(TokenScopeError):
+        await kernel.invoke(
+            token, principal=reader_principal, args={"operation": "billing.list_invoices"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_prefix_violation_denied(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    token = kernel.get_token(
+        _req_with_args({"prefix": {"path": "/safe/"}}), reader_principal, justification=""
+    )
+    with pytest.raises(TokenScopeError, match="starting with"):
+        await kernel.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices", "path": "/etc/passwd"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_prefix_compliant_passes(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    token = kernel.get_token(
+        _req_with_args({"prefix": {"path": "/safe/"}}), reader_principal, justification=""
+    )
+    frame = await kernel.invoke(
+        token,
+        principal=reader_principal,
+        args={"operation": "billing.list_invoices", "path": "/safe/report.csv"},
+    )
+    assert frame.action_id != ""
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_dry_run_parity(kernel: Kernel, reader_principal: Principal) -> None:
+    """Dry-run raises the same TokenScopeError a real invoke would (#183)."""
+    token = kernel.get_token(
+        _req_with_args({"allowed_keys": ["operation"]}), reader_principal, justification=""
+    )
+    with pytest.raises(TokenScopeError):
+        await kernel.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices", "leak": "x"},
+            dry_run=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_arg_constraint_violation_records_failure_trace(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    """A denied invoke is audited (I-02) with no driver reached; dry-run is not."""
+    token = kernel.get_token(
+        _req_with_args({"allowed_keys": ["operation"]}), reader_principal, justification=""
+    )
+    with pytest.raises(TokenScopeError):
+        await kernel.invoke(
+            token,
+            principal=reader_principal,
+            args={"operation": "billing.list_invoices", "leak": "x"},
+        )
+    failures = [t for t in kernel.list_traces() if t.error and t.driver_id == ""]
+    assert failures and "allowed_keys" in failures[-1].error
+
+
+# ── Per-invocation rate limiting (#170) ────────────────────────────────────────
+
+
+def _rate_limited_kernel(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    limits: dict[SafetyClass, tuple[int, float]],
+    clock,  # type: ignore[no-untyped-def]
+) -> Kernel:
+    router = StaticRouter(routes={"billing.list_invoices": ["memory"]})
+    k = Kernel(
+        registry=registry,
+        token_provider=HMACTokenProvider(secret="test-secret-do-not-use-in-prod"),
+        router=router,
+        invoke_rate_limits=limits,
+        invoke_rate_clock=clock,
+    )
+    k.register_driver(memory_driver)
+    return k
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_blocks_over_limit(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    now = [1000.0]
+    k = _rate_limited_kernel(
+        registry, memory_driver, {SafetyClass.READ: (2, 60.0)}, lambda: now[0]
+    )
+    token = k.get_token(_read_req(), reader_principal, justification="")
+    args = {"operation": "billing.list_invoices"}
+    await k.invoke(token, principal=reader_principal, args=args)
+    await k.invoke(token, principal=reader_principal, args=args)
+    with pytest.raises(PolicyDenied) as exc_info:
+        await k.invoke(token, principal=reader_principal, args=args)
+    assert exc_info.value.reason_code == "rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_default_off(kernel: Kernel, reader_principal: Principal) -> None:
+    token = kernel.get_token(_read_req(), reader_principal, justification="")
+    args = {"operation": "billing.list_invoices"}
+    for _ in range(20):
+        await kernel.invoke(token, principal=reader_principal, args=args)
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_window_reset(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    now = [1000.0]
+    k = _rate_limited_kernel(
+        registry, memory_driver, {SafetyClass.READ: (1, 60.0)}, lambda: now[0]
+    )
+    token = k.get_token(_read_req(), reader_principal, justification="")
+    args = {"operation": "billing.list_invoices"}
+    await k.invoke(token, principal=reader_principal, args=args)
+    with pytest.raises(PolicyDenied):
+        await k.invoke(token, principal=reader_principal, args=args)
+    now[0] += 61.0  # slide past the window
+    await k.invoke(token, principal=reader_principal, args=args)
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_is_per_principal(
+    registry: CapabilityRegistry,
+    memory_driver: InMemoryDriver,
+    reader_principal: Principal,
+    service_principal: Principal,
+) -> None:
+    now = [1000.0]
+    k = _rate_limited_kernel(
+        registry, memory_driver, {SafetyClass.READ: (1, 60.0)}, lambda: now[0]
+    )
+    args = {"operation": "billing.list_invoices"}
+    t1 = k.get_token(_read_req(), reader_principal, justification="")
+    t2 = k.get_token(_read_req(), service_principal, justification="")
+    await k.invoke(t1, principal=reader_principal, args=args)
+    # A different principal has an independent window.
+    await k.invoke(t2, principal=service_principal, args=args)
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_dry_run_does_not_consume(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    now = [1000.0]
+    k = _rate_limited_kernel(
+        registry, memory_driver, {SafetyClass.READ: (1, 60.0)}, lambda: now[0]
+    )
+    token = k.get_token(_read_req(), reader_principal, justification="")
+    args = {"operation": "billing.list_invoices"}
+    # Many dry-runs consume nothing...
+    for _ in range(5):
+        await k.invoke(token, principal=reader_principal, args=args, dry_run=True)
+    # ...so a real invoke still fits within the limit of 1.
+    await k.invoke(token, principal=reader_principal, args=args)
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_concurrent_calls_do_not_exceed_limit(
+    registry: CapabilityRegistry, memory_driver: InMemoryDriver, reader_principal: Principal
+) -> None:
+    now = [1000.0]
+    k = _rate_limited_kernel(
+        registry, memory_driver, {SafetyClass.READ: (3, 60.0)}, lambda: now[0]
+    )
+    token = k.get_token(_read_req(), reader_principal, justification="")
+    args = {"operation": "billing.list_invoices"}
+    results = await asyncio.gather(
+        *(k.invoke(token, principal=reader_principal, args=args) for _ in range(10)),
+        return_exceptions=True,
+    )
+    admitted = sum(1 for r in results if not isinstance(r, Exception))
+    denied = sum(1 for r in results if isinstance(r, PolicyDenied))
+    assert admitted == 3
+    assert denied == 7
+
+
+def test_invalid_invoke_rate_limits_rejected_at_construction(
+    registry: CapabilityRegistry,
+) -> None:
+    from weaver_kernel import AgentKernelError
+
+    with pytest.raises(AgentKernelError, match="invoke_rate_limits"):
+        Kernel(registry=registry, invoke_rate_limits={SafetyClass.READ: (0, 60.0)})
+
+
+@pytest.mark.asyncio
+async def test_malformed_args_constraint_denied(
+    kernel: Kernel, reader_principal: Principal
+) -> None:
+    token = kernel.get_token(
+        _req_with_args("not-a-dict"),  # type: ignore[arg-type]
+        reader_principal,
+        justification="",
+    )
+    with pytest.raises(TokenScopeError, match="malformed 'args' constraint"):
+        await kernel.invoke(
+            token, principal=reader_principal, args={"operation": "billing.list_invoices"}
+        )

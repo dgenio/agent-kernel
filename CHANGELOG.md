@@ -133,8 +133,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deny→allow, and reason-code flips deterministically. Rate-limit-dependent flips
   are surfaced separately (`DecisionDiff.rate_limited`).
   Companion: `examples/trace_replay_demo.py`.
+- **Capability-token lifecycle hardening.** A grouped pass over token issuance,
+  rotation, and invoke-time enforcement:
+  - **Signing-key rotation (#185).** `HMACTokenProvider(secrets={key_id: secret},
+    active_key_id=...)` signs new tokens under one key while verifying tokens
+    signed under others during an overlap window, so `WEAVER_KERNEL_SECRET` can
+    rotate without invalidating every outstanding token at once. The signing
+    `key_id` is inside the signed payload (tamper-evident); an unknown key id
+    fails closed as `TokenInvalid`. A new `WEAVER_KERNEL_SECRETS` (JSON
+    `{key_id: secret}`) / `WEAVER_KERNEL_ACTIVE_KEY` env pair configures it, and a
+    non-active-key verification logs `token_verified_non_active_key` (key id only,
+    never the secret) so operators can tell when a key is safe to retire.
+  - **Per-grant TTL (#203).** `Kernel.grant_capability(..., ttl_s=...)` sets a
+    token's lifetime per grant; `DefaultPolicyEngine(max_ttl_s=...)` (a single cap
+    or per-safety-class map) bounds it. A non-positive or over-maximum request is
+    **denied** with a stable reason code (`invalid_constraint` / `ttl_exceeded`),
+    never silently clamped.
+  - **Signed argument-level constraints (#183).** A token's `constraints["args"]`
+    (`allowed_keys`, `pinned`, `prefix`) is enforced by `invoke()` and
+    `invoke_stream()` **before** the driver runs and budget is reserved, raising
+    `TokenScopeError` (`arg_constraint_violation`) with an audited failure trace.
+    Dry-run predicts the identical outcome. The declarative policy engine needed
+    no changes — `constraints` already flows into the issued token.
+  - **Opt-in per-invocation rate limiting (#170).** `Kernel(invoke_rate_limits=
+    {SafetyClass: (limit, window_s)})` adds an invoke-time sliding-window limit,
+    independent of and additional to the grant-time limit. **Default off.** The
+    check-then-record pair runs with no `await` between them, so concurrent
+    invokes cannot over-admit; dry-run never consumes it.
+  - **Typed `CapabilityToken.from_dict` errors (#200).** A malformed serialized
+    token (missing field, wrong type, invalid timestamp, non-object
+    `constraints`) now raises `TokenInvalid` with a descriptive message instead
+    of a bare `KeyError`/`ValueError`. Valid round-trips are unchanged.
+  - **Token-format evolution ADR (#224).** `docs/adr/0001-token-signing-evolution.md`
+    evaluates HMAC (status quo), macaroon-style caveat chaining, and Biscuit
+    against the kernel's invariants with measured numbers, and recommends staying
+    HMAC + re-issuance now (macaroon-chaining as the documented future path,
+    Biscuit deferred). No code or dependency change.
 
 ### Changed
+- **Capability-token signed payload now includes `key_id` (#185).** A token
+  issued by pre-upgrade code fails verification after this deploys — the signed
+  payload shape differs even under the same secret. Accepted as a break given the
+  pre-1.0 alpha status and the default 1-hour token TTL; legacy single-secret
+  *configuration* (`secret=` / `WEAVER_KERNEL_SECRET`) keeps working unchanged.
+  The `HMACTokenProvider` implementation moved to `weaver_kernel._hmac_provider`
+  (re-exported from `weaver_kernel.tokens`; the logger name is unchanged).
+- **Removed the private `policy._DEFAULT_RATE_LIMITS` / `_SERVICE_RATE_MULTIPLIER`
+  aliases (part of #196).** Internal call sites use the canonical
+  `rate_limit.DEFAULT_RATE_LIMITS` / `SERVICE_RATE_MULTIPLIER`. Private surface;
+  no deprecation cycle.
 - **CI aligned with `make ci` and hardened (#209, #210, #232).** The `ci.yml`
   test job now invokes the Makefile targets (`fmt-check`/`lint`/`type`/`test`/
   `example`) instead of re-implementing them, so the local gate and CI cannot

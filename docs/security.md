@@ -26,8 +26,92 @@ A current `CapabilityToken` binds:
 
 - `capability_id` — which capability is authorized;
 - `principal_id` — the authorization subject;
-- `constraints` — signed scope such as row/field limits where used;
-- `expires_at` — the validity window.
+- `constraints` — signed scope such as row/field limits and `args` where used;
+- `expires_at` — the validity window;
+- `key_id` — which signing key produced the signature (for rotation, below).
+
+### Per-grant TTL (#203)
+
+`Kernel.grant_capability(request, principal, justification=..., ttl_s=...)` sets a
+token's lifetime per grant instead of the fixed provider default (3600 s). Least
+privilege is temporal as well as scoped — a one-shot lookup need not yield an
+hour-long credential. Configure a ceiling on the policy engine:
+
+```python
+from weaver_kernel import DefaultPolicyEngine, SafetyClass
+
+# One cap for every safety class, or a per-class map:
+DefaultPolicyEngine(max_ttl_s=300)
+DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 60, SafetyClass.DESTRUCTIVE: 30})
+```
+
+A non-positive `ttl_s`, or one above the policy maximum, is **denied** (reason
+codes `invalid_constraint` / `ttl_exceeded`) and audited as a `"deny"` trace —
+never silently clamped, so a caller never receives less privilege than it can see.
+
+### Signed argument constraints (#183)
+
+Beyond authorizing a *capability*, a token can pin the *arguments* an invocation
+may pass, signed into `constraints["args"]` and enforced at `invoke()` /
+`invoke_stream()` time (before the driver runs and budget is reserved). The v1
+vocabulary is deliberately tiny and deterministic (top-level keys only):
+
+| Rule | Meaning |
+|------|---------|
+| `allowed_keys` | Every argument key must appear in this list. |
+| `pinned` | Each named key must be present and exactly equal to the given value. |
+| `prefix` | Each named key must be a string starting with the given prefix. |
+
+A violation raises `TokenScopeError` (`reason_code = arg_constraint_violation`)
+with an audited failure trace and never reaches the driver; `dry_run=True`
+predicts the identical outcome. This is the difference between "may call the
+refund tool" and "may refund order #123".
+
+### Signing-key rotation (#185)
+
+`HMACTokenProvider` verifies against a small key-ring so `WEAVER_KERNEL_SECRET`
+can rotate without invalidating every outstanding token at once:
+
+```python
+# Sign new tokens under k2; keep k1 for the overlap window so tokens signed
+# under it still verify. Retire k1 once max TTL has elapsed.
+HMACTokenProvider(secrets={"k1": old, "k2": new}, active_key_id="k2")
+```
+
+The signing `key_id` is part of the signed payload (tamper-evident); a token
+declaring a key id not in the ring fails closed as `TokenInvalid`. Verifying a
+non-active-key token logs `token_verified_non_active_key` (key id only, never the
+secret) so operators can see when the previous key is safe to retire.
+
+**Secret resolution precedence** (first match wins): the `secrets=` /`secret=`
+constructor argument → `WEAVER_KERNEL_SECRETS` (JSON `{key_id: secret}`, with
+`WEAVER_KERNEL_ACTIVE_KEY` naming the active key) → the legacy single
+`WEAVER_KERNEL_SECRET` → a random development secret (with a one-time warning).
+The resolved secret is never logged.
+
+**Rotation runbook:** add the new key alongside the old (`secrets={old, new}`) →
+set `active_key_id`/`WEAVER_KERNEL_ACTIVE_KEY` to the new key → wait for the
+maximum token TTL so no live token is still signed under the old key → drop the
+old key from the ring.
+
+### Per-invocation rate limiting (#170)
+
+The policy engine rate-limits at *grant* time; a multi-use token can then drive
+many `invoke()` calls until it expires. For runaway-loop and abuse protection,
+`Kernel(invoke_rate_limits={SafetyClass.READ: (limit, window_s)})` adds an
+independent sliding-window limit on the *execution* path (default off). It is
+enforced identically for `invoke()` and `invoke_stream()`; an exhausted limit
+raises `PolicyDenied` (`reason_code = rate_limited`) with an audited failure
+trace, and `dry_run=True` never consumes the window.
+
+### Token deserialization (#200)
+
+`CapabilityToken.from_dict` validates untrusted input and raises the typed
+`TokenInvalid` (never a bare `KeyError`/`ValueError`) on a missing field, wrong
+type, malformed timestamp, or non-object `constraints` — tokens cross process
+boundaries, so a malformed blob is an expected input class, not a crash.
+
+## Confused deputy prevention
 
 Changing a signed field invalidates the HMAC signature.
 
