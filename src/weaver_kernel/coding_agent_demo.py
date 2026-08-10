@@ -12,7 +12,6 @@ audit path that a real driver must mediate before performing those effects.
 from __future__ import annotations
 
 import asyncio
-import os
 
 from .coding_agent import CodingAgentPolicyEngine, enforce_coding_agent_constraints
 from .drivers.base import ExecutionContext
@@ -32,8 +31,7 @@ from .models import (
 from .policy_reasons import DenialReason
 from .registry import CapabilityRegistry
 from .router import StaticRouter
-
-os.environ.setdefault("WEAVER_KERNEL_SECRET", "coding-agent-demo-not-for-production")
+from .tokens import HMACTokenProvider
 
 _CAPABILITIES: tuple[tuple[str, SafetyClass, SensitivityTag], ...] = (
     ("repo.read.files", SafetyClass.READ, SensitivityTag.NONE),
@@ -88,6 +86,7 @@ def _build_kernel() -> Kernel:
         registry=registry,
         policy=CodingAgentPolicyEngine(),
         router=StaticRouter(routes=routes),
+        token_provider=HMACTokenProvider(secret="coding-agent-demo-not-for-production"),
     )
     kernel.register_driver(driver)
     return kernel
@@ -139,7 +138,7 @@ async def run_demo() -> tuple[str, ...]:
     coder = Principal(principal_id="coder", roles=["code_writer", "test_runner"])
     receipt: list[str] = []
 
-    _, _ = await _grant_and_invoke(
+    await _grant_and_invoke(
         kernel,
         coder,
         "repo.read.files",
@@ -157,7 +156,7 @@ async def run_demo() -> tuple[str, ...]:
     )
     receipt.append("ALLOW+EXECUTE repo.write.files path=src/demo.py")
 
-    _, _ = await _grant_and_invoke(
+    await _grant_and_invoke(
         kernel,
         coder,
         "shell.run.tests",
