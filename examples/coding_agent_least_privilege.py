@@ -114,7 +114,7 @@ async def invoke_allowed(
 async def main() -> None:
     """Run the maintained ALLOW / DENY / escalation / anti-swap receipt."""
     kernel = build_kernel()
-    coder = Principal(principal_id="coder")
+    coder = Principal(principal_id="coder", roles=["code_writer", "test_runner"])
     receipt: list[str] = []
 
     _, read_frame = await invoke_allowed(
@@ -180,6 +180,7 @@ async def main() -> None:
 
     approved_coder = Principal(
         principal_id="coder",
+        roles=list(coder.roles),
         attributes={"approved_task_id": task_id},
     )
     await invoke_allowed(
