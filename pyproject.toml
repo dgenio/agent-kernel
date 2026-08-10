@@ -60,13 +60,13 @@ dev = [
     "httpx>=0.27",
     # MCP 2.x removes/changes APIs used by the current driver. Keep v1 as the
     # supported compatibility line until the deliberate migration in #263.
-    "mcp>=1.6,<2",
+    "mcp>=1.6,<3",
     "pyyaml>=6.0",
     "tomli>=2.0; python_version<'3.11'",
     "types-PyYAML>=6.0",
     "weaver-contracts>=0.7,<0.8",
 ]
-mcp = ["mcp>=1.6,<2"]
+mcp = ["mcp>=1.6,<3"]
 otel = ["opentelemetry-api>=1.20"]
 policy = [
     "pyyaml>=6.0",
