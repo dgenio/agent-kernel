@@ -12,11 +12,24 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 
 os.environ.setdefault("WEAVER_KERNEL_SECRET", "coding-agent-demo-not-for-production")
 
-from weaver_kernel import Capability, CapabilityRegistry, InMemoryDriver, Kernel, Principal, SafetyClass, SensitivityTag, StaticRouter
-from weaver_kernel.coding_agent import CodingAgentPolicyEngine, enforce_coding_agent_constraints
+from weaver_kernel import (
+    Capability,
+    CapabilityRegistry,
+    InMemoryDriver,
+    Kernel,
+    Principal,
+    SafetyClass,
+    SensitivityTag,
+    StaticRouter,
+)
+from weaver_kernel.coding_agent import (
+    CodingAgentPolicyEngine,
+    enforce_coding_agent_constraints,
+)
 from weaver_kernel.drivers.base import ExecutionContext
 from weaver_kernel.errors import DriverError, PolicyDenied
 from weaver_kernel.models import CapabilityRequest
@@ -30,6 +43,7 @@ CAPABILITIES: tuple[tuple[str, SafetyClass, SensitivityTag], ...] = (
     ("github.create_pr", SafetyClass.WRITE, SensitivityTag.NONE),
     ("github.merge_pr", SafetyClass.DESTRUCTIVE, SensitivityTag.NONE),
 )
+EXPECTED_RECEIPT = Path(__file__).with_name("coding_agent_expected.txt")
 
 
 def build_kernel() -> Kernel:
@@ -73,6 +87,12 @@ def request(capability_id: str, **scope: str) -> CapabilityRequest:
     )
 
 
+def record(receipt: list[str], line: str) -> None:
+    """Append one stable proof line and display it."""
+    receipt.append(line)
+    print(line)
+
+
 async def invoke_allowed(
     kernel: Kernel,
     principal: Principal,
@@ -95,6 +115,7 @@ async def main() -> None:
     """Run the maintained ALLOW / DENY / escalation / anti-swap receipt."""
     kernel = build_kernel()
     coder = Principal(principal_id="coder")
+    receipt: list[str] = []
 
     _, read_frame = await invoke_allowed(
         kernel,
@@ -103,7 +124,7 @@ async def main() -> None:
         path="README.md",
         justification="Review the repository README",
     )
-    print("ALLOW repo.read.files README.md")
+    record(receipt, "ALLOW repo.read.files README.md")
 
     write_token, _ = await invoke_allowed(
         kernel,
@@ -112,7 +133,7 @@ async def main() -> None:
         path="src/demo.py",
         justification="Edit source for the approved task",
     )
-    print("ALLOW repo.write.files src/demo.py")
+    record(receipt, "ALLOW repo.write.files src/demo.py")
 
     try:
         kernel.get_token(
@@ -121,7 +142,7 @@ async def main() -> None:
             justification="Change the release workflow",
         )
     except PolicyDenied:
-        print("DENY repo.write.files .github/workflows/release.yml")
+        record(receipt, "DENY repo.write.files .github/workflows/release.yml")
     else:  # pragma: no cover - defensive
         raise AssertionError("workflow mutation unexpectedly received a grant")
 
@@ -132,7 +153,7 @@ async def main() -> None:
             justification="Read environment credentials",
         )
     except PolicyDenied:
-        print("DENY secrets.read .env")
+        record(receipt, "DENY secrets.read .env")
     else:  # pragma: no cover - defensive
         raise AssertionError("secret access unexpectedly received a grant")
 
@@ -143,7 +164,7 @@ async def main() -> None:
         command_class="test",
         justification="Run the local test suite",
     )
-    print("ALLOW shell.run.tests command_class=test")
+    record(receipt, "ALLOW shell.run.tests command_class=test")
 
     task_id = "ISSUE-253"
     try:
@@ -153,7 +174,7 @@ async def main() -> None:
             justification="Publish the completed task for review",
         )
     except PolicyDenied:
-        print("DENY github.create_pr task=ISSUE-253 before approval")
+        record(receipt, "DENY github.create_pr task=ISSUE-253 before approval")
     else:  # pragma: no cover - defensive
         raise AssertionError("PR creation unexpectedly bypassed task approval")
 
@@ -168,7 +189,7 @@ async def main() -> None:
         task_id=task_id,
         justification="Create the explicitly approved PR",
     )
-    print("ALLOW github.create_pr task=ISSUE-253 after task-bound approval")
+    record(receipt, "ALLOW github.create_pr task=ISSUE-253 after task-bound approval")
 
     try:
         await kernel.invoke(
@@ -177,7 +198,10 @@ async def main() -> None:
             args={"path": ".github/workflows/release.yml"},
         )
     except DriverError:
-        print("DENY scope substitution src/demo.py -> .github/workflows/release.yml at execution")
+        record(
+            receipt,
+            "DENY scope substitution src/demo.py -> .github/workflows/release.yml at execution",
+        )
     else:  # pragma: no cover - defensive
         raise AssertionError("signed write scope was not enforced by the driver boundary")
 
@@ -185,8 +209,15 @@ async def main() -> None:
     assert trace.capability_id == "repo.read.files"
     assert trace.principal_id == "coder"
     assert trace.driver_id == "coding-agent"
-    print("TRACE repo.read.files principal=coder driver=coding-agent")
-    print("PASS: useful coding work stays usable while sensitive authority stays explicit.")
+    record(receipt, "TRACE repo.read.files principal=coder driver=coding-agent")
+    record(
+        receipt,
+        "PASS: useful coding work stays usable while sensitive authority stays explicit.",
+    )
+
+    actual = "\n".join(receipt) + "\n"
+    expected = EXPECTED_RECEIPT.read_text(encoding="utf-8")
+    assert actual == expected, "coding-agent flagship receipt drifted from its maintained fixture"
 
 
 if __name__ == "__main__":
