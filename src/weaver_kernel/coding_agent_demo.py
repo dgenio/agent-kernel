@@ -17,7 +17,7 @@ from .coding_agent import CodingAgentPolicyEngine, enforce_coding_agent_constrai
 from .drivers.base import ExecutionContext
 from .drivers.memory import InMemoryDriver
 from .enums import SafetyClass, SensitivityTag
-from .errors import DriverError, PolicyDenied
+from .errors import AgentKernelError, DriverError, PolicyDenied
 from .kernel import Kernel
 from .models import (
     ActionTrace,
@@ -133,7 +133,16 @@ def _latest_trace(
 
 
 async def run_demo() -> tuple[str, ...]:
-    """Run the maintained proof and return its verified semantic receipt."""
+    """Run the maintained proof and return its verified semantic receipt.
+
+    Raises:
+        AgentKernelError: If Python optimization disabled the assertions that
+            make this executable proof fail closed.
+    """
+    if not __debug__:
+        raise AgentKernelError(
+            "The coding-agent demo requires Python assertions; rerun without -O."
+        )
     kernel = _build_kernel()
     coder = Principal(principal_id="coder", roles=["code_writer", "test_runner"])
     receipt: list[str] = []
