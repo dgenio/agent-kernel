@@ -1,5 +1,8 @@
 version: 2
 updates:
+  # Python requirements are published library compatibility ranges. Routine
+  # releases are exercised by the stable/floor/next CI lanes rather than by
+  # rewriting those ranges. Dependabot is reserved for vulnerability fixes.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -13,7 +16,9 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
-    # MCP v2 is a deliberate integration migration tracked in #263.
+    # MCP v2 is a deliberate integration migration tracked in #263. Ignore
+    # the incompatible versions themselves so the existing <2 contract cannot
+    # be widened automatically before that migration is implemented.
     ignore:
       - dependency-name: mcp
         versions:
@@ -23,6 +28,8 @@ updates:
     commit-message:
       prefix: "fix(deps)"
 
+  # GitHub Actions are SHA-pinned in workflows. Dependabot advances the pin and
+  # version comment; unrelated breaking majors are intentionally not grouped.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
