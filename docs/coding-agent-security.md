@@ -109,6 +109,26 @@ carries for the current phase:
 Use a fresh, task-scoped principal or equivalent session claims when moving
 between phases; do not accumulate permissions indefinitely.
 
+## Nearby solutions
+
+An outsider usually searches for **coding-agent permissions**, **agent
+approvals**, or **agent sandboxing** rather than "capability kernel".
+
+- If every action stays inside one Codex or Claude Code session, use that
+  host's native [Codex sandbox and approval controls](https://developers.openai.com/codex/agent-approvals-security)
+  or [Claude Code permission rules](https://docs.anthropic.com/en/docs/claude-code/permissions).
+  They are simpler and also provide OS-level containment that `agent-kernel`
+  does not provide.
+- If the main requirement is organization-wide policy-as-code, use a mature
+  engine such as [Open Policy Agent](https://openpolicyagent.org/docs) or
+  [Cedar](https://docs.cedarpolicy.com/) instead of recreating its policy
+  language here.
+- Use `agent-kernel` when you are building the host and need one embedded,
+  host-neutral contract that turns a policy decision into a signed, narrowly
+  scoped grant, mediates the driver call, and records the result. A custom
+  `PolicyEngine` can delegate decisions to OPA or Cedar while retaining that
+  token, execution, firewall, and `ActionTrace` path.
+
 ## Boundaries and when not to use it
 
 | Project | Boundary |
