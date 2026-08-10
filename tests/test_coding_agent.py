@@ -45,25 +45,26 @@ def test_repo_read_allows_normal_path_but_not_secret_path() -> None:
     )
     assert decision.constraints == {"coding_agent": {"path": "README.md"}}
 
-    with pytest.raises(PolicyDenied, match="Secret-like"):
-        engine.evaluate(
-            _request("repo.read.files", path=".env"),
-            cap,
-            principal,
-            justification="inspect repo",
-        )
+    for secret_path in (".env", "secrets/api-token.txt"):
+        with pytest.raises(PolicyDenied, match="Secret-like repository paths"):
+            engine.evaluate(
+                _request("repo.read.files", path=secret_path),
+                cap,
+                principal,
+                justification="inspect repo",
+            )
 
 
 def test_repo_write_requires_role_and_is_path_scoped() -> None:
     engine = CodingAgentPolicyEngine()
     cap = _cap("repo.write.files", SafetyClass.WRITE)
 
-    with pytest.raises(PolicyDenied) as role_exc:
+    with pytest.raises(PolicyDenied, match="Required role 'code_writer' is missing") as role_exc:
         engine.evaluate(
             _request("repo.write.files", path="src/app.py"),
             cap,
             Principal(principal_id="reviewer"),
-            justification="edit source",
+            justification="edit source for task",
         )
     assert role_exc.value.reason_code == DenialReason.MISSING_ROLE
 
@@ -72,18 +73,39 @@ def test_repo_write_requires_role_and_is_path_scoped() -> None:
         _request("repo.write.files", path="src/app.py"),
         cap,
         principal,
-        justification="edit source",
+        justification="edit source for approved task",
     )
     assert decision.constraints["coding_agent"]["path"] == "src/app.py"
 
-    with pytest.raises(PolicyDenied) as exc:
+    with pytest.raises(
+        PolicyDenied,
+        match="outside the configured coding-agent write scope",
+    ) as exc:
         engine.evaluate(
             _request("repo.write.files", path=".github/workflows/release.yml"),
             cap,
             principal,
-            justification="edit workflow",
+            justification="edit workflow for approved task",
         )
     assert exc.value.reason_code == DenialReason.SCOPE_NOT_ALLOWED
+
+
+def test_write_grant_rejects_whitespace_only_justification() -> None:
+    engine = CodingAgentPolicyEngine()
+    principal = Principal(principal_id="coder", roles=["code_writer"])
+    cap = _cap("repo.write.files", SafetyClass.WRITE)
+
+    with pytest.raises(
+        PolicyDenied,
+        match="WRITE capabilities require a justification of at least 15 characters",
+    ) as exc:
+        engine.evaluate(
+            _request("repo.write.files", path="src/app.py"),
+            cap,
+            principal,
+            justification="                    ",
+        )
+    assert exc.value.reason_code == DenialReason.INSUFFICIENT_JUSTIFICATION
 
 
 def test_test_commands_are_separate_from_networked_commands() -> None:
@@ -95,17 +117,17 @@ def test_test_commands_are_separate_from_networked_commands() -> None:
         _request("shell.run.tests", command_class="test"),
         test_cap,
         principal,
-        justification="run tests",
+        justification="run the local test suite",
     )
     assert decision.constraints["coding_agent"]["command_class"] == "test"
 
     network_cap = _cap("shell.run.networked_command", SafetyClass.WRITE)
-    with pytest.raises(PolicyDenied) as exc:
+    with pytest.raises(PolicyDenied, match="Required role 'network_runner' is missing") as exc:
         engine.evaluate(
             _request("shell.run.networked_command", command_class="package-install"),
             network_cap,
             principal,
-            justification="install dependency",
+            justification="install approved dependency",
         )
     assert exc.value.reason_code == DenialReason.MISSING_ROLE
 
@@ -116,24 +138,34 @@ def test_pr_creation_requires_task_bound_approval_and_merge_is_separate() -> Non
     create_cap = _cap("github.create_pr", SafetyClass.WRITE)
     request = _request("github.create_pr", task_id="ISSUE-253")
 
-    with pytest.raises(PolicyDenied) as exc:
-        engine.evaluate(request, create_cap, principal, justification="open PR")
+    with pytest.raises(PolicyDenied, match="requires an approval bound to task") as exc:
+        engine.evaluate(
+            request,
+            create_cap,
+            principal,
+            justification="open pull request for task",
+        )
     assert exc.value.reason_code == DenialReason.MISSING_ATTRIBUTE
 
     approved = Principal(
         principal_id="coder",
         attributes={"approved_task_id": "ISSUE-253"},
     )
-    decision = engine.evaluate(request, create_cap, approved, justification="open approved PR")
+    decision = engine.evaluate(
+        request,
+        create_cap,
+        approved,
+        justification="open approved pull request",
+    )
     assert decision.constraints["coding_agent"]["task_id"] == "ISSUE-253"
 
     merge_cap = _cap("github.merge_pr", SafetyClass.DESTRUCTIVE)
-    with pytest.raises(PolicyDenied) as merge_exc:
+    with pytest.raises(PolicyDenied, match="Required role 'admin' is missing") as merge_exc:
         engine.evaluate(
             _request("github.merge_pr", task_id="ISSUE-253"),
             merge_cap,
             approved,
-            justification="merge PR",
+            justification="merge approved pull request",
         )
     assert merge_exc.value.reason_code == DenialReason.MISSING_ROLE
 
@@ -143,8 +175,13 @@ def test_secret_read_requires_explicit_secrets_role() -> None:
     cap = _cap("secrets.read", SafetyClass.READ, SensitivityTag.SECRETS)
     request = _request("secrets.read", path=".env")
 
-    with pytest.raises(PolicyDenied):
-        engine.evaluate(request, cap, Principal(principal_id="coder"), justification="read env")
+    with pytest.raises(PolicyDenied, match="Required role 'secrets_reader' is missing"):
+        engine.evaluate(
+            request,
+            cap,
+            Principal(principal_id="coder"),
+            justification="read environment credentials",
+        )
 
     decision = engine.evaluate(
         request,
