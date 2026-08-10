@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import pytest
 
-from weaver_kernel.coding_agent import CodingAgentPolicyEngine, enforce_coding_agent_constraints
+from weaver_kernel.coding_agent import (
+    CodingAgentPolicyEngine,
+    enforce_coding_agent_constraints,
+)
 from weaver_kernel.enums import SafetyClass, SensitivityTag
 from weaver_kernel.errors import DriverError, PolicyDenied
 from weaver_kernel.models import Capability, CapabilityRequest, Principal
 from weaver_kernel.policy_reasons import DenialReason
 
 
-def _cap(capability_id: str, safety: SafetyClass, sensitivity: SensitivityTag = SensitivityTag.NONE) -> Capability:
+def _cap(
+    capability_id: str,
+    safety: SafetyClass,
+    sensitivity: SensitivityTag = SensitivityTag.NONE,
+) -> Capability:
     return Capability(
         capability_id=capability_id,
         name=capability_id,
@@ -31,23 +38,41 @@ def test_repo_read_allows_normal_path_but_not_secret_path() -> None:
     cap = _cap("repo.read.files", SafetyClass.READ)
 
     decision = engine.evaluate(
-        _request("repo.read.files", path="README.md"), cap, principal, justification="inspect repo"
+        _request("repo.read.files", path="README.md"),
+        cap,
+        principal,
+        justification="inspect repo",
     )
     assert decision.constraints == {"coding_agent": {"path": "README.md"}}
 
     with pytest.raises(PolicyDenied, match="Secret-like"):
         engine.evaluate(
-            _request("repo.read.files", path=".env"), cap, principal, justification="inspect repo"
+            _request("repo.read.files", path=".env"),
+            cap,
+            principal,
+            justification="inspect repo",
         )
 
 
-def test_repo_write_is_path_scoped() -> None:
+def test_repo_write_requires_role_and_is_path_scoped() -> None:
     engine = CodingAgentPolicyEngine()
-    principal = Principal(principal_id="coder")
     cap = _cap("repo.write.files", SafetyClass.WRITE)
 
+    with pytest.raises(PolicyDenied) as role_exc:
+        engine.evaluate(
+            _request("repo.write.files", path="src/app.py"),
+            cap,
+            Principal(principal_id="reviewer"),
+            justification="edit source",
+        )
+    assert role_exc.value.reason_code == DenialReason.MISSING_ROLE
+
+    principal = Principal(principal_id="coder", roles=["code_writer"])
     decision = engine.evaluate(
-        _request("repo.write.files", path="src/app.py"), cap, principal, justification="edit source"
+        _request("repo.write.files", path="src/app.py"),
+        cap,
+        principal,
+        justification="edit source",
     )
     assert decision.constraints["coding_agent"]["path"] == "src/app.py"
 
@@ -63,7 +88,7 @@ def test_repo_write_is_path_scoped() -> None:
 
 def test_test_commands_are_separate_from_networked_commands() -> None:
     engine = CodingAgentPolicyEngine()
-    principal = Principal(principal_id="coder")
+    principal = Principal(principal_id="coder", roles=["test_runner"])
 
     test_cap = _cap("shell.run.tests", SafetyClass.WRITE)
     decision = engine.evaluate(
