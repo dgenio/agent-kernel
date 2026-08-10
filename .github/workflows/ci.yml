@@ -1,6 +1,11 @@
 name: CI
 
-# Contract: this workflow runs the same gate as `make ci`.
+# Contract: this workflow runs the same gate as `make ci`
+# (fmt-check -> lint -> type -> test -> example). Each step below invokes a
+# Makefile target so the local gate and CI cannot drift (see Makefile and
+# docs/agent-context/workflows.md). Change the steps here only by changing the
+# Makefile.
+
 on:
   push:
     branches: ["main", "copilot/**"]
@@ -8,9 +13,13 @@ on:
     branches: ["main"]
   workflow_call:
 
+# Least-privilege by default; jobs needing more declare it explicitly.
 permissions:
   contents: read
 
+# Cancel superseded runs on the same ref so a new push to a PR stops the
+# previous run instead of burning runner time. Keyed on the ref so distinct
+# branches/PRs stay independent.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -28,27 +37,37 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
+
+      # Each step is a Makefile target — see the contract note at the top.
       - name: Format check
         run: make fmt-check
+
       - name: Lint
         run: make lint
+
       - name: Type check
         run: make type
+
       - name: Test
         run: make test
+
       - name: Examples
         run: make example
+
       - name: Coverage HTML report
         if: always()
         run: python -m coverage html
+
       - name: Upload coverage HTML
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -57,20 +76,29 @@ jobs:
           path: htmlcov/
           if-no-files-found: ignore
 
+  # Prove that each declared >= floor is real rather than aspirational. Resolve
+  # direct requirements to their lower bounds while allowing transitive
+  # dependencies to remain solvable, then run the full behavioral suite.
   floor-deps:
     name: "Floor dependencies (Python 3.10)"
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.10"
+
       - name: Install uv
         run: python -m pip install uv
+
       - name: Install declared direct floors
         run: uv pip install --system --resolution lowest-direct -e ".[dev]"
+
       - name: Run suite at the floors
         run: pytest -q
 
@@ -80,24 +108,31 @@ jobs:
     needs: test
     permissions:
       contents: read
+
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
+
+      # No extras: proves the "minimal deps (httpx + pydantic)" claim holds.
       - name: Install (no extras)
         run: pip install .
+
       - name: Import the full public API
         run: |
           python -c "import weaver_kernel as w; \
           missing = [n for n in w.__all__ if not hasattr(w, n)]; \
           assert not missing, f'missing public symbols: {missing}'; \
           print(f'imported {len(w.__all__)} public symbols')"
+
       - name: Run the README quickstart
         run: python examples/readme_quickstart.py
+
       - name: Assert optional extras are genuinely absent
         run: |
           for mod in mcp yaml opentelemetry tiktoken weaver_contracts; do
@@ -107,6 +142,7 @@ jobs:
             fi
           done
           echo "no optional extras leaked into the base install"
+
       - name: Assert the MCP-extra-missing error is helpful
         run: |
           python - <<'PY'
@@ -125,16 +161,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
+
       - name: Install pip-audit
         run: pip install pip-audit
+
+      # Resolve weaver-kernel's *runtime* dependency tree in an isolated venv
+      # (no extras, no pip-audit) and audit exactly that, so pip-audit's own
+      # dependencies can never cause a failure unrelated to what adopters ship.
       - name: Resolve runtime dependency tree
         run: |
           python -m venv /tmp/runtime
@@ -142,6 +185,10 @@ jobs:
           /tmp/runtime/bin/pip freeze --exclude-editable \
             | grep -viE '^(weaver-kernel|pip|setuptools)([=@ ]|$)' > runtime-requirements.txt
           echo "Auditing:"; cat runtime-requirements.txt
+
+      # Policy: fail on any known vulnerability in the runtime tree. Document a
+      # false positive by appending `--ignore-vuln <ID>` here with a comment
+      # (see README "Security automation").
       - name: Audit runtime dependencies
         run: pip-audit --strict --desc --requirement runtime-requirements.txt
 
@@ -151,17 +198,26 @@ jobs:
     needs: test
     permissions:
       contents: read
+
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
+
+      # Real validation (no echo): map kernel Frame/ActionTrace/token onto the
+      # published weaver-contracts dataclasses and assert they validate. When
+      # dgenio/weaver-spec#4 ships weaver_contracts.conformance, add its runner
+      # here as an additional step.
       - name: Install conformance extra
         run: pip install ".[conformance]" pytest pytest-asyncio
+
       - name: Report contract version
         run: python -c "from weaver_kernel.conformance import contract_version; print('weaver-contracts', contract_version())"
+
       - name: Run conformance mapping tests
         run: python -m pytest tests/test_conformance.py -q
