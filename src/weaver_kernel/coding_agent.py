@@ -9,9 +9,8 @@ and then substitute different invocation arguments.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
-from .enums import SafetyClass
 from .errors import DriverError, PolicyDenied
 from .models import (
     Capability,
@@ -93,7 +92,7 @@ class CodingAgentPolicyEngine:
             path = self._required_scope(request, "path")
             if scope_globs_match({"path": path}, {"path": list(self.config.secret_path_globs)}):
                 self._deny("Secret-like repository paths require the secrets.read capability.")
-            return self._allow(capability, principal, {"path": path})
+            return self._allow(request, capability, principal, {"path": path})
 
         if cid == "repo.write.files":
             path = self._required_scope(request, "path")
@@ -106,7 +105,7 @@ class CodingAgentPolicyEngine:
                     f"Path {path!r} is outside the configured coding-agent write scope.",
                     reason_code=str(DenialReason.SCOPE_NOT_ALLOWED),
                 )
-            return self._allow(capability, principal, {"path": path})
+            return self._allow(request, capability, principal, {"path": path})
 
         if cid == "shell.run.tests":
             command_class = self._required_scope(request, "command_class")
@@ -115,7 +114,7 @@ class CodingAgentPolicyEngine:
                     f"Command class {command_class!r} is not an allowed test command class.",
                     reason_code=str(DenialReason.SCOPE_NOT_ALLOWED),
                 )
-            return self._allow(capability, principal, {"command_class": command_class})
+            return self._allow(request, capability, principal, {"command_class": command_class})
 
         if cid == "shell.run.networked_command":
             if self.config.network_role not in principal.roles:
@@ -124,7 +123,7 @@ class CodingAgentPolicyEngine:
                     reason_code=str(DenialReason.MISSING_ROLE),
                 )
             command_class = self._required_scope(request, "command_class")
-            return self._allow(capability, principal, {"command_class": command_class})
+            return self._allow(request, capability, principal, {"command_class": command_class})
 
         if cid == "secrets.read":
             if self.config.secrets_role not in principal.roles:
@@ -133,7 +132,7 @@ class CodingAgentPolicyEngine:
                     reason_code=str(DenialReason.MISSING_ROLE),
                 )
             path = self._required_scope(request, "path")
-            return self._allow(capability, principal, {"path": path})
+            return self._allow(request, capability, principal, {"path": path})
 
         if cid == "github.create_pr":
             task_id = self._required_scope(request, "task_id")
@@ -143,7 +142,7 @@ class CodingAgentPolicyEngine:
                     f"PR creation requires an approval bound to task {task_id!r}.",
                     reason_code=str(DenialReason.MISSING_ATTRIBUTE),
                 )
-            return self._allow(capability, principal, {"task_id": task_id})
+            return self._allow(request, capability, principal, {"task_id": task_id})
 
         if cid == "github.merge_pr":
             if self.config.merge_role not in principal.roles:
@@ -152,7 +151,7 @@ class CodingAgentPolicyEngine:
                     reason_code=str(DenialReason.MISSING_ROLE),
                 )
             task_id = self._required_scope(request, "task_id")
-            return self._allow(capability, principal, {"task_id": task_id})
+            return self._allow(request, capability, principal, {"task_id": task_id})
 
         self._deny(
             f"CodingAgentPolicyEngine has no rule for capability {cid!r}.",
@@ -170,7 +169,7 @@ class CodingAgentPolicyEngine:
         return value
 
     @staticmethod
-    def _deny(message: str, *, reason_code: str | None = None) -> None:
+    def _deny(message: str, *, reason_code: str | None = None) -> NoReturn:
         raise PolicyDenied(
             message,
             reason_code=reason_code or str(DenialReason.EXPLICIT_DENY_RULE),
@@ -178,6 +177,7 @@ class CodingAgentPolicyEngine:
 
     @staticmethod
     def _allow(
+        request: CapabilityRequest,
         capability: Capability,
         principal: Principal,
         bound_scope: dict[str, str],
@@ -188,6 +188,8 @@ class CodingAgentPolicyEngine:
             engine="CodingAgentPolicyEngine",
             capability_id=capability.capability_id,
             principal_id=principal.principal_id,
+            intent=request.intent,
+            scope_keys=sorted(request.scope),
         )
         trace.steps.append(
             PolicyTraceStep(
