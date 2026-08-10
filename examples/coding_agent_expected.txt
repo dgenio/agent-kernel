@@ -1,0 +1,10 @@
+ALLOW repo.read.files README.md
+ALLOW repo.write.files src/demo.py
+DENY repo.write.files .github/workflows/release.yml
+DENY secrets.read .env
+ALLOW shell.run.tests command_class=test
+DENY github.create_pr task=ISSUE-253 before approval
+ALLOW github.create_pr task=ISSUE-253 after task-bound approval
+DENY scope substitution src/demo.py -> .github/workflows/release.yml at execution
+TRACE repo.read.files principal=coder driver=coding-agent
+PASS: useful coding work stays usable while sensitive authority stays explicit.

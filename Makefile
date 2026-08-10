@@ -21,6 +21,7 @@ example:
 	python examples/http_driver_demo.py
 	python examples/tutorial.py
 	python examples/readme_quickstart.py
+	python examples/coding_agent_least_privilege.py
 	python examples/contextweaver_policy_flow.py
 	python examples/repository_safety_check.py
 	python examples/chainweaver_flow.py
