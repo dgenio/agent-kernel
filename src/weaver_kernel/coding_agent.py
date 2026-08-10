@@ -28,14 +28,16 @@ from .policy_reasons import AllowReason, DenialReason
 class CodingAgentPolicyConfig:
     """Configuration for :class:`CodingAgentPolicyEngine`.
 
-    The defaults intentionally permit ordinary repository work while keeping
-    secrets, workflow mutation, networked commands, PR creation, and merges
-    behind narrower grants.
+    Defaults allow ordinary source/test/docs work only to principals carrying
+    explicit work roles, while secrets, workflow mutation, networked commands,
+    PR creation, and merges remain behind narrower grants.
     """
 
     writable_path_globs: tuple[str, ...] = ("src/**", "tests/**", "docs/**")
     secret_path_globs: tuple[str, ...] = (".env", "**/.env", "**/secrets/**")
     test_command_classes: tuple[str, ...] = ("test",)
+    write_role: str = "code_writer"
+    test_role: str = "test_runner"
     network_role: str = "network_runner"
     secrets_role: str = "secrets_reader"
     merge_role: str = "admin"
@@ -95,6 +97,7 @@ class CodingAgentPolicyEngine:
             return self._allow(request, capability, principal, {"path": path})
 
         if cid == "repo.write.files":
+            self._require_role(principal, self.config.write_role, "Repository writes")
             path = self._required_scope(request, "path")
             if scope_globs_match({"path": path}, {"path": list(self.config.secret_path_globs)}):
                 self._deny("Secret-like paths are never writable through repo.write.files.")
@@ -108,6 +111,7 @@ class CodingAgentPolicyEngine:
             return self._allow(request, capability, principal, {"path": path})
 
         if cid == "shell.run.tests":
+            self._require_role(principal, self.config.test_role, "Test execution")
             command_class = self._required_scope(request, "command_class")
             if command_class not in self.config.test_command_classes:
                 self._deny(
@@ -117,20 +121,12 @@ class CodingAgentPolicyEngine:
             return self._allow(request, capability, principal, {"command_class": command_class})
 
         if cid == "shell.run.networked_command":
-            if self.config.network_role not in principal.roles:
-                self._deny(
-                    f"Networked shell commands require role {self.config.network_role!r}.",
-                    reason_code=str(DenialReason.MISSING_ROLE),
-                )
+            self._require_role(principal, self.config.network_role, "Networked shell commands")
             command_class = self._required_scope(request, "command_class")
             return self._allow(request, capability, principal, {"command_class": command_class})
 
         if cid == "secrets.read":
-            if self.config.secrets_role not in principal.roles:
-                self._deny(
-                    f"Secret access requires role {self.config.secrets_role!r}.",
-                    reason_code=str(DenialReason.MISSING_ROLE),
-                )
+            self._require_role(principal, self.config.secrets_role, "Secret access")
             path = self._required_scope(request, "path")
             return self._allow(request, capability, principal, {"path": path})
 
@@ -145,11 +141,7 @@ class CodingAgentPolicyEngine:
             return self._allow(request, capability, principal, {"task_id": task_id})
 
         if cid == "github.merge_pr":
-            if self.config.merge_role not in principal.roles:
-                self._deny(
-                    f"PR merge requires role {self.config.merge_role!r}.",
-                    reason_code=str(DenialReason.MISSING_ROLE),
-                )
+            self._require_role(principal, self.config.merge_role, "PR merge")
             task_id = self._required_scope(request, "task_id")
             return self._allow(request, capability, principal, {"task_id": task_id})
 
@@ -167,6 +159,14 @@ class CodingAgentPolicyEngine:
                 reason_code=str(DenialReason.SCOPE_NOT_ALLOWED),
             )
         return value
+
+    @classmethod
+    def _require_role(cls, principal: Principal, role: str, action: str) -> None:
+        if role not in principal.roles:
+            cls._deny(
+                f"{action} require role {role!r}.",
+                reason_code=str(DenialReason.MISSING_ROLE),
+            )
 
     @staticmethod
     def _deny(message: str, *, reason_code: str | None = None) -> NoReturn:
