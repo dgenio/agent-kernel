@@ -55,7 +55,9 @@ Changelog = "https://github.com/dgenio/agent-kernel/blob/main/CHANGELOG.md"
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "pytest-asyncio>=0.23",
+    # 0.23.5 is the first 0.23.x release declaring pytest 8 compatibility.
+    # The lowest-direct CI lane proves this floor alongside pytest>=8.
+    "pytest-asyncio>=0.23.5",
     "hypothesis>=6.100",
     "ruff>=0.4",
     "mypy>=1.10",
