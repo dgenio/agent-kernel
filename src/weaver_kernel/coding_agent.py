@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
+from .enums import SafetyClass
 from .errors import DriverError, PolicyDenied
 from .models import (
     Capability,
@@ -20,6 +21,7 @@ from .models import (
     PolicyTraceStep,
     Principal,
 )
+from .policy import _MIN_JUSTIFICATION
 from .policy_matching import scope_globs_match
 from .policy_reasons import AllowReason, DenialReason
 
@@ -34,7 +36,12 @@ class CodingAgentPolicyConfig:
     """
 
     writable_path_globs: tuple[str, ...] = ("src/**", "tests/**", "docs/**")
-    secret_path_globs: tuple[str, ...] = (".env", "**/.env", "**/secrets/**")
+    secret_path_globs: tuple[str, ...] = (
+        ".env",
+        "**/.env",
+        "secrets/**",
+        "**/secrets/**",
+    )
     test_command_classes: tuple[str, ...] = ("test",)
     write_role: str = "code_writer"
     test_role: str = "test_runner"
@@ -76,7 +83,9 @@ class CodingAgentPolicyEngine:
             request: Capability request with trusted host-supplied scope.
             capability: Registered capability.
             principal: Requesting principal.
-            justification: Human-readable justification for audit.
+            justification: Human-readable justification for audit. WRITE and
+                DESTRUCTIVE grants preserve the repository-wide minimum length
+                invariant after trimming whitespace.
 
         Returns:
             An allowed decision whose ``coding_agent`` constraint contains the
@@ -85,7 +94,6 @@ class CodingAgentPolicyEngine:
         Raises:
             PolicyDenied: If the requested action exceeds configured authority.
         """
-        del justification  # scope/roles are authoritative; prose is audit context only.
         cid = capability.capability_id
         if cid != request.capability_id:
             self._deny("Capability request does not match the registered capability.")
@@ -97,7 +105,7 @@ class CodingAgentPolicyEngine:
             return self._allow(request, capability, principal, {"path": path})
 
         if cid == "repo.write.files":
-            self._require_role(principal, self.config.write_role, "Repository writes")
+            self._require_role(principal, self.config.write_role, "repository writes")
             path = self._required_scope(request, "path")
             if scope_globs_match({"path": path}, {"path": list(self.config.secret_path_globs)}):
                 self._deny("Secret-like paths are never writable through repo.write.files.")
@@ -108,25 +116,28 @@ class CodingAgentPolicyEngine:
                     f"Path {path!r} is outside the configured coding-agent write scope.",
                     reason_code=str(DenialReason.SCOPE_NOT_ALLOWED),
                 )
+            self._require_justification(capability, justification)
             return self._allow(request, capability, principal, {"path": path})
 
         if cid == "shell.run.tests":
-            self._require_role(principal, self.config.test_role, "Test execution")
+            self._require_role(principal, self.config.test_role, "test execution")
             command_class = self._required_scope(request, "command_class")
             if command_class not in self.config.test_command_classes:
                 self._deny(
                     f"Command class {command_class!r} is not an allowed test command class.",
                     reason_code=str(DenialReason.SCOPE_NOT_ALLOWED),
                 )
+            self._require_justification(capability, justification)
             return self._allow(request, capability, principal, {"command_class": command_class})
 
         if cid == "shell.run.networked_command":
-            self._require_role(principal, self.config.network_role, "Networked shell commands")
+            self._require_role(principal, self.config.network_role, "networked shell commands")
             command_class = self._required_scope(request, "command_class")
+            self._require_justification(capability, justification)
             return self._allow(request, capability, principal, {"command_class": command_class})
 
         if cid == "secrets.read":
-            self._require_role(principal, self.config.secrets_role, "Secret access")
+            self._require_role(principal, self.config.secrets_role, "secret access")
             path = self._required_scope(request, "path")
             return self._allow(request, capability, principal, {"path": path})
 
@@ -138,11 +149,13 @@ class CodingAgentPolicyEngine:
                     f"PR creation requires an approval bound to task {task_id!r}.",
                     reason_code=str(DenialReason.MISSING_ATTRIBUTE),
                 )
+            self._require_justification(capability, justification)
             return self._allow(request, capability, principal, {"task_id": task_id})
 
         if cid == "github.merge_pr":
             self._require_role(principal, self.config.merge_role, "PR merge")
             task_id = self._required_scope(request, "task_id")
+            self._require_justification(capability, justification)
             return self._allow(request, capability, principal, {"task_id": task_id})
 
         self._deny(
@@ -164,8 +177,20 @@ class CodingAgentPolicyEngine:
     def _require_role(cls, principal: Principal, role: str, action: str) -> None:
         if role not in principal.roles:
             cls._deny(
-                f"{action} require role {role!r}.",
+                f"Required role {role!r} is missing for {action}.",
                 reason_code=str(DenialReason.MISSING_ROLE),
+            )
+
+    @classmethod
+    def _require_justification(cls, capability: Capability, justification: str) -> None:
+        if capability.safety_class not in (SafetyClass.WRITE, SafetyClass.DESTRUCTIVE):
+            return
+        stripped_len = len(justification.strip())
+        if stripped_len < _MIN_JUSTIFICATION:
+            cls._deny(
+                f"{capability.safety_class.value.upper()} capabilities require a justification "
+                f"of at least {_MIN_JUSTIFICATION} characters after trimming whitespace.",
+                reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
             )
 
     @staticmethod
