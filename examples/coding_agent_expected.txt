@@ -1,10 +1,13 @@
-ALLOW repo.read.files README.md
-ALLOW repo.write.files src/demo.py
-DENY repo.write.files .github/workflows/release.yml
-DENY secrets.read .env
-ALLOW shell.run.tests command_class=test
-DENY github.create_pr task=ISSUE-253 before approval
-ALLOW github.create_pr task=ISSUE-253 after task-bound approval
-DENY scope substitution src/demo.py -> .github/workflows/release.yml at execution
-TRACE repo.read.files principal=coder driver=coding-agent
+ALLOW+EXECUTE repo.read.files path=README.md
+ALLOW+EXECUTE repo.write.files path=src/demo.py
+ALLOW+EXECUTE shell.run.tests command_class=test
+DENY repo.write.files path=.github/workflows/release.yml reason=scope_not_allowed
+DENY secrets.read path=.env reason=missing_role
+DENY github.create_pr task=ISSUE-253 reason=missing_attribute
+EXPLAIN deny capability=github.create_pr principal=coder reason=missing_attribute
+ESCALATE github.create_pr task=ISSUE-253 grant=one-task
+GRANT github.create_pr policy=CodingAgentPolicyEngine outcome=allowed bound=task_id
+ALLOW+EXECUTE github.create_pr task=ISSUE-253
+EXPLAIN invoke capability=github.create_pr principal=coder driver=coding-agent
+DENY scope-substitution path=src/demo.py -> .github/workflows/release.yml
 PASS: useful coding work stays usable while sensitive authority stays explicit.

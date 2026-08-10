@@ -133,6 +133,9 @@ jobs:
       - name: Run the README quickstart
         run: python examples/readme_quickstart.py
 
+      - name: Run the installed-package coding-agent proof
+        run: python -m weaver_kernel.coding_agent_demo
+
       - name: Assert optional extras are genuinely absent
         run: |
           for mod in mcp yaml opentelemetry tiktoken weaver_contracts; do

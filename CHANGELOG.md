@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Coding-agent least privilege (#253).** `CodingAgentPolicyEngine` introduces
+  narrow repository-read/write, local-test, network, secret, PR-create, and
+  PR-merge capabilities with role/task approval and signed path/command/task
+  scope. `python -m weaver_kernel.coding_agent_demo` is an installed-package,
+  hermetic proof of bounded read/edit/test, denied secret and out-of-scope
+  access, task-bound publish escalation, post-grant anti-swap enforcement, and
+  denial/success evidence through `kernel.explain()`.
 - **Fail-closed driver execution.** A grouped pass over the invocation path so
   the kernel's "controlled, audited execution" promise (I-02) holds on *every*
   exit, not just the happy path:
