@@ -174,8 +174,7 @@ async def run_demo() -> tuple[str, ...]:
     except PolicyDenied as exc:
         assert exc.reason_code == DenialReason.SCOPE_NOT_ALLOWED
         receipt.append(
-            "DENY repo.write.files path=.github/workflows/release.yml "
-            "reason=scope_not_allowed"
+            "DENY repo.write.files path=.github/workflows/release.yml reason=scope_not_allowed"
         )
     else:  # pragma: no cover - defensive
         raise AssertionError("workflow mutation unexpectedly received a grant")
@@ -235,8 +234,7 @@ async def run_demo() -> tuple[str, ...]:
     assert policy_trace.final_outcome == "allowed"
     assert pr_grant.token.constraints == {"coding_agent": {"task_id": task_id}}
     receipt.append(
-        "GRANT github.create_pr policy=CodingAgentPolicyEngine "
-        "outcome=allowed bound=task_id"
+        "GRANT github.create_pr policy=CodingAgentPolicyEngine outcome=allowed bound=task_id"
     )
     receipt.append("ALLOW+EXECUTE github.create_pr task=ISSUE-253")
 
@@ -256,9 +254,7 @@ async def run_demo() -> tuple[str, ...]:
             args={"path": ".github/workflows/release.yml"},
         )
     except DriverError:
-        receipt.append(
-            "DENY scope-substitution path=src/demo.py -> .github/workflows/release.yml"
-        )
+        receipt.append("DENY scope-substitution path=src/demo.py -> .github/workflows/release.yml")
     else:  # pragma: no cover - defensive
         raise AssertionError("signed write scope was not enforced by the driver boundary")
 
