@@ -16,6 +16,41 @@ and is uploaded as the `coverage-html-*` artifact. -->
 
 A capability-based security kernel for AI agents operating in large tool ecosystems (MCP, A2A, 1000+ tools).
 
+## Least privilege for coding agents
+
+Give an agent enough authority to read a repository, edit bounded paths, and
+run tests—without also granting secrets, workflow rewrites, network/package
+operations, or publishing authority.
+
+```mermaid
+flowchart TD
+    A["Coding-agent request"] --> K["weaver-kernel policy"]
+    K -->|denied| D["Explain or escalate"]
+    K -->|allowed| T["Signed scoped grant"]
+    T --> E["Driver executes"]
+    E --> R["ActionTrace receipt"]
+```
+
+> **Availability:** the direct module command ships in the first package
+> release containing [#253](https://github.com/dgenio/agent-kernel/issues/253).
+
+```bash
+python -m pip install weaver-kernel
+python -m weaver_kernel.coding_agent_demo
+```
+
+It runs a hermetic fake driver, prints only after all assertions pass, and visibly proves bounded
+read/edit/test, denied secret and out-of-scope access, explicit task-bound PR
+escalation, signed scope enforcement, and the corresponding `kernel.explain()`
+path. [Read the expected receipt and security boundaries.](docs/coding-agent-security.md)
+
+| Project | Use it for |
+| --- | --- |
+| **agent-kernel / `weaver-kernel`** | embedded capability authorization and audit |
+| [AgentFence](https://github.com/dgenio/AgentFence) | an external firewall at the tool boundary |
+| [ContextWeaver](https://github.com/dgenio/contextweaver) | bounded capability/context visibility |
+| ChainWeaver | deterministic multi-step execution |
+
 Every tool call gets a **capability token** (HMAC-signed, time-bounded, scoped to one principal and one capability) and a **tamper-evident audit trace** (`ActionTrace`) recording who invoked what, under which policy decision, with what result. That **authorization + audit** layer is `agent-kernel`'s unique contribution to the [Weaver stack](#part-of-the-weaver-stack) — neither `contextweaver` nor `AgentFence` provides it.
 
 ### Why `agent-kernel` and not `contextweaver` or `AgentFence`?
