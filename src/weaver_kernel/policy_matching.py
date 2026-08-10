@@ -21,7 +21,9 @@ def scope_globs_match(scope: dict[str, Any], required: dict[str, list[str]] | No
         return True
     for key, patterns in required.items():
         value = scope.get(key)
-        if not isinstance(value, str) or not any(fnmatchcase(value, pattern) for pattern in patterns):
+        if not isinstance(value, str) or not any(
+            fnmatchcase(value, pattern) for pattern in patterns
+        ):
             return False
     return True
 
