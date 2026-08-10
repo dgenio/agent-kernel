@@ -1,28 +1,69 @@
 version: 2
 updates:
-  # Python dependencies. The library declares *ranged* requirements
-  # (httpx>=0.27, pydantic>=2) on purpose; Dependabot only proposes a change
-  # when a dependency drifts out of the declared range, so it never forces a
-  # pin on the library itself. Minor/patch bumps are grouped to limit noise.
+  # Python dependencies. The library declares ranged requirements on purpose;
+  # routine minor/patch updates are grouped, while major compatibility changes
+  # stay separate and explicit.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
-      python-minor-and-patch:
+      python-nonmajor:
+        applies-to: version-updates
+        patterns:
+          - "*"
         update-types:
-          - "minor"
-          - "patch"
+          - minor
+          - patch
+      python-security-nonmajor:
+        applies-to: security-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    # MCP v2 is a deliberate integration migration tracked in #263, not
+    # routine dependency maintenance.
+    ignore:
+      - dependency-name: mcp
+        update-types:
+          - version-update:semver-major
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
 
-  # GitHub Actions. Keeps the SHA-pinned actions in ci.yml / publish.yml /
-  # codeql.yml fresh (it updates the pin and the version comment together).
+  # GitHub Actions are SHA-pinned in workflows. Dependabot advances the pin and
+  # version comment; unrelated breaking majors are intentionally not grouped.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
-      github-actions:
+      actions-nonmajor:
+        applies-to: version-updates
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(ci)"
