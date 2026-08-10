@@ -31,8 +31,9 @@ jobs:
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -74,6 +75,32 @@ jobs:
           name: coverage-html-${{ matrix.python-version }}
           path: htmlcov/
           if-no-files-found: ignore
+
+  # Prove that each declared >= floor is real rather than aspirational. Resolve
+  # direct requirements to their lower bounds while allowing transitive
+  # dependencies to remain solvable, then run the full behavioral suite.
+  floor-deps:
+    name: "Floor dependencies (Python 3.10)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install declared direct floors
+        run: uv pip install --system --resolution lowest-direct -e ".[dev]"
+
+      - name: Run suite at the floors
+        run: pytest -q
 
   bare-install:
     name: "Bare install (no extras)"

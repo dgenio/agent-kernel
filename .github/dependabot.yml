@@ -1,8 +1,8 @@
 version: 2
 updates:
-  # Python dependencies. The library declares ranged requirements on purpose;
-  # routine minor/patch updates are grouped, while major compatibility changes
-  # stay separate and explicit.
+  # Python requirements are published library compatibility ranges. Routine
+  # releases are exercised by the stable/floor/next CI lanes rather than by
+  # rewriting those ranges. Dependabot is reserved for vulnerability fixes.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -10,28 +10,15 @@ updates:
       day: monday
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
-    cooldown:
-      default-days: 7
+    open-pull-requests-limit: 0
     groups:
-      python-nonmajor:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-      python-security-nonmajor:
+      python-security:
         applies-to: security-updates
         patterns:
           - "*"
-        update-types:
-          - minor
-          - patch
     # MCP v2 is a deliberate integration migration tracked in #263. Ignore
-    # the incompatible versions themselves: Dependabot can otherwise widen a
-    # requirement range (<2 -> <3) without treating that edit as a SemVer-major
-    # version update.
+    # the incompatible versions themselves so the existing <2 contract cannot
+    # be widened automatically before that migration is implemented.
     ignore:
       - dependency-name: mcp
         versions:
@@ -39,7 +26,7 @@ updates:
     labels:
       - dependencies
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "fix(deps)"
 
   # GitHub Actions are SHA-pinned in workflows. Dependabot advances the pin and
   # version comment; unrelated breaking majors are intentionally not grouped.
