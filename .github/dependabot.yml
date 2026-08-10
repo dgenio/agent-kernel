@@ -28,12 +28,14 @@ updates:
         update-types:
           - minor
           - patch
-    # MCP v2 is a deliberate integration migration tracked in #263, not
-    # routine dependency maintenance.
+    # MCP v2 is a deliberate integration migration tracked in #263. Ignore
+    # the incompatible versions themselves: Dependabot can otherwise widen a
+    # requirement range (<2 -> <3) without treating that edit as a SemVer-major
+    # version update.
     ignore:
       - dependency-name: mcp
-        update-types:
-          - version-update:semver-major
+        versions:
+          - ">=2,<3"
     labels:
       - dependencies
     commit-message:
