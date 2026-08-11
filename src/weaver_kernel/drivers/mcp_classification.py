@@ -44,8 +44,7 @@ def classify_tool_specs(
     """
     if unannotated_safety != "reject" and not isinstance(unannotated_safety, SafetyClass):
         raise DriverError(
-            "unannotated_safety must be 'reject' or a SafetyClass, "
-            f"got {unannotated_safety!r}."
+            f"unannotated_safety must be 'reject' or a SafetyClass, got {unannotated_safety!r}."
         )
 
     classified: list[tuple[ToolSpec, SafetyClass]] = []
