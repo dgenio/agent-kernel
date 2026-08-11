@@ -269,9 +269,7 @@ async def test_kernel_pipeline_with_discover_register_grant_invoke() -> None:
         transport="stdio",
     )
 
-    capabilities = await driver.discover(
-        safety_class_map={"math.sum": SafetyClass.READ}
-    )
+    capabilities = await driver.discover(safety_class_map={"math.sum": SafetyClass.READ})
     registry = CapabilityRegistry()
     registry.register_many(capabilities)
 
