@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 SECRET_ENV_VAR = "WEAVER_KERNEL_SECRET"
 """Environment variable holding the HMAC secret used for tokens and audit chains."""
 
+PRODUCTION_CHECKLIST_URL = (
+    "https://github.com/dgenio/agent-kernel/blob/main/docs/production-checklist.md"
+)
+"""Stable operator guidance linked from the development-secret warning."""
+
 _DEV_SECRET: str | None = None
 _DEV_SECRET_LOCK = threading.Lock()
 
@@ -39,10 +44,13 @@ def _get_secret() -> str:
         if _DEV_SECRET is None:
             _DEV_SECRET = secrets.token_hex(32)
             logger.warning(
-                "%s is not set. Using a random development secret — tokens and "
-                "audit-chain signatures will not survive restarts. Set %s in production.",
+                "%s is not set. Using a process-local random development secret; "
+                "tokens and audit-chain signatures will be invalid after restart and "
+                "will not share signing state with another process. Set %s before "
+                "production. Production checklist: %s",
                 SECRET_ENV_VAR,
                 SECRET_ENV_VAR,
+                PRODUCTION_CHECKLIST_URL,
             )
     return _DEV_SECRET
 
