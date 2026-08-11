@@ -131,14 +131,19 @@ async def main() -> None:
     )
 
     frame = await kernel.invoke(token, principal=principal, args={})
-    print(frame.facts)
+    expanded = kernel.expand(
+        frame.handle,
+        query={"limit": 1, "fields": ["title"]},
+        principal=principal,
+    )
+    print(expanded.table_preview)  # [{'title': 'Buy milk'}]
     print(kernel.explain(frame.action_id))
 
 
 asyncio.run(main())
 ```
 
-The README quickstart is exercised in CI; a runnable mirror lives at [`examples/readme_quickstart.py`](examples/readme_quickstart.py).
+The README quickstart is extracted and executed in CI; a runnable mirror lives at [`examples/readme_quickstart.py`](examples/readme_quickstart.py).
 
 For a guided walkthrough, see [`docs/tutorial.md`](docs/tutorial.md).
 
