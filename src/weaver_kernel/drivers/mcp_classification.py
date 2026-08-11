@@ -53,7 +53,12 @@ def classify_tool_specs(
 
     for spec in specs:
         if safety_class_map is not None and spec.name in safety_class_map:
-            safety_class = safety_class_map[spec.name]
+            configured = safety_class_map[spec.name]
+            if not isinstance(configured, SafetyClass):
+                raise DriverError(
+                    f"safety_class_map[{spec.name!r}] must be a SafetyClass, got {configured!r}."
+                )
+            safety_class = configured
         else:
             inferred = infer_safety_class(spec)
             if inferred is not None:
