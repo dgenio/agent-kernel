@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from weaver_kernel import HMACTokenProvider, HandleNotFound, HandleStore, TokenRevoked
+from weaver_kernel import HandleNotFound, HandleStore, HMACTokenProvider, TokenRevoked
 from weaver_kernel.rate_limit import RateLimiter
 
 _SECRET = "multi-worker-consistency-test-secret"
