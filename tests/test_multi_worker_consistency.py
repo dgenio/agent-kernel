@@ -49,7 +49,9 @@ def test_in_memory_revocation_does_not_propagate_between_workers() -> None:
 
 
 def test_rate_limit_windows_are_process_local() -> None:
-    fixed_clock = lambda: 100.0
+    def fixed_clock() -> float:
+        return 100.0
+
     worker_a = RateLimiter(clock=fixed_clock)
     worker_b = RateLimiter(clock=fixed_clock)
     key = "alice:tickets.read"
