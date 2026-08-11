@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/dgenio/agent-kernel/security/advisories/new
+    about: Do not disclose suspected vulnerabilities in a public issue. Use a private GitHub Security Advisory.
+  - name: Read the Security Contract first
+    url: https://github.com/dgenio/agent-kernel/blob/main/docs/security-contract.md
+    about: Check the guarantees and explicit non-goals before reporting a security-boundary mismatch.
