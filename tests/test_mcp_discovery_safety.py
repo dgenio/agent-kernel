@@ -87,6 +87,16 @@ async def test_explicit_safety_map_classifies_unannotated_tool() -> None:
 
 
 @pytest.mark.asyncio
+async def test_malformed_explicit_safety_map_fails_closed() -> None:
+    driver = _driver(_tool("delete_repo"))
+
+    with pytest.raises(DriverError, match=r"safety_class_map\['delete_repo'\]"):
+        await driver.discover(
+            safety_class_map={"delete_repo": "READ"},  # type: ignore[dict-item]
+        )
+
+
+@pytest.mark.asyncio
 async def test_explicit_unannotated_fallback_warns_and_names_tools(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -118,7 +128,7 @@ async def test_explicit_mcp_hints_still_infer_safety_class() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_unannotated_safety_fails_before_discovery() -> None:
+async def test_invalid_unannotated_safety_is_rejected() -> None:
     driver = _driver(_tool("list_files"))
 
     with pytest.raises(DriverError, match="unannotated_safety"):
