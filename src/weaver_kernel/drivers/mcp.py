@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 from ..enums import SafetyClass
 from ..errors import DriverError
@@ -19,6 +20,11 @@ from .mcp_support import (
     extract_tool_specs,
     normalize_call_result,
 )
+
+logger = logging.getLogger(__name__)
+
+UnannotatedSafety = SafetyClass | Literal["reject"]
+"""How discovery handles a tool with no usable MCP safety annotation."""
 
 
 def _load_mcp_error() -> type[BaseException] | None:
@@ -51,17 +57,19 @@ def _load_mcp_error() -> type[BaseException] | None:
 _McpError: type[BaseException] | None = _load_mcp_error()
 
 
-def _infer_safety_class(spec: ToolSpec) -> SafetyClass:
-    """Infer a SafetyClass from MCP ToolAnnotations hints.
+def _infer_safety_class(spec: ToolSpec) -> SafetyClass | None:
+    """Infer a ``SafetyClass`` only from explicit MCP ToolAnnotations hints.
 
-    Uses a conservative default of READ when annotations are absent.
-    The caller's safety_class_map takes precedence over the inferred value.
+    MCP annotations are advisory metadata, not an authorization statement. A
+    destructive hint wins over a read-only hint. When neither useful hint is
+    present, return ``None`` so the caller must reject or apply an explicitly
+    configured fallback instead of silently treating the tool as READ.
     """
     if spec.destructive_hint:
         return SafetyClass.DESTRUCTIVE
     if spec.read_only_hint:
         return SafetyClass.READ
-    return SafetyClass.READ
+    return None
 
 
 class MCPDriver:
@@ -136,22 +144,58 @@ class MCPDriver:
         *,
         namespace: str | None = None,
         safety_class_map: dict[str, SafetyClass] | None = None,
+        unannotated_safety: UnannotatedSafety = "reject",
     ) -> list[Capability]:
-        """Discover MCP tools across all pages and convert them to capabilities."""
+        """Discover MCP tools and convert them to deliberately classified capabilities.
+
+        Explicit ``safety_class_map`` entries take precedence over advisory MCP
+        annotations. A tool with neither an explicit override nor a useful MCP
+        safety hint is rejected by default. Callers that knowingly accept a
+        fallback may pass a ``SafetyClass`` via ``unannotated_safety``; doing so
+        emits a warning naming every tool that received that fallback.
+
+        Args:
+            namespace: Optional capability-id namespace.
+            safety_class_map: Explicit per-tool classifications supplied by the
+                operator. These are trusted configuration and override MCP hints.
+            unannotated_safety: ``"reject"`` (default) or an explicit fallback
+                ``SafetyClass`` for otherwise unclassified tools.
+
+        Raises:
+            DriverError: If ``unannotated_safety`` is invalid or one or more tools
+                remain unclassified while the mode is ``"reject"``.
+        """
+        if unannotated_safety != "reject" and not isinstance(unannotated_safety, SafetyClass):
+            raise DriverError(
+                "unannotated_safety must be 'reject' or a SafetyClass, "
+                f"got {unannotated_safety!r}."
+            )
+
         tools = await self._run_with_retry(
             operation_name="tools/list",
             action=self._fetch_all_tools,
         )
 
         capabilities: list[Capability] = []
+        rejected_tools: list[str] = []
+        fallback_tools: list[str] = []
+
         for spec in extract_tool_specs(tools):
             capability_id = f"{namespace}.{spec.name}" if namespace else spec.name
-            inferred = _infer_safety_class(spec)
-            safety_class = (
-                safety_class_map.get(spec.name, inferred)
-                if safety_class_map is not None
-                else inferred
-            )
+
+            if safety_class_map is not None and spec.name in safety_class_map:
+                safety_class = safety_class_map[spec.name]
+            else:
+                inferred = _infer_safety_class(spec)
+                if inferred is not None:
+                    safety_class = inferred
+                elif unannotated_safety == "reject":
+                    rejected_tools.append(spec.name)
+                    continue
+                else:
+                    safety_class = unannotated_safety
+                    fallback_tools.append(spec.name)
+
             capabilities.append(
                 Capability(
                     capability_id=capability_id,
@@ -165,6 +209,24 @@ class MCPDriver:
                     ),
                 )
             )
+
+        if rejected_tools:
+            names = ", ".join(sorted(rejected_tools))
+            raise DriverError(
+                f"MCPDriver '{self._driver_id}' refused to auto-register unclassified "
+                f"tools: {names}. Classify them with safety_class_map or explicitly "
+                "set unannotated_safety to a SafetyClass. MCP annotations are advisory "
+                "and missing metadata is not treated as READ authority."
+            )
+
+        if fallback_tools:
+            logger.warning(
+                "mcp_unannotated_safety_fallback driver_id=%s safety_class=%s tools=%s",
+                self._driver_id,
+                unannotated_safety.value,
+                ",".join(sorted(fallback_tools)),
+            )
+
         return capabilities
 
     async def _fetch_all_tools(self, session: Any) -> list[Any]:
