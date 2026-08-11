@@ -22,22 +22,22 @@ This code applies in repository issues, pull requests, reviews, security advisor
 
 ## Reporting conduct concerns
 
-Do not force a reporter to disclose a sensitive conduct concern in a public issue.
+Do not disclose sensitive conduct concerns through the vulnerability-reporting channel. GitHub Security Advisories are reserved for security vulnerabilities.
 
-Until the project has a dedicated private conduct mailbox, use the repository's private GitHub advisory channel as the confidential maintainer contact:
+The project does not currently publish a dedicated private conduct mailbox. Until one exists:
 
-`https://github.com/dgenio/agent-kernel/security/advisories/new`
+- use GitHub's platform **Report abuse / Report content** mechanisms for harassment, threats, doxxing, discrimination, or other concerns that should be handled privately by the platform;
+- for non-sensitive project-moderation concerns, a concise public issue/comment may be appropriate when the reporter is comfortable doing so;
+- if the concern involves the repository maintainer, prefer GitHub's platform reporting route rather than asking that maintainer to privately adjudicate the complaint.
 
-Prefix the advisory title with **`[Conduct]`** so it is triaged as a conduct report rather than a vulnerability report. Do not include unrelated credentials or sensitive production data.
-
-If a report concerns the repository maintainer directly and the reporter does not consider that channel appropriate, use GitHub's platform abuse/reporting mechanisms instead.
+This limitation is intentional and transparent: the project should not pretend a private conduct channel exists when it does not. A dedicated project contact can replace this section later if one is established.
 
 ## Enforcement
 
-Maintainers may edit or remove comments, decline contributions, issue a warning, temporarily restrict participation, or permanently ban participation when behavior materially violates this code. Enforcement should be proportionate, documented privately where appropriate, and avoid disclosing information a reporter expected to remain confidential.
+Maintainers may edit or remove comments, decline contributions, issue a warning, temporarily restrict participation, or permanently ban participation when behavior materially violates this code. Enforcement should be proportionate and should avoid amplifying information a reporter expected to remain sensitive.
 
 Retaliation against someone for making a good-faith report is itself unacceptable.
 
 ## Attribution
 
-This policy follows the principles and enforcement intent of widely used open-source contributor codes of conduct, including the Contributor Covenant, while keeping the project-specific reporting route explicit.
+This policy follows the principles and enforcement intent of widely used open-source contributor codes of conduct, including the Contributor Covenant, while keeping the project's current reporting limitations explicit.
