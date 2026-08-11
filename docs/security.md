@@ -1,176 +1,174 @@
 # Security Model
 
+Start with the concise [Security Contract](security-contract.md). This page gives the implementation-level threat model and operational caveats behind that contract.
+
 ## Threat model
 
-| Threat | Mitigation |
-|--------|-----------|
-| Tool-space interference (agent calls wrong tool) | Capability registry + policy gate before any execution |
-| Confused deputy attack | Tokens are bound to `principal_id` — cannot be reused by another principal |
-| Token forgery / tampering | HMAC-SHA256 signature; any bit flip → `TokenInvalid` |
-| Token replay after expiry | Expiry checked on every `verify()` call |
-| Context injection via raw tool output | Firewall always transforms `RawResult → Frame`; raw data never reaches LLM by default |
-| PII / PCI leakage | Redaction + `allowed_fields` enforcement in the firewall, applied on every egress path (summary/table/raw, handle expansion, streaming) |
-| PII / secret leak below the depth budget | Redaction fails *closed* at `max_depth`: leaf strings are scrubbed; nested containers are elided rather than returned verbatim (#149) |
-| Inline secret leak via handle expansion | `HandleStore.expand()` runs projected rows through the firewall redactor, so a secret in a permitted field is scrubbed (#150) |
-| Cross-chunk secret split in streaming | `Firewall.apply_stream()` holds back a per-field overlap window so a secret spanning two chunks is reassembled before redaction (#151) |
-| Privilege escalation via WRITE/DESTRUCTIVE | Policy engine enforces role requirements |
-| Audit evasion | Every `invoke()` creates an immutable `ActionTrace` |
-| Handle scope escape (expand exceeds grant) | Handles persist grant constraints; `HandleStore.expand` rechecks `max_rows`, `allowed_fields`, `scope`, and principal binding (#76) |
-| Sensitive data reaching the audit log via args/errors | `ActionTrace.args` and driver `error` text are run through the firewall redactor for **every** capability; memory payloads (`payload`/`content`/`value`/`memory`/`text`/`body`) are additionally stripped wholesale for `memory.*` capabilities (#75, #172) |
-| Scanned content / raw result reaching audit log | `ActionTrace.result_summary` is built only from the post-firewall `Frame` (counts and flags, never raw driver data), so the audit trail records an invocation's outcome without re-introducing the data the firewall removed |
+| Threat | Current mitigation |
+|---|---|
+| Tool-space interference | Capability registry + policy gate before Kernel-mediated execution |
+| Confused deputy / cross-principal token reuse | Tokens bind `principal_id`; verification rejects a different principal |
+| Token tampering | HMAC-SHA256 signature verification |
+| Token replay after expiry | Expiry is checked during token verification |
+| Raw tool output reaching the default LLM-safe path | `RawResult` is transformed by the Context Firewall into a bounded `Frame` |
+| PII / PCI leakage | Firewall redaction + allowed-field enforcement on supported egress paths |
+| Deeply nested secret leakage | Redaction fails closed at the configured depth boundary; nested containers are elided rather than returned verbatim |
+| Handle expansion escaping the grant | Handle expansion re-checks principal binding and persisted grant constraints |
+| Sensitive arguments/results leaking into audit | Trace arguments/errors pass through redaction; result summaries are built from post-firewall data rather than raw driver output |
+| Privilege escalation through WRITE / DESTRUCTIVE classes | Policy engine applies role / justification rules |
+| Audit mutation | Durable trace stores can use HMAC hash chaining to make mutation/interior deletion/reordering evident |
 
-## Token scopes
+The important qualifier is **Kernel-mediated**. Weaver Kernel is an in-process library and cannot protect an execution path that bypasses it.
 
-A `CapabilityToken` binds:
-- `capability_id` — which capability is authorized
-- `principal_id` — who the token was issued to
-- `constraints` — max_rows, allowed_fields, etc. (signed into the token)
-- `expires_at` — validity window
+## Capability-token scope
 
-Any change to these fields invalidates the HMAC signature.
+A current `CapabilityToken` binds:
 
-## Confused deputy prevention
+- `capability_id` — which capability is authorized;
+- `principal_id` — the authorization subject;
+- `constraints` — signed scope such as row/field limits where used;
+- `expires_at` — the validity window.
 
-Consider an agent that obtains a token for `billing.list_invoices` then passes it to a different agent. The second agent cannot use it because `verify()` checks that `token.principal_id == expected_principal_id`.
+Changing a signed field invalidates the HMAC signature.
 
-The same principle extends to handles: every `Handle` carries the `principal_id`
-the original grant was issued to. When `handle.principal_id` is non-empty,
-`HandleStore.expand` rejects expansion unless the caller supplies a matching
-`principal_id`. **An omitted or empty `principal_id` is treated as a
-mismatch** (`HandleConstraintViolation`, `reason_code = HANDLE_PRINCIPAL_MISMATCH`),
-so a handle ID alone is not a bearer credential — proof of the original
-principal is always required. `Kernel.expand(..., principal=Principal(...))`
-forwards the principal automatically.
+### Current boundary of the token claim
+
+The current format should be described as a **principal- and capability-scoped grant with signed constraints**, not proof that one exact executable transaction was authorized.
+
+Exact binding to all normalized arguments, resolved resource identity/provenance, run/plan identity, approval receipt, tool-descriptor digest, pre-state and single-use semantics is an active design topic (#258). See [security-contract.md](security-contract.md).
+
+## Principal identity and authentication
+
+`Principal` is authorization input supplied by the host. Kernel does not currently prove that the asserted principal corresponds to a human, workload or authenticated session.
+
+The host must derive the principal from a trusted authentication mechanism. A production authentication/provider seam is tracked in #103.
+
+## Confused-deputy prevention
+
+A token issued to one principal cannot be reused by a different principal because verification checks the principal binding.
+
+Handles follow the same principle. A stored handle carries the original grant principal; expansion requires a matching principal and treats an omitted/mismatched identity as `HandleConstraintViolation` / `HANDLE_PRINCIPAL_MISMATCH`.
 
 ## Handle expansion boundary
 
-Calling `kernel.expand(handle, query=...)` does not re-run the policy engine —
-the original grant already authorised the dataset, and handles are short-lived.
-But the grant's _constraints_ must still apply, otherwise an over-broad
-`expand` query would silently return data the original grant never covered.
+`kernel.expand()` does not re-run the original policy decision, but it re-applies the grant constraints persisted with the handle.
 
-`HandleStore.expand` rechecks the constraints the kernel persists on the handle
-at creation time (`token.constraints`):
+| Constraint | Expansion behavior |
+|---|---|
+| `max_rows` | Requests above the cap are rejected or clamped according to the API path. |
+| `allowed_fields` | Out-of-scope fields are rejected; default projection cannot reveal disallowed fields. |
+| `scope` | Stored scope is merged into the query and conflicting scope is rejected. |
+| `principal_id` | A different/omitted principal is rejected. |
 
-| Constraint | Enforced behavior on expand |
-|------------|-----------------------------|
-| `max_rows` | A request `limit` larger than the cap raises `HandleConstraintViolation`. An unspecified or larger implicit limit is silently clamped. |
-| `allowed_fields` | A request `fields` entry that is not in `allowed_fields` raises `HandleConstraintViolation`. An unscoped expand applies `allowed_fields` as the default projection, so disallowed fields never leak. |
-| `scope` (e.g. `{"region": "eu"}`) | The scope filter is AND-merged into the request filter. A request filter that disagrees on a scoped dimension raises `HandleConstraintViolation`. |
-| `principal_id` | A mismatched `principal_id` parameter raises `HandleConstraintViolation` (`HANDLE_PRINCIPAL_MISMATCH`). |
-
-Errors carry stable `reason_code` values (`handle_constraint_violation`,
-`handle_principal_mismatch`) — assert on those, not on the message text.
+Stable reason codes should be used by integrations instead of parsing human-readable messages.
 
 ## Memory actions
 
-Capabilities tagged `SensitivityTag.MEMORY` represent durable agent memory
-(project notes, session handoff, learned context). Reads of project-scoped
-memory are allowed by default; reads of sensitive-scoped memory require an
-explicit role. Writes always require the `memory_writer` role (or `admin`)
-because they persist into future sessions.
+Capabilities tagged for durable memory receive additional policy treatment. Sensitive memory reads and memory writes require explicit roles, and payload-like memory fields are stripped from `ActionTrace.args` so the audit trail does not become a durable memory-content sink.
 
-| Action | Required role | Denial reason code |
-|--------|---------------|--------------------|
-| `memory.read` with `scope["memory_scope"] == "project"` | none | — |
-| `memory.read` with `scope["memory_scope"] == "sensitive"` | `memory_reader_sensitive` or `admin` | `memory_sensitive_read_denied` |
-| `memory.write` (any scope) | `memory_writer` or `admin` | `memory_write_requires_writer` |
-| `memory.forget` (DESTRUCTIVE) | `admin` (then `memory_writer` or `admin`) | `missing_role`, then `memory_write_requires_writer` |
+## Context Firewall
 
-To prevent durable memory content from leaking into the audit log, the kernel
-strips payload-like fields (`payload`, `content`, `value`, `memory`, `text`,
-`body`) from `ActionTrace.args` for any capability whose ID begins with
-`memory.`. Non-sensitive metadata keys (`key`, `id`, `scope`, ...) are
-preserved so audit can still confirm an action took place.
+The Context Firewall is the boundary between a raw driver result and the default LLM-safe representation.
 
-## Audit-log integrity (hash chain)
+It provides:
 
-When traces are persisted to a durable store (`SQLiteTraceStore`,
-`JsonlTraceStore`), each record is wrapped in a hash chain: `record_hash =
-HMAC-SHA256(secret, {seq, prev_hash, trace})`, where `prev_hash` is the previous
-record's hash (the first record links to a genesis value). `verify_chain()`
-recomputes every hash and checks the linkage, so it detects:
+- bounded `Frame` output;
+- field / row budgets;
+- redaction;
+- handle-based expansion under persisted constraints;
+- streaming redaction with bounded overlap handling.
 
-- **mutation** of any persisted record (recomputed hash diverges),
-- **interior insertion, deletion, or reordering** (broken `prev_hash` linkage or a
-  non-contiguous `seq`),
+Redaction is defense in depth, not a substitute for data governance. The built-in detector is heuristic and can miss domain-specific or adversarial representations.
 
-and reports the `seq` of the first divergent record. `SQLiteTraceStore.prune()`
-removes old records while preserving verifiability of the retained suffix by
-recording the last pruned record's hash as a checkpoint.
+Streaming redaction also has a bounded overlap/memory trade-off: sufficiently pathological secrets or patterns split outside the supported overlap assumptions may evade heuristic detection. Do not advertise regex redaction as a formal confidentiality guarantee.
 
-**Truncation is the exception.** The chain stores no signed head/length anchor, so
-dropping the **most recent** records (tail truncation) — or deleting the whole
-store — leaves a self-consistent prefix that still verifies: there is no broken
-link or sequence gap to detect, and an empty store verifies vacuously. Detecting
-truncation requires anchoring the expected head out of band (a separately stored,
-signed record count + head hash); that is a planned follow-up. Until then, treat
-append-only durability (JSONL shipped to a write-once collector, or a SQLite file
-on append-only storage) as the truncation defense.
+## MCP discovery and tool classification
 
-**What this is — and is not.** This is **tamper-evidence**: anyone who does not
-hold `WEAVER_KERNEL_SECRET` cannot alter the log without `verify_chain()`
-detecting it. It is **not non-repudiation**: a host that controls the secret can
-forge a self-consistent chain, and the same secret signs tokens, so the audit
-log is only as trustworthy as secret custody. It does not encrypt trace contents
-at rest, and it does not anchor the chain to an external timestamping authority.
-The chain payload is the redaction-safe export shape — chaining adds no field the
-in-memory trace did not already hold and cannot widen the I-01 boundary.
+MCP tool annotations are hints, not a trusted authorization statement.
 
-The CLI exposes verification to operators: `weaver-kernel audit verify --store
-audit.db` exits non-zero on any divergence (see [cli.md](cli.md)).
+The current backlog contains a security-critical hardening item (#181) because unannotated tools must not silently receive the least-restricted safety classification on an advertised least-privilege path.
 
-## What the audit trail captures (#175)
+Until that item is resolved, production integrations should supply an explicit `safety_class_map` for discovered tools rather than trusting the default fallback.
 
-Auditability (I-02) covers authorization decisions and data-access events, not
-only successful invocations. Every recorded `ActionTrace` carries an `event_type`:
+MCP SDK/protocol compatibility is also a live support boundary (#263, #173). Check the supported dependency range before relying on the integration.
 
-- `invoke` — a capability invocation (success or driver failure).
-- `expand` — a `Kernel.expand()` data-access event (more rows of a stored
-  handle). Expansion Frames carry the expanding principal in
-  `Provenance.principal_id`.
-- `deny` — a `grant_capability()` rejected by policy, recorded with the stable
-  `reason_code` (a `DenialReason`) and a redacted reason message *before* the
-  `PolicyDenied` exception propagates.
+## Rate limiting and token reuse
 
-So `explain()` and `query_traces()` can answer "who was refused what, when, and
-why" and "which rows were expanded by whom". Expansion query arguments and denial
-messages pass through the same firewall redactor as invocation args, so these new
-records never make the trace store a sensitive-data sink.
+The default policy includes per-principal/per-capability sliding-window limits, but the exact relationship between grant-time evaluation and repeated invocation of a reusable token is being hardened in #170.
 
-## Retention bounding (#182)
+Do not describe the current rate limiter as a complete runaway-agent control until invocation-time semantics are explicitly enforced and tested.
 
-Long-lived processes accumulate one trace per invocation and one revocation entry
-per revoked token. Both in-memory structures are bounded:
+## Multi-process / multi-worker deployments
 
-- The in-memory `TraceStore` caps at `max_entries` (default 10 000), evicting
-  oldest-first. Eviction discards audit data, so it is deliberately loud (a
-  warning on first eviction) and counted (`evicted_count`). For unbounded
-  retention, use a durable backend.
-- Revocation state records each token's expiry and is swept for already-expired
-  tokens (lazily, and via `HMACTokenProvider.sweep_revocations()`). A sweep never
-  un-revokes a live token — only entries for tokens that already fail the expiry
-  check are removed.
+Several stateful components are process-local today, including parts of:
 
-## Security disclaimers
+- revocation state;
+- rate limiting;
+- handles;
+- budgets;
+- trace storage (unless a shared durable store is configured).
 
-> **v0.1 is not production-hardened for real authentication.**
+A horizontally scaled deployment can therefore have different security/operational semantics from a single process. In particular, token signature verification is stateless while revocation and some enforcement state are not, which can create non-obvious divergence.
 
-- HMAC tokens are tamper-evident but **not encrypted**. Do not put sensitive data in token fields.
-- The `WEAVER_KERNEL_SECRET` must be kept secret. Rotate it if compromised.
-- The default `InMemoryDriver` has no persistence — suitable for testing only.
-- PII redaction is heuristic (regex-based). It is not a substitute for proper data governance.
-- Streaming redaction (`Firewall.apply_stream`) reassembles patterns split across
-  chunks by holding back a bounded overlap window. A contiguous secret
-  (JWT/Bearer/API-key/connection-string body) is never split across a commit
-  boundary, but a pattern containing internal whitespace (phone, SSN, spaced card
-  number) split exactly at the held boundary may still evade detection. The
-  holdback buffer is also memory-bounded (`overlap * 4`); a single contiguous
-  secret longer than that bound is force-committed and may be severed at the cut,
-  so an extremely long unbroken token can escape per-segment detection — a
-  deliberate memory-vs-safety trade.
-- Rate limiting is enforced per `(principal_id, capability_id)` pair using a sliding window.
-  Default limits: 60 READ / 10 WRITE / 2 DESTRUCTIVE invocations per 60-second window.
-  Principals with the `"service"` role receive 10× the default limits. Limits are
-  configurable via `DefaultPolicyEngine(rate_limits=...)`. There is no distributed or
-  persistent rate-limit state — limits reset on process restart.
+The consistency model and mitigation architecture are tracked in #226. High-assurance deployments should understand this limitation before scaling worker count.
+
+## Audit trail and tamper evidence
+
+Kernel records authorization/execution-related events as `ActionTrace` records, including supported invoke, deny and expansion events.
+
+Trace fields are intended to answer questions such as:
+
+- who requested the action;
+- which capability was involved;
+- why policy allowed/denied it;
+- which driver executed;
+- what bounded result metadata was produced;
+- what follow-up expansion/approval activity occurred.
+
+Durable stores (`SQLiteTraceStore`, `JsonlTraceStore`) can wrap records in an HMAC hash chain. This can detect mutation and broken interior linkage.
+
+### What hash chaining does not prove
+
+- It does not provide non-repudiation when the host controls the signing secret.
+- It does not encrypt trace contents at rest.
+- Without an independently anchored expected head/length, a self-consistent truncated tail can remain undetectable.
+- Deleting the whole local store is not prevented by the chain.
+
+For higher assurance, ship traces to storage with independent retention/integrity controls.
+
+## Security automation
+
+The repository uses CI, strict typing, a coverage floor, dependency auditing and CodeQL. Release artifacts include the supply-chain metadata documented in [`../RELEASE.md`](../RELEASE.md).
+
+These controls improve software assurance; they do not by themselves establish production security suitability.
+
+## Current maturity statement
+
+Weaver Kernel is pre-1.0. The package has moved materially beyond the old “v0.1” wording that previously appeared in this document, but it should **not** be described as fully production-hardened authentication/authorization infrastructure yet.
+
+Known hardening gates include:
+
+- #103 — authentication, secrets and production-hardening criteria;
+- #181 — fail-closed MCP classification;
+- #170 — invocation-time rate-limit/token-use semantics;
+- #226 — distributed consistency semantics;
+- #263 + #173 — MCP v2 and real interoperability;
+- #199 + #245 — executable invariants and adversarial/property testing;
+- #258 — exact action/transaction binding.
+
+See [`../ROADMAP.md`](../ROADMAP.md) for sequencing.
+
+## Deployment checklist
+
+Before relying on Kernel in a security-sensitive deployment:
+
+1. set and protect a strong `WEAVER_KERNEL_SECRET`; do not rely on the generated development secret;
+2. derive `Principal` from authenticated identity/workload context;
+3. explicitly classify high-risk/unknown tools;
+4. review which framework execution surfaces actually pass through Kernel;
+5. test allow **and deny** paths for your own policy;
+6. verify constraints on the exact resources/arguments that matter to your tools;
+7. choose durable trace storage and retention appropriate to the threat model;
+8. understand multi-worker state semantics before horizontal scaling;
+9. pin/test the MCP/other SDK versions you deploy;
+10. read [security-contract.md](security-contract.md) and do not broaden its claims in downstream documentation.
