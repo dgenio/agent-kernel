@@ -57,164 +57,19 @@ jobs:
           if text.count(old_init) != 1:
               raise SystemExit(f"unexpected init marker count: {text.count(old_init)}")
           text = text.replace(old_init, new_init, 1)
-
           class_pos = text.index("class DefaultPolicyEngine:")
           evaluate_pos = text.index("\n    def evaluate(\n", class_pos)
-          prefix = text[:evaluate_pos]
-          methods = r'''
-    def evaluate(
-        self,
-        request: CapabilityRequest,
-        capability: Capability,
-        principal: Principal,
-        *,
-        justification: str,
-    ) -> PolicyDecision:
-        """Evaluate the request against the shared default-policy rule chain.
-
-        Decision traversal short-circuits on the first denial and may update
-        transient policy state (currently the sliding-window rate limiter).
-        ``explain()`` traverses this exact same chain in read-only mode.
-        """
-        pid = principal.principal_id
-        cid = capability.capability_id
-        trace = PolicyDecisionTrace(
-            engine="DefaultPolicyEngine",
-            capability_id=cid,
-            principal_id=pid,
-            intent=request.intent,
-            scope_keys=sorted(request.scope.keys()),
-        )
-        result = self._rule_chain.run(
-            request,
-            capability,
-            principal,
-            justification=justification,
-            collect_all=False,
-            read_only=False,
-        )
-        trace.steps.extend(result.trace_steps)
-
-        if result.failures:
-            failure = result.failures[0]
-            trace.steps.append(
-                PolicyTraceStep(
-                    name="deny",
-                    outcome="denied",
-                    detail=failure.detail,
-                    reason_code=failure.reason_code,
-                )
-            )
-            trace.final_outcome = "denied"
-            trace.final_reason_code = failure.reason_code
-            denial = self._deny(
-                failure.detail,
-                principal_id=pid,
-                capability_id=cid,
-                reason_code=failure.reason_code,
-            )
-            if failure.cause is not None:
-                raise denial from failure.cause
-            raise denial
-
-        reason = "Request approved by DefaultPolicyEngine."
-        trace.steps.append(
-            PolicyTraceStep(
-                name="allow",
-                outcome="allowed",
-                detail=reason,
-                reason_code=str(AllowReason.DEFAULT_POLICY_ALLOW),
-            )
-        )
-        trace.final_outcome = "allowed"
-        trace.final_reason_code = str(AllowReason.DEFAULT_POLICY_ALLOW)
-        logger.info(
-            "policy_allowed",
-            extra={
-                "principal_id": pid,
-                "capability_id": cid,
-                "reason": reason,
-                "reason_code": str(AllowReason.DEFAULT_POLICY_ALLOW),
-            },
-        )
-        return PolicyDecision(
-            allowed=True,
-            reason=reason,
-            constraints=result.constraints,
-            reason_code=str(AllowReason.DEFAULT_POLICY_ALLOW),
-            trace=trace,
-        )
-
-    def explain(
-        self,
-        request: CapabilityRequest,
-        capability: Capability,
-        principal: Principal,
-        *,
-        justification: str,
-    ) -> DenialExplanation:
-        """Explain all failures from the same chain used by :meth:`evaluate`.
-
-        Explanation is strictly read-only: it collects all failed conditions,
-        including the current rate-limit condition, without recording usage or
-        pruning/creating limiter windows.
-        """
-        pid = principal.principal_id
-        cid = capability.capability_id
-        result = self._rule_chain.run(
-            request,
-            capability,
-            principal,
-            justification=justification,
-            collect_all=True,
-            read_only=True,
-        )
-        failed = [failure.condition for failure in result.failures]
-        denied = bool(failed)
-        remediation = [condition.suggestion for condition in failed]
-
-        if denied:
-            first = failed[0]
-            rule_name = (
-                f"{capability.safety_class.value.lower()}-"
-                f"{first.condition.replace('_', '-')}"
-            )
-            narrative = (
-                f"Request for '{cid}' by '{pid}' would be denied: "
-                + "; ".join(condition.suggestion for condition in failed)
-                + "."
-            )
-            primary_code = first.reason_code
-        else:
-            rule_name = "allowed"
-            narrative = (
-                f"Request for '{cid}' by '{pid}' would be allowed by "
-                "DefaultPolicyEngine."
-            )
-            primary_code = None
-
-        return DenialExplanation(
-            denied=denied,
-            rule_name=rule_name,
-            failed_conditions=failed,
-            remediation=remediation,
-            narrative=narrative,
-            reason_code=primary_code,
-        )
-'''
-          p.write_text(prefix + methods, encoding="utf-8")
+          methods = Path(".github/agent-policy-methods-219.txt").read_text(encoding="utf-8")
+          p.write_text(text[:evaluate_pos] + methods, encoding="utf-8")
 
           p = Path("docs/architecture.md")
           text = p.read_text(encoding="utf-8")
-          marker = (
-              "Engines collect all failing conditions (no short-circuit) so callers get the full picture. "
-          )
+          marker = "Engines collect all failing conditions (no short-circuit) so callers get the full picture. "
           if marker not in text:
               raise SystemExit("architecture explanation marker missing")
           text = text.replace(
               marker,
-              marker
-              + "`DefaultPolicyEngine.evaluate()` and `.explain()` are driven by one internal ordered rule chain; evaluation short-circuits and records rate usage, while explanation traverses the same rate-limit rule through a read-only `peek()` that never mutates limiter state. ",
+              marker + "`DefaultPolicyEngine.evaluate()` and `.explain()` are driven by one internal ordered rule chain; evaluation short-circuits and records rate usage, while explanation traverses the same rate-limit rule through a read-only `peek()` that never mutates limiter state. ",
               1,
           )
           p.write_text(text, encoding="utf-8")
@@ -226,10 +81,7 @@ jobs:
               raise SystemExit("unexpected Unreleased heading")
           text = text.replace(
               marker,
-              marker
-              + "\n### Changed\n"
-              + "- **Default policy decisions and explanations now share one ordered rule chain (#219).** "
-              + "`evaluate()` short-circuits the shared chain while `explain()` collects every failure through the same rules. Rate-limit explanation uses a read-only `peek()` so it can predict a denial without consuming, creating, or pruning limiter state. Agreement and no-mutation regressions cover the security-critical boundary.\n",
+              marker + "\n### Changed\n- **Default policy decisions and explanations now share one ordered rule chain (#219).** `evaluate()` short-circuits the shared chain while `explain()` collects every failure through the same rules. Rate-limit explanation uses a read-only `peek()` so it can predict a denial without consuming, creating, or pruning limiter state. Agreement and no-mutation regressions cover the security-critical boundary.\n",
               1,
           )
           p.write_text(text, encoding="utf-8")
