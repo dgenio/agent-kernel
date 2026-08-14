@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
+from .default_policy_rule_types import MIN_JUSTIFICATION
 from .enums import SafetyClass
 from .errors import DriverError, PolicyDenied
 from .models import (
@@ -21,7 +22,6 @@ from .models import (
     PolicyTraceStep,
     Principal,
 )
-from .policy import _MIN_JUSTIFICATION
 from .policy_matching import scope_globs_match
 from .policy_reasons import AllowReason, DenialReason
 
@@ -186,10 +186,10 @@ class CodingAgentPolicyEngine:
         if capability.safety_class not in (SafetyClass.WRITE, SafetyClass.DESTRUCTIVE):
             return
         stripped_len = len(justification.strip())
-        if stripped_len < _MIN_JUSTIFICATION:
+        if stripped_len < MIN_JUSTIFICATION:
             cls._deny(
                 f"{capability.safety_class.value.upper()} capabilities require a justification "
-                f"of at least {_MIN_JUSTIFICATION} characters after trimming whitespace.",
+                f"of at least {MIN_JUSTIFICATION} characters after trimming whitespace.",
                 reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
             )
 

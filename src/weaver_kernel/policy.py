@@ -6,12 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Protocol
 
-from .default_policy_rules import (
-    MAX_ROWS_SERVICE,
-    MAX_ROWS_USER,
-    MIN_JUSTIFICATION,
-    DefaultPolicyRuleChain,
-)
+from .default_policy_rules import DefaultPolicyRuleChain
 from .enums import SafetyClass
 from .errors import AgentKernelError, PolicyDenied
 from .models import (
@@ -27,13 +22,6 @@ from .policy_reasons import AllowReason
 from .rate_limit import DEFAULT_RATE_LIMITS, SERVICE_RATE_MULTIPLIER, RateLimiter
 
 logger = logging.getLogger(__name__)
-
-# Minimum justification length for WRITE operations.
-_MIN_JUSTIFICATION = MIN_JUSTIFICATION
-
-# Default max_rows caps.
-_MAX_ROWS_USER = MAX_ROWS_USER
-_MAX_ROWS_SERVICE = MAX_ROWS_SERVICE
 
 # Backwards-compatible aliases — these used to be defined here. New code
 # should import the names without the leading underscore from ``rate_limit``.
