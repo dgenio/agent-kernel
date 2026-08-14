@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Literal, cast
 
 from ..enums import SafetyClass
 from ..errors import DriverError
@@ -74,19 +74,19 @@ def classify_tool_specs(
     if rejected:
         names = ", ".join(sorted(rejected))
         raise DriverError(
-            f"MCPDriver '{driver_id}' refused to auto-register unclassified tools: {names}. "
+            f"MCPDriver '{driver_id}' refused to discover/classify unclassified tools: {names}. "
             "Classify them with safety_class_map or explicitly set unannotated_safety to a "
             "SafetyClass. MCP annotations are advisory and missing metadata is not treated "
             "as READ authority."
         )
 
     if fallback:
-        assert isinstance(unannotated_safety, SafetyClass)  # narrowed above
+        safe_fallback_class = cast(SafetyClass, unannotated_safety)  # narrowed above
         logger.warning(
-            "mcp_unannotated_safety_fallback driver_id=%s safety_class=%s tools=%s",
+            "mcp_unannotated_safety_fallback driver_id=%s safety_class=%s tools=%r",
             driver_id,
-            unannotated_safety.value,
-            ",".join(sorted(fallback)),
+            safe_fallback_class.value,
+            sorted(fallback),
         )
 
     return classified

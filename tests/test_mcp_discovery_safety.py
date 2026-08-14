@@ -128,6 +128,16 @@ async def test_explicit_mcp_hints_still_infer_safety_class() -> None:
 
 
 @pytest.mark.asyncio
+async def test_conflicting_hints_prefers_destructive() -> None:
+    driver = _driver(_tool("delete_repo", read_only=True, destructive=True))
+
+    capabilities = await driver.discover()
+    assert len(capabilities) == 1
+    assert capabilities[0].name == "delete_repo"
+    assert capabilities[0].safety_class is SafetyClass.DESTRUCTIVE
+
+
+@pytest.mark.asyncio
 async def test_invalid_unannotated_safety_is_rejected() -> None:
     driver = _driver(_tool("list_files"))
 

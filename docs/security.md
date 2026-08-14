@@ -152,6 +152,17 @@ per revoked token. Both in-memory structures are bounded:
   un-revokes a live token — only entries for tokens that already fail the expiry
   check are removed.
 
+## MCP tool safety classification (#181)
+
+MCP tools are classified before they become capabilities:
+
+- Explicit operator mappings (`safety_class_map`) take precedence over server-provided hints.
+- `destructiveHint=True` wins over `readOnlyHint=True` when both are present.
+- Tools with neither usable hints nor an explicit mapping are **rejected by default** rather than silently becoming `READ`.
+
+For full precedence rules and migration from pre-#181 behavior, see
+[mcp-safety-classification.md](mcp-safety-classification.md).
+
 ## Security disclaimers
 
 > **v0.1 is not production-hardened for real authentication.**
