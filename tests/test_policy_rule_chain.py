@@ -140,11 +140,18 @@ _CASES = [
 
 
 @pytest.mark.parametrize(
-    ("request", "capability", "principal", "justification", "denied", "reason_code"),
+    (
+        "cap_request",
+        "capability",
+        "principal",
+        "justification",
+        "denied",
+        "reason_code",
+    ),
     _CASES,
 )
 def test_explain_prediction_matches_evaluate(
-    request: CapabilityRequest,
+    cap_request: CapabilityRequest,
     capability: Capability,
     principal: Principal,
     justification: str,
@@ -154,7 +161,7 @@ def test_explain_prediction_matches_evaluate(
     engine = DefaultPolicyEngine()
 
     explanation = engine.explain(
-        request,
+        cap_request,
         capability,
         principal,
         justification=justification,
@@ -162,7 +169,7 @@ def test_explain_prediction_matches_evaluate(
 
     try:
         decision = engine.evaluate(
-            request,
+            cap_request,
             capability,
             principal,
             justification=justification,
