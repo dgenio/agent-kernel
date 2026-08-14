@@ -1,49 +1,41 @@
-"""Shared rule chain for :class:`~weaver_kernel.policy.DefaultPolicyEngine`.
-
-This module owns the ordered default-policy conditions.  ``evaluate()`` and
-``explain()`` deliberately traverse this same chain with different modes:
-short-circuit + stateful rate limiting for decisions, collect-all + read-only
-rate inspection for explanations.
-"""
+"""Ordered rule chain shared by default policy decisions and explanations."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from collections.abc import Callable
 
-from .enums import SafetyClass, SensitivityTag
-from .models import (
-    Capability,
-    CapabilityRequest,
-    FailedCondition,
-    PolicyTraceStep,
-    Principal,
+from .default_policy_access_rules import (
+    check_memory,
+    check_safety_class,
+    check_secrets,
+    check_tenant_sensitivity,
 )
-from .policy_reasons import DenialReason
-from .rate_limit import SERVICE_RATE_MULTIPLIER, RateLimiter
+from .default_policy_limit_rules import apply_row_cap, check_rate_limit
+from .default_policy_rule_types import (
+    MAX_ROWS_SERVICE,
+    MAX_ROWS_USER,
+    MIN_JUSTIFICATION,
+    RuleChainResult,
+    RuleContext,
+    RuleFailure,
+)
+from .enums import SafetyClass
+from .models import Capability, CapabilityRequest, Principal
+from .rate_limit import RateLimiter
 
-MIN_JUSTIFICATION = 15
-MAX_ROWS_USER = 50
-MAX_ROWS_SERVICE = 500
+RuleCheck = Callable[[RuleContext], list[RuleFailure]]
 
-
-@dataclass(slots=True)
-class RuleFailure:
-    """One failed default-policy condition and its decision/explanation views."""
-
-    detail: str
-    condition: FailedCondition
-    reason_code: str
-    cause: Exception | None = None
-
-
-@dataclass(slots=True)
-class RuleChainResult:
-    """Result of traversing the ordered default-policy rule chain."""
-
-    constraints: dict[str, Any]
-    failures: list[RuleFailure] = field(default_factory=list)
-    trace_steps: list[PolicyTraceStep] = field(default_factory=list)
+# Canonical order is defined once here. Both evaluate() and explain() traverse
+# exactly this sequence; their only differences are short-circuit/collect-all
+# and stateful/read-only rate-limit modes.
+_DEFAULT_RULES: tuple[RuleCheck, ...] = (
+    check_safety_class,
+    check_tenant_sensitivity,
+    check_secrets,
+    check_memory,
+    apply_row_cap,
+    check_rate_limit,
+)
 
 
 class DefaultPolicyRuleChain:
@@ -68,326 +60,46 @@ class DefaultPolicyRuleChain:
         collect_all: bool,
         read_only: bool,
     ) -> RuleChainResult:
-        """Traverse the rules once in canonical order.
+        """Traverse the canonical rules in decision or explanation mode.
 
         Args:
             request: Capability request being checked.
             capability: Target capability.
             principal: Requesting principal.
             justification: Caller-supplied justification.
-            collect_all: Collect every failure instead of stopping at the first.
-            read_only: Do not mutate transient policy state such as rate windows.
+            collect_all: Collect every failed condition instead of stopping at
+                the first one.
+            read_only: Avoid policy-state mutation, including rate-window
+                creation, pruning, and usage recording.
 
         Returns:
-            Constraints, failed conditions, and non-terminal trace steps.
+            Constraints, failures, and non-terminal trace steps produced by the
+            common rule traversal.
         """
-        roles = set(principal.roles)
-        constraints: dict[str, Any] = dict(request.constraints)
-        result = RuleChainResult(constraints=constraints)
-        pid = principal.principal_id
-        cid = capability.capability_id
+        ctx = RuleContext(
+            request=request,
+            capability=capability,
+            principal=principal,
+            justification=justification,
+            constraints=dict(request.constraints),
+            rate_limits=self._rate_limits,
+            limiter=self._limiter,
+            read_only=read_only,
+        )
+        failures: list[RuleFailure] = []
+        for rule in _DEFAULT_RULES:
+            rule_failures = rule(ctx)
+            if rule_failures:
+                failures.extend(rule_failures)
+                if not collect_all:
+                    failures = failures[:1]
+                    break
 
-        def add_failure(
-            *,
-            detail: str,
-            condition: FailedCondition,
-            reason_code: str,
-            cause: Exception | None = None,
-        ) -> bool:
-            result.failures.append(
-                RuleFailure(
-                    detail=detail,
-                    condition=condition,
-                    reason_code=reason_code,
-                    cause=cause,
-                )
-            )
-            return not collect_all
-
-        # ── Safety class checks ──────────────────────────────────────────
-        if capability.safety_class == SafetyClass.WRITE:
-            if not (roles & {"writer", "admin"}):
-                detail = (
-                    f"WRITE capabilities require the 'writer' or 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="roles",
-                        required=["writer", "admin"],
-                        actual=sorted(roles),
-                        suggestion=f"Add 'writer' or 'admin' role to principal '{pid}'",
-                        reason_code=str(DenialReason.MISSING_ROLE),
-                    ),
-                    reason_code=str(DenialReason.MISSING_ROLE),
-                ):
-                    return result
-            stripped_len = len(justification.strip())
-            if stripped_len < MIN_JUSTIFICATION:
-                detail = (
-                    f"WRITE capabilities require a justification of at least "
-                    f"{MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace)."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="min_justification",
-                        required=MIN_JUSTIFICATION,
-                        actual=stripped_len,
-                        suggestion=(
-                            f"Provide justification with at least {MIN_JUSTIFICATION} "
-                            f"characters (currently {stripped_len})"
-                        ),
-                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                    ),
-                    reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                ):
-                    return result
-
-        elif capability.safety_class == SafetyClass.DESTRUCTIVE:
-            if "admin" not in roles:
-                detail = (
-                    f"DESTRUCTIVE capabilities require the 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="roles",
-                        required=["admin"],
-                        actual=sorted(roles),
-                        suggestion=f"Add 'admin' role to principal '{pid}'",
-                        reason_code=str(DenialReason.MISSING_ROLE),
-                    ),
-                    reason_code=str(DenialReason.MISSING_ROLE),
-                ):
-                    return result
-            stripped_len = len(justification.strip())
-            if stripped_len < MIN_JUSTIFICATION:
-                detail = (
-                    f"DESTRUCTIVE capabilities require a justification of at least "
-                    f"{MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace)."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="min_justification",
-                        required=MIN_JUSTIFICATION,
-                        actual=stripped_len,
-                        suggestion=(
-                            f"Provide justification with at least {MIN_JUSTIFICATION} "
-                            f"characters (currently {stripped_len})"
-                        ),
-                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                    ),
-                    reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                ):
-                    return result
-
-        # ── Sensitivity checks ───────────────────────────────────────────
-        if capability.sensitivity in (SensitivityTag.PII, SensitivityTag.PCI):
-            if "tenant" not in principal.attributes:
-                detail = (
-                    f"Capability '{cid}' has "
-                    f"{capability.sensitivity.value} sensitivity and requires "
-                    "the principal to have a 'tenant' attribute."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="tenant_attribute",
-                        required="present",
-                        actual="absent",
-                        suggestion=f"Add 'tenant' attribute to principal '{pid}'",
-                        reason_code=str(DenialReason.MISSING_TENANT_ATTRIBUTE),
-                    ),
-                    reason_code=str(DenialReason.MISSING_TENANT_ATTRIBUTE),
-                ):
-                    return result
-            if capability.allowed_fields and "pii_reader" not in roles:
-                constraints["allowed_fields"] = capability.allowed_fields
-                result.trace_steps.append(
-                    PolicyTraceStep(
-                        name="sensitivity:allowed_fields",
-                        outcome="constraint_applied",
-                        detail=f"applied allowed_fields={capability.allowed_fields}",
-                    )
-                )
-
-        if capability.sensitivity == SensitivityTag.SECRETS:
-            if not (roles & {"admin", "secrets_reader"}):
-                detail = (
-                    f"SECRETS capabilities require the 'admin' or 'secrets_reader' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="roles",
-                        required=["admin", "secrets_reader"],
-                        actual=sorted(roles),
-                        suggestion=f"Add 'admin' or 'secrets_reader' role to principal '{pid}'",
-                        reason_code=str(DenialReason.MISSING_ROLE),
-                    ),
-                    reason_code=str(DenialReason.MISSING_ROLE),
-                ):
-                    return result
-            stripped_len = len(justification.strip())
-            if stripped_len < MIN_JUSTIFICATION:
-                detail = (
-                    f"SECRETS capabilities require a justification of at least "
-                    f"{MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace)."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="min_justification",
-                        required=MIN_JUSTIFICATION,
-                        actual=stripped_len,
-                        suggestion=(
-                            f"Provide justification with at least {MIN_JUSTIFICATION} "
-                            f"characters (currently {stripped_len})"
-                        ),
-                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                    ),
-                    reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                ):
-                    return result
-
-        # ── Memory checks ────────────────────────────────────────────────
-        if capability.sensitivity == SensitivityTag.MEMORY:
-            memory_scope = str(request.scope.get("memory_scope", "")) if request.scope else ""
-            is_write = capability.safety_class in (
-                SafetyClass.WRITE,
-                SafetyClass.DESTRUCTIVE,
-            )
-            if is_write and not (roles & {"memory_writer", "admin"}):
-                detail = (
-                    f"MEMORY write capabilities require the 'memory_writer' or "
-                    f"'admin' role. Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="roles",
-                        required=["memory_writer", "admin"],
-                        actual=sorted(roles),
-                        suggestion=f"Add 'memory_writer' or 'admin' role to principal '{pid}'",
-                        reason_code=str(DenialReason.MEMORY_WRITE_REQUIRES_WRITER),
-                    ),
-                    reason_code=str(DenialReason.MEMORY_WRITE_REQUIRES_WRITER),
-                ):
-                    return result
-            if (
-                not is_write
-                and memory_scope == "sensitive"
-                and not (roles & {"memory_reader_sensitive", "admin"})
-            ):
-                detail = (
-                    f"MEMORY read with scope='sensitive' requires the "
-                    f"'memory_reader_sensitive' or 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="roles",
-                        required=["memory_reader_sensitive", "admin"],
-                        actual=sorted(roles),
-                        suggestion=(
-                            f"Add 'memory_reader_sensitive' or 'admin' role to "
-                            f"principal '{pid}' (or narrow the request scope away "
-                            f"from 'sensitive')"
-                        ),
-                        reason_code=str(DenialReason.MEMORY_SENSITIVE_READ_DENIED),
-                    ),
-                    reason_code=str(DenialReason.MEMORY_SENSITIVE_READ_DENIED),
-                ):
-                    return result
-
-        # ── Row cap ──────────────────────────────────────────────────────
-        max_rows = MAX_ROWS_SERVICE if "service" in roles else MAX_ROWS_USER
-        if "max_rows" in constraints:
-            try:
-                requested = int(constraints["max_rows"])
-            except (TypeError, ValueError) as exc:
-                detail = (
-                    f"Invalid 'max_rows' constraint: {constraints['max_rows']!r} "
-                    "is not a valid integer."
-                )
-                if add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="max_rows",
-                        required="integer",
-                        actual=constraints["max_rows"],
-                        suggestion="Provide 'max_rows' as a valid integer",
-                        reason_code=str(DenialReason.INVALID_CONSTRAINT),
-                    ),
-                    reason_code=str(DenialReason.INVALID_CONSTRAINT),
-                    cause=exc,
-                ):
-                    return result
-            else:
-                constraints["max_rows"] = min(max(requested, 0), max_rows)
-                result.trace_steps.append(
-                    PolicyTraceStep(
-                        name="row_cap",
-                        outcome="constraint_applied",
-                        detail="max_rows capped",
-                    )
-                )
-        else:
-            constraints["max_rows"] = max_rows
-            result.trace_steps.append(
-                PolicyTraceStep(
-                    name="row_cap",
-                    outcome="constraint_applied",
-                    detail="max_rows capped",
-                )
-            )
-
-        # ── Rate limiting ────────────────────────────────────────────────
-        rate_key = f"{pid}:{cid}"
-        if capability.safety_class in self._rate_limits:
-            limit, window = self._rate_limits[capability.safety_class]
-            if "service" in roles:
-                limit *= SERVICE_RATE_MULTIPLIER
-            allowed = (
-                self._limiter.peek(rate_key, limit, window)
-                if read_only
-                else self._limiter.check(rate_key, limit, window)
-            )
-            if not allowed:
-                detail = (
-                    f"Rate limit exceeded: {limit} {capability.safety_class.value} "
-                    f"invocations per {window}s for principal '{pid}'"
-                )
-                add_failure(
-                    detail=detail,
-                    condition=FailedCondition(
-                        condition="rate_limit",
-                        required=f"fewer than {limit} invocations per {window}s",
-                        actual="limit exceeded",
-                        suggestion=(
-                            f"Wait for the {window}s rate-limit window before retrying "
-                            f"capability '{cid}'"
-                        ),
-                        reason_code=str(DenialReason.RATE_LIMITED),
-                    ),
-                    reason_code=str(DenialReason.RATE_LIMITED),
-                )
-            elif not read_only:
-                self._limiter.record(rate_key)
-
-        return result
+        return RuleChainResult(
+            constraints=ctx.constraints,
+            failures=failures,
+            trace_steps=ctx.trace_steps,
+        )
 
 
 __all__ = [
