@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Default policy decisions and explanations now share one ordered rule chain (#219).** `evaluate()` short-circuits the shared chain while `explain()` collects every failure through the same rules. Rate-limit explanation uses a read-only `peek()` so it can predict a denial without consuming, creating, or pruning limiter state. Agreement and no-mutation regressions cover the security-critical boundary.
+
 ## [0.12.0] - 2026-08-14
 
 ### Changed
