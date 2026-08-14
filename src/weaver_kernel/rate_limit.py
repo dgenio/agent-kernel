@@ -66,6 +66,22 @@ class RateLimiter:
             return True
         return len(entry.timestamps) < limit
 
+    def peek(self, key: str, limit: int, window_seconds: float) -> bool:
+        """Read-only counterpart to :meth:`check`.
+
+        Returns whether the next invocation would be within the limit without
+        creating a window, pruning expired timestamps, or otherwise mutating
+        limiter state. Policy explanation uses this path so explaining a
+        decision can never consume or rewrite rate-limit budget.
+        """
+        now = self._clock()
+        cutoff = now - window_seconds
+        entry = self._windows.get(key)
+        if entry is None:
+            return True
+        active = sum(timestamp > cutoff for timestamp in entry.timestamps)
+        return active < limit
+
     def record(self, key: str) -> None:
         """Record an invocation for *key*."""
         self._windows[key].timestamps.append(self._clock())
