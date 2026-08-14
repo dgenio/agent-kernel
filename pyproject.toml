@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "weaver-kernel"
 version = "0.11.0"
-description = "Capability-based security kernel for AI agents operating in large tool ecosystems"
+description = "Execution enforcement and audit for AI-agent actions"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
