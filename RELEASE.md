@@ -89,6 +89,56 @@ python -m pypi_attestations verify pypi \
   weaver_kernel-<version>-py3-none-any.whl
 ```
 
+## Writing release notes
+
+The `publish.yml` workflow seeds the GitHub Release with **auto-generated notes**
+(a flat list of merged PR titles). Those are a starting point, not the finished
+product — **rewrite them** before the release is done.
+
+Release notes are a **decision-support document**, not a commit log. Optimize for
+the reader making a decision, not the maintainer looking up a PR. Write for these
+readers, in priority order:
+
+1. **Existing adopters** deciding *"do I upgrade, and will it break me?"* — lead
+   with breaking changes and migrations.
+2. **Security auditors and AI agents** deciding *"is this safe to adopt/bump?"* —
+   call out security-relevant and behavior-default changes explicitly, so they
+   can be found without reading prose.
+3. **Evaluators** deciding *"is this project alive and going my way?"* — give a
+   short narrative of the release's theme.
+4. **Maintainers / future self** — keep PR links as trailing citations.
+
+Structure (mirror `CHANGELOG.md`; do not invent a third format):
+
+- **Highlights** — 2–3 sentences naming the release's theme.
+- **⚠️ Breaking changes** *first* — exact symbol + migration for each.
+- **🔒 Security** — fail-closed/default changes, redaction, supply-chain; tagged.
+- **✨ New features** — grouped by theme, flagship first.
+- **🔧 Infrastructure & docs** — collapse Dependabot/CI churn into a line or two;
+  never let it dominate the notes.
+- **🤖 For automated tooling** — an explicit, greppable list of new public
+  symbols plus a pointer to the breaking-change section.
+- **Full Changelog** compare link last.
+
+Apply the rewrite to the live release with a notes file (avoids shell-escaping):
+
+```bash
+gh release edit v<version> --notes-file <notes.md>
+```
+
+Non-negotiables for this library:
+
+- **Breaking-changes-first** and **security-tagged** — fail-closed behavior is
+  the whole value proposition, so upgrade-safety information leads.
+- Keep the notes **consistent with `CHANGELOG.md`**; the two surfaces must not
+  drift.
+- **Bury dependency-bump noise**; surface behavior and API changes.
+
+Revisit this convention if the audience mix changes — a stable 1.x with many
+production adopters would weight migrations even more heavily, while a
+pre-adoption phase weights the evaluator narrative. Update this section when the
+logic should change.
+
 ## Trusted Publisher Setup
 
 Trusted Publisher uses OpenID Connect (OIDC) so the GitHub Actions workflow can
