@@ -99,7 +99,7 @@ Intent-aware rules fail closed: a request with `intent=None` never matches a rul
 
 #### Denial explanations
 
-`PolicyEngine.explain()` (when available) returns a structured `DenialExplanation` with `denied`, `rule_name`, a `failed_conditions: list[FailedCondition]` describing each missing condition with `required`/`actual`/`suggestion`/`reason_code`, a `remediation` list, a human-readable `narrative`, and a top-level `reason_code` (the code of the first failed condition). Engines collect all failing conditions (no short-circuit) so callers get the full picture. For `DeclarativePolicyEngine`, an explicit deny rule that fully matches is reported as the cause; partial-match deny rules are skipped during explanation so the surfaced advice is actionable rather than self-defeating.
+`PolicyEngine.explain()` (when available) returns a structured `DenialExplanation` with `denied`, `rule_name`, a `failed_conditions: list[FailedCondition]` describing each missing condition with `required`/`actual`/`suggestion`/`reason_code`, a `remediation` list, a human-readable `narrative`, and a top-level `reason_code` (the code of the first failed condition). Engines collect all failing conditions (no short-circuit) so callers get the full picture. `DefaultPolicyEngine.evaluate()` and `.explain()` are driven by one internal ordered rule chain; evaluation short-circuits and records rate usage, while explanation traverses the same rate-limit rule through a read-only `peek()` that never mutates limiter state. For `DeclarativePolicyEngine`, an explicit deny rule that fully matches is reported as the cause; partial-match deny rules are skipped during explanation so the surfaced advice is actionable rather than self-defeating.
 
 #### Reason codes
 
