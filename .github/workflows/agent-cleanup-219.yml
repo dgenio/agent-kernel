@@ -48,19 +48,35 @@ jobs:
               raise SystemExit("expected coding_agent to use _MIN_JUSTIFICATION")
           text = text.replace("_MIN_JUSTIFICATION", "MIN_JUSTIFICATION")
           path.write_text(text, encoding="utf-8")
+
+          path = Path("tests/test_policy_properties.py")
+          text = path.read_text(encoding="utf-8")
+          old = 'from weaver_kernel.policy import _MAX_ROWS_SERVICE, _MAX_ROWS_USER\n'
+          new = (
+              'from weaver_kernel.default_policy_rule_types import (\n'
+              '    MAX_ROWS_SERVICE,\n'
+              '    MAX_ROWS_USER,\n'
+              ')\n'
+          )
+          if text.count(old) != 1:
+              raise SystemExit(f"unexpected property-test import count: {text.count(old)}")
+          text = text.replace(old, new, 1)
+          text = text.replace("_MAX_ROWS_SERVICE", "MAX_ROWS_SERVICE")
+          text = text.replace("_MAX_ROWS_USER", "MAX_ROWS_USER")
+          path.write_text(text, encoding="utf-8")
           PY
           git diff --check
       - name: Install development dependencies
         run: python -m pip install -e '.[dev]'
       - name: Normalize touched imports
-        run: python -m ruff check --fix src/weaver_kernel/policy.py src/weaver_kernel/coding_agent.py
+        run: python -m ruff check --fix src/weaver_kernel/policy.py src/weaver_kernel/coding_agent.py tests/test_policy_properties.py
       - name: Run authoritative repository gate
         run: make ci
       - name: Commit verified cleanup
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/weaver_kernel/policy.py src/weaver_kernel/coding_agent.py
+          git add src/weaver_kernel/policy.py src/weaver_kernel/coding_agent.py tests/test_policy_properties.py
           if ! git diff --cached --quiet; then
             git commit -m "[agent-cleanup-219] Remove unused policy aliases"
             git push origin HEAD:agent/unify-policy-rule-chain-219
