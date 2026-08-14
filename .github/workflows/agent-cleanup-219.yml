@@ -23,6 +23,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+
           path = Path("src/weaver_kernel/policy.py")
           text = path.read_text(encoding="utf-8")
           old_import = '''from .default_policy_rules import (\n    MAX_ROWS_SERVICE,\n    MAX_ROWS_USER,\n    MIN_JUSTIFICATION,\n    DefaultPolicyRuleChain,\n)\n'''
@@ -34,6 +35,19 @@ jobs:
           if text.count(dead) != 1:
               raise SystemExit(f"unexpected dead-alias block count: {text.count(dead)}")
           path.write_text(text.replace(dead, "", 1), encoding="utf-8")
+
+          path = Path("src/weaver_kernel/coding_agent.py")
+          text = path.read_text(encoding="utf-8")
+          old = 'from .policy import _MIN_JUSTIFICATION\n'
+          new = 'from .default_policy_rule_types import MIN_JUSTIFICATION\n'
+          if text.count(old) != 1:
+              raise SystemExit(f"unexpected coding_agent import count: {text.count(old)}")
+          text = text.replace(old, new, 1)
+          count = text.count("_MIN_JUSTIFICATION")
+          if count == 0:
+              raise SystemExit("expected coding_agent to use _MIN_JUSTIFICATION")
+          text = text.replace("_MIN_JUSTIFICATION", "MIN_JUSTIFICATION")
+          path.write_text(text, encoding="utf-8")
           PY
           git diff --check
       - name: Install development dependencies
@@ -44,7 +58,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/weaver_kernel/policy.py
+          git add src/weaver_kernel/policy.py src/weaver_kernel/coding_agent.py
           if ! git diff --cached --quiet; then
             git commit -m "[agent-cleanup-219] Remove unused policy aliases"
             git push origin HEAD:agent/unify-policy-rule-chain-219
