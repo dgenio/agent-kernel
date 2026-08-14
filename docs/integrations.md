@@ -86,6 +86,9 @@ asyncio.run(main())
 ### Notes
 
 - `discover()` converts `tools/list` results into `Capability` objects.
+- Safety classification of discovered tools is documented in
+  [MCP safety classification](mcp-safety-classification.md). Unannotated tools
+  are rejected by default; use `safety_class_map` or opt in to a fallback class.
 - `execute()` calls `tools/call` and normalizes MCP content blocks for the firewall.
 - MCP `isError` responses raise `DriverError` with the server-provided detail.
 - If `mcp` is not installed, factory methods raise a helpful `ImportError`.

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Fail-closed MCP tool discovery (#181).** `MCPDriver.discover()` now rejects
+  tools that lack both an explicit operator `safety_class_map` and usable MCP
+  safety hints, rather than silently defaulting to `READ`. A new
+  `unannotated_safety` parameter provides an explicit opt-in fallback. See
+  [docs/mcp-safety-classification.md](docs/mcp-safety-classification.md) for
+  precedence rules and migration guidance.
+
 ### Added
 - **Coding-agent least privilege (#253).** `CodingAgentPolicyEngine` introduces
   narrow repository-read/write, local-test, network, secret, PR-create, and

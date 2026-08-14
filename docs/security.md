@@ -86,9 +86,10 @@ Streaming redaction also has a bounded overlap/memory trade-off: sufficiently pa
 
 MCP tool annotations are hints, not a trusted authorization statement.
 
-The current backlog contains a security-critical hardening item (#181) because unannotated tools must not silently receive the least-restricted safety classification on an advertised least-privilege path.
+Explicit operator mappings (`safety_class_map`) take precedence over server-provided hints. `destructiveHint=True` wins over `readOnlyHint=True` when both are present. Tools with neither usable hints nor an explicit mapping are **rejected by default** (#181) rather than silently becoming `READ`.
 
-Until that item is resolved, production integrations should supply an explicit `safety_class_map` for discovered tools rather than trusting the default fallback.
+For full precedence rules and migration from pre-#181 behavior, see
+[mcp-safety-classification.md](mcp-safety-classification.md).
 
 MCP SDK/protocol compatibility is also a live support boundary (#263, #173). Check the supported dependency range before relying on the integration.
 

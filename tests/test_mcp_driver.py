@@ -134,7 +134,11 @@ async def test_discover_converts_tools_to_capabilities() -> None:
     )
 
     capabilities = await driver.discover(
-        namespace="fs", safety_class_map={"write_file": SafetyClass.WRITE}
+        namespace="fs",
+        safety_class_map={
+            "list_files": SafetyClass.READ,
+            "write_file": SafetyClass.WRITE,
+        },
     )
 
     assert [cap.capability_id for cap in capabilities] == [
@@ -265,7 +269,7 @@ async def test_kernel_pipeline_with_discover_register_grant_invoke() -> None:
         transport="stdio",
     )
 
-    capabilities = await driver.discover()
+    capabilities = await driver.discover(safety_class_map={"math.sum": SafetyClass.READ})
     registry = CapabilityRegistry()
     registry.register_many(capabilities)
 
@@ -313,7 +317,10 @@ async def test_real_fastmcp_in_process_discover_and_execute() -> None:
         transport="stdio",
     )
 
-    capabilities = await driver.discover(namespace="math")
+    capabilities = await driver.discover(
+        namespace="math",
+        safety_class_map={"add": SafetyClass.READ},
+    )
     assert any(cap.capability_id == "math.add" for cap in capabilities)
     add_cap = next(c for c in capabilities if c.capability_id == "math.add")
     assert add_cap.impl is not None
