@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-14
+
 ### Changed
 - **Fail-closed MCP tool discovery (#181).** `MCPDriver.discover()` now rejects
   tools that lack both an explicit operator `safety_class_map` and usable MCP
