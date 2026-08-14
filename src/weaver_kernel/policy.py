@@ -299,8 +299,7 @@ class DefaultPolicyEngine:
         if denied:
             first = failed[0]
             rule_name = (
-                f"{capability.safety_class.value.lower()}-"
-                f"{first.condition.replace('_', '-')}"
+                f"{capability.safety_class.value.lower()}-{first.condition.replace('_', '-')}"
             )
             narrative = (
                 f"Request for '{cid}' by '{pid}' would be denied: "
@@ -310,10 +309,7 @@ class DefaultPolicyEngine:
             primary_code = first.reason_code
         else:
             rule_name = "allowed"
-            narrative = (
-                f"Request for '{cid}' by '{pid}' would be allowed by "
-                "DefaultPolicyEngine."
-            )
+            narrative = f"Request for '{cid}' by '{pid}' would be allowed by DefaultPolicyEngine."
             primary_code = None
 
         return DenialExplanation(

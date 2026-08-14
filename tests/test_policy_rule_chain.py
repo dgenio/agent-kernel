@@ -34,7 +34,9 @@ def _cap(
     )
 
 
-def _request(*, max_rows: object | None = None, memory_scope: str | None = None) -> CapabilityRequest:
+def _request(
+    *, max_rows: object | None = None, memory_scope: str | None = None
+) -> CapabilityRequest:
     constraints = {} if max_rows is None else {"max_rows": max_rows}
     scope = {} if memory_scope is None else {"memory_scope": memory_scope}
     return CapabilityRequest(
