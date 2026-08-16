@@ -21,10 +21,8 @@ logger = logging.getLogger(__name__)
 SECRET_ENV_VAR = "WEAVER_KERNEL_SECRET"
 """Environment variable holding the HMAC secret used for tokens and audit chains."""
 
-PRODUCTION_CHECKLIST_URL = (
-    "https://github.com/dgenio/agent-kernel/blob/main/docs/production-checklist.md"
-)
-"""Stable operator guidance linked from the development-secret warning."""
+PRODUCTION_CHECKLIST_PATH = "docs/production-checklist.md"
+"""Repository-relative operator guidance referenced by the development warning."""
 
 _DEV_SECRET: str | None = None
 _DEV_SECRET_LOCK = threading.Lock()
@@ -50,7 +48,7 @@ def _get_secret() -> str:
                 "production. Production checklist: %s",
                 SECRET_ENV_VAR,
                 SECRET_ENV_VAR,
-                PRODUCTION_CHECKLIST_URL,
+                PRODUCTION_CHECKLIST_PATH,
             )
     return _DEV_SECRET
 
