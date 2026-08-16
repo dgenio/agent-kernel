@@ -233,6 +233,7 @@ The historical GitHub slug is intentionally retained for now. A repository renam
 
 - [Security Contract](docs/security-contract.md)
 - [Security Model](docs/security.md)
+- [Production checklist](docs/production-checklist.md)
 - [Roadmap](ROADMAP.md)
 - [Tutorial](docs/tutorial.md)
 - [Architecture](docs/architecture.md)
