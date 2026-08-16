@@ -96,7 +96,7 @@ Do not publish “framework X is secured by Kernel” unless every relevant exec
 
 Sharing `WEAVER_KERNEL_SECRET` lets workers verify the same HMAC signatures; it does **not** automatically share all enforcement state.
 
-Review [deployment-consistency.md](deployment-consistency.md) when that supported-path documentation is present in your release. In the current design, process-local state can include revocation, rate-limit windows, handles, budgets and traces unless an appropriate shared backend owns that state.
+Deployment-consistency guidance is still being formalized. In the current design, process-local state can include revocation, rate-limit windows, handles, budgets and traces unless an appropriate shared backend owns that state.
 
 If your guarantee requires immediate deployment-wide revocation or one global rate limit, prove that the backing architecture provides it before adding workers.
 
