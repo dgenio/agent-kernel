@@ -1614,8 +1614,12 @@ async def test_malformed_args_constraint_denied(
     "spec,needle",
     [
         ({"allowed_keys": 5}, "allowed_keys"),
+        # An unhashable element would blow up set(allowed_keys) with a TypeError.
+        ({"allowed_keys": ["operation", ["nested"]]}, "allowed_keys"),
         ({"pinned": ["not", "a", "dict"]}, "pinned"),
         ({"prefix": ["not", "a", "dict"]}, "prefix"),
+        # A non-string prefix would blow up value.startswith() with a TypeError.
+        ({"prefix": {"path": 123}}, "prefix"),
     ],
 )
 async def test_malformed_arg_constraint_nested_type_fails_closed(

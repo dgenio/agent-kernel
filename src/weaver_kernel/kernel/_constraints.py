@@ -87,7 +87,15 @@ def enforce_arg_constraints(args: dict[str, Any], constraints: dict[str, Any]) -
     if allowed is not None:
         if not isinstance(allowed, (list, tuple, set)):
             raise _violation("malformed 'args.allowed_keys' constraint: expected a list.")
-        extra = sorted(k for k in args if k not in set(allowed))
+        # Every element must be a (hashable) string; a non-string — including an
+        # unhashable list/dict — would otherwise blow up `set(allowed)` with a
+        # TypeError that escapes the audited denial path.
+        if not all(isinstance(k, str) for k in allowed):
+            raise _violation(
+                "malformed 'args.allowed_keys' constraint: expected a list of strings."
+            )
+        permitted = set(allowed)
+        extra = sorted(k for k in args if k not in permitted)
         if extra:
             raise _violation(f"arguments {extra} are not permitted by the token's allowed_keys.")
 
@@ -104,6 +112,12 @@ def enforce_arg_constraints(args: dict[str, Any], constraints: dict[str, Any]) -
         if not isinstance(prefix, dict):
             raise _violation("malformed 'args.prefix' constraint: expected an object.")
         for key, required_prefix in prefix.items():
+            # The pinned prefix itself must be a string; otherwise `startswith`
+            # raises TypeError on an otherwise-valid string argument.
+            if not isinstance(required_prefix, str):
+                raise _violation(
+                    f"malformed 'args.prefix' constraint for '{key}': expected a string prefix."
+                )
             value = args.get(key)
             if not isinstance(value, str) or not value.startswith(required_prefix):
                 raise _violation(
