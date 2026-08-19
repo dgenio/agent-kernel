@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 
+from ._hmac_provider import HMACTokenProvider
 from .coding_agent import CodingAgentPolicyEngine, enforce_coding_agent_constraints
 from .drivers.base import ExecutionContext
 from .drivers.memory import InMemoryDriver
@@ -31,7 +32,6 @@ from .models import (
 from .policy_reasons import DenialReason
 from .registry import CapabilityRegistry
 from .router import StaticRouter
-from .tokens import HMACTokenProvider
 
 _CAPABILITIES: tuple[tuple[str, SafetyClass, SensitivityTag], ...] = (
     ("repo.read.files", SafetyClass.READ, SensitivityTag.NONE),

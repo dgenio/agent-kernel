@@ -1835,3 +1835,43 @@ def test_policy_denied_default_reason_code_is_none() -> None:
 def test_policy_denied_carries_reason_code() -> None:
     err = PolicyDenied("msg", reason_code=DenialReason.MISSING_ROLE)
     assert err.reason_code == DenialReason.MISSING_ROLE
+
+
+# ── Per-grant TTL configuration (#203) ─────────────────────────────────────────
+
+
+def test_max_ttl_s_scalar_resolves_for_all_classes() -> None:
+    from weaver_kernel.policy_ttl import resolve_max_ttl_s
+
+    engine = DefaultPolicyEngine(max_ttl_s=300)
+    assert engine.max_ttl_s == 300
+    assert resolve_max_ttl_s(engine.max_ttl_s, _cap("c", SafetyClass.READ)) == 300
+    assert resolve_max_ttl_s(engine.max_ttl_s, _cap("c", SafetyClass.DESTRUCTIVE)) == 300
+
+
+def test_max_ttl_s_per_class_map_resolves_and_defaults_to_none() -> None:
+    from weaver_kernel.policy_ttl import resolve_max_ttl_s
+
+    engine = DefaultPolicyEngine(max_ttl_s={SafetyClass.READ: 60})
+    assert resolve_max_ttl_s(engine.max_ttl_s, _cap("c", SafetyClass.READ)) == 60
+    # A class absent from the map is uncapped.
+    assert resolve_max_ttl_s(engine.max_ttl_s, _cap("c", SafetyClass.WRITE)) is None
+
+
+def test_max_ttl_s_none_is_uncapped() -> None:
+    from weaver_kernel.policy_ttl import resolve_max_ttl_s
+
+    engine = DefaultPolicyEngine()
+    assert engine.max_ttl_s is None
+    assert resolve_max_ttl_s(engine.max_ttl_s, _cap("c", SafetyClass.READ)) is None
+
+
+@pytest.mark.parametrize("bad", [0, -1, {SafetyClass.READ: 0}, {SafetyClass.WRITE: -5}, True])
+def test_max_ttl_s_non_positive_rejected_at_construction(bad: object) -> None:
+    with pytest.raises(AgentKernelError, match="max_ttl_s"):
+        DefaultPolicyEngine(max_ttl_s=bad)  # type: ignore[arg-type]
+
+
+def test_max_ttl_s_non_safetyclass_key_rejected() -> None:
+    with pytest.raises(AgentKernelError, match="keys must be SafetyClass"):
+        DefaultPolicyEngine(max_ttl_s={"read": 60})  # type: ignore[dict-item]

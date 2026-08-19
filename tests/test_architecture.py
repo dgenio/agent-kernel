@@ -50,14 +50,15 @@ _SIZE_RATCHET: dict[str, int] = {
     "__init__.py": 341,
     "models.py": 753,
     "policy.py": 652,
-    "kernel/__init__.py": 541,
+    "kernel/__init__.py": 540,
     "adapters/_base.py": 459,
     "kernel/_invoke.py": 390,
     "firewall/transform.py": 377,
     "adapters/openai.py": 358,
     "stores/sqlite.py": 350,
-    "tokens.py": 336,
     "federation_discovery.py": 306,
+    # tokens.py was split into _token_signing.py + _hmac_provider.py (#185) and
+    # is now well under the 300-line budget, so it is no longer ratcheted.
 }
 
 _LINE_BUDGET = 300

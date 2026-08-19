@@ -57,8 +57,7 @@ Errors::
         AgentKernelError,
         TokenExpired, TokenInvalid, TokenScopeError, TokenRevoked,
         PolicyDenied, PolicyConfigError,
-        DriverError, FirewallError, AdapterParseError,
-        BudgetExhausted, BudgetConfigError,
+        DriverError, FirewallError, AdapterParseError, BudgetExhausted, BudgetConfigError,
         CapabilityNotFound, CapabilityAlreadyRegistered,
         HandleNotFound, HandleExpired, HandleTooLarge, HandleConstraintViolation,
         NamespaceNotFound, FederationError, ManifestError, ManifestSignatureError,
@@ -69,6 +68,7 @@ Errors::
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
+from ._hmac_provider import HMACTokenProvider
 from .adapters import AnthropicMiddleware, OpenAIMiddleware
 from .drivers.base import Driver, ExecutionContext
 from .drivers.http import HTTPDriver
@@ -177,7 +177,7 @@ from .stores import (
     TraceStoreProtocol,
     verify_chain,
 )
-from .tokens import CapabilityToken, HMACTokenProvider
+from .tokens import CapabilityToken
 from .trace import (
     TRACE_EXPORT_SCHEMA,
     TRACE_EXPORT_VERSION,
