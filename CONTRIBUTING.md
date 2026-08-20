@@ -2,6 +2,13 @@
 
 Thank you for your interest in contributing!
 
+Before changing a public or security-sensitive surface, read the
+[versioning/stability policy](docs/versioning.md) and the
+[Security Contract](docs/security-contract.md). Pre-1.0 does not mean accidental
+breaking changes are free: supported changes need an explicit compatibility and
+migration story, and unsafe compatibility should fail closed rather than be
+preserved silently.
+
 ## Development setup
 
 ```bash
@@ -52,6 +59,9 @@ These run as ordinary pytest checks (no extra commands):
 3. All checks in `make ci` must pass.
 4. Follow the existing code style (ruff-enforced).
 5. Write docstrings on all public interfaces.
+6. Identify whether a change affects public API, a machine/wire contract, an integration compatibility promise, or the Security Contract.
+7. For a deliberate breaking change, document the rationale and migration path in the same change/release workflow.
+8. Do not preserve a fail-open or invariant-violating behavior merely to avoid a breaking change.
 
 ## Security
 
