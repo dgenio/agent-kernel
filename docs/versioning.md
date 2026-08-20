@@ -29,7 +29,7 @@ Patch releases should be compatible bug fixes, security fixes, documentation cor
 
 A security fix may deliberately make previously permissive or undefined behavior fail closed. If that affects a supported usage pattern, the release notes must call it out prominently even when the public Python signature is unchanged.
 
-### Minor release: `0.x → 0.(x+1)`
+### Minor release: `0.x.y → 0.(x+1).0`
 
 Minor releases may add features and may contain **deliberate breaking changes** while the project is pre-1.0, but breaking changes are not license for surprise churn.
 
@@ -43,7 +43,7 @@ A planned breaking change must have:
 
 Minor releases should not bundle unrelated breaking changes merely because “0.x allows it.”
 
-### Major release: `1.0.0`
+### Major release: `0.x.y → 1.0.0`
 
 `1.0.0` means the project is prepared to treat its documented supported surfaces as a long-lived compatibility contract. It does **not** mean that every experimental idea in the backlog is complete.
 
