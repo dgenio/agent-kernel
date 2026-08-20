@@ -26,7 +26,7 @@ Use GitHub's private repository-security channel:
 
 Direct link when available:
 
-`https://github.com/dgenio/agent-kernel/security/advisories/new`
+<https://github.com/dgenio/agent-kernel/security/advisories/new>
 
 Include, where possible:
 
