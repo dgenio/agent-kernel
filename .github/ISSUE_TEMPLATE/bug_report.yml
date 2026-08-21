@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible problem in Weaver Kernel
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Weaver Kernel. If this may be a security vulnerability, **do not continue here**; use the private security-reporting link in the issue chooser instead.
+  - type: input
+    id: version
+    attributes:
+      label: Weaver Kernel version / commit
+      description: Package version (for example 0.x.y) or exact commit SHA.
+      placeholder: "0.x.y or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.x"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Kernel / invocation
+        - Policy / authorization
+        - Capability tokens / constraints
+        - Context Firewall / Frames / handles
+        - MCP integration
+        - Other integration / adapter
+        - Audit / traces
+        - Packaging / installation
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Prefer the smallest runnable snippet or test that demonstrates the problem. Remove credentials and real sensitive data.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect Kernel to do?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact exception/reason code/output when useful.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Integration / environment details
+      description: Relevant SDK versions, transport (stdio/HTTP), OS, framework, worker count, or deployment assumptions.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing open and closed issues for the same problem.
+          required: true
+        - label: This report does not contain credentials, customer data, or other secrets.
+          required: true
+        - label: I read the Security Contract if this concerns an enforcement/security boundary.
+          required: false

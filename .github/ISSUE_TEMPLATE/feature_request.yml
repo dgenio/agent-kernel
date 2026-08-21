@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a problem worth solving in Weaver Kernel
+title: "proposal: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Weaver Kernel uses a gate-driven roadmap. Please lead with the **user/security problem and evidence**, not only a desired API. Speculative platform expansion may be closed until adopter pull exists.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete problem cannot be solved adequately with the current Kernel, the host framework, or an existing IAM/policy system?
+    validations:
+      required: true
+  - type: textarea
+    id: users
+    attributes:
+      label: Who needs this?
+      description: Describe the real adopter/use case. Links to downstream code or reproducible examples are especially useful.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence / current workaround
+      description: What have you tried? What fails or becomes unsafe/expensive today?
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Smallest useful change
+      description: What is the narrowest change that would solve the problem without broadening Kernel into a general agent platform?
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security / compatibility impact
+      description: Does this change a principal, capability, constraint, execution, output, audit, protocol, or deployment guarantee? Could it introduce a fail-open path?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include native framework controls, external IAM/policy, AgentFence/gateway, or doing nothing when relevant.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched open and closed issues for related work.
+          required: true
+        - label: I read ROADMAP.md and understand this may be deferred if it is Gate-7 expansion without adopter pull.
+          required: true
