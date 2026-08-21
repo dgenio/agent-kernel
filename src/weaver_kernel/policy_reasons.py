@@ -54,6 +54,12 @@ class DenialReason(_StrEnumCompat):
     INVALID_CONSTRAINT = "invalid_constraint"
     """A constraint value (e.g. ``max_rows``) is not parseable or in range."""
 
+    TTL_EXCEEDED = "ttl_exceeded"
+    """A requested per-grant token TTL exceeds the policy maximum (#203)."""
+
+    ARG_CONSTRAINT_VIOLATION = "arg_constraint_violation"
+    """Invocation arguments violated a signed ``constraints["args"]`` rule (#183)."""
+
     # Rate limiting
     RATE_LIMITED = "rate_limited"
     """The sliding-window rate limit for this principal/capability was exceeded."""

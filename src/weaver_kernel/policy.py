@@ -4,31 +4,25 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Protocol
 
-from .enums import SafetyClass, SensitivityTag
+from .default_policy_rules import DefaultPolicyRuleChain
+from .enums import SafetyClass
 from .errors import AgentKernelError, PolicyDenied
 from .models import (
     Capability,
     CapabilityRequest,
     DenialExplanation,
-    FailedCondition,
     PolicyDecision,
     PolicyDecisionTrace,
     PolicyTraceStep,
     Principal,
 )
-from .policy_reasons import AllowReason, DenialReason
+from .policy_reasons import AllowReason
+from .policy_ttl import validate_max_ttl_s
 from .rate_limit import DEFAULT_RATE_LIMITS, SERVICE_RATE_MULTIPLIER, RateLimiter
 
 logger = logging.getLogger(__name__)
-
-# Minimum justification length for WRITE operations.
-_MIN_JUSTIFICATION = 15
-
-# Default max_rows caps.
-_MAX_ROWS_USER = 50
-_MAX_ROWS_SERVICE = 500
 
 # Backwards-compatible aliases — these used to be defined here. New code
 # should import the names without the leading underscore from ``rate_limit``.
@@ -133,6 +127,7 @@ class DefaultPolicyEngine:
         *,
         rate_limits: dict[SafetyClass, tuple[int, float]] | None = None,
         clock: Callable[[], float] | None = None,
+        max_ttl_s: int | dict[SafetyClass, int] | None = None,
     ) -> None:
         """Initialise the policy engine.
 
@@ -143,8 +138,9 @@ class DefaultPolicyEngine:
                 unspecified safety classes retain their default limits.
             clock: Monotonic clock callable for rate-limiter.
                 Defaults to :func:`time.monotonic`.
+            max_ttl_s: Maximum per-grant token TTL in seconds — one cap or a per-safety-class map; ``None`` = uncapped. A longer request is denied, not clamped (#203).
         """
-        limits = dict(_DEFAULT_RATE_LIMITS)
+        limits = dict(DEFAULT_RATE_LIMITS)
         if rate_limits is not None:
             limits.update(rate_limits)
         for sc, (count, window) in limits.items():
@@ -154,8 +150,15 @@ class DefaultPolicyEngine:
                     f"limit must be >= 1 and window must be > 0, "
                     f"got limit={count}, window={window}."
                 )
+        validate_max_ttl_s(max_ttl_s)
         self._rate_limits = limits
         self._limiter = RateLimiter(clock=clock)
+        self._rule_chain = DefaultPolicyRuleChain(
+            rate_limits=self._rate_limits, limiter=self._limiter
+        )
+        # Per-grant TTL cap (#203): read by perform_grant to bound/deny requested
+        # token lifetimes. ``None`` = uncapped. Validated above.
+        self.max_ttl_s = max_ttl_s
 
     @staticmethod
     def _deny(
@@ -185,27 +188,14 @@ class DefaultPolicyEngine:
         *,
         justification: str,
     ) -> PolicyDecision:
-        """Evaluate the request against the default policy rules.
+        """Evaluate the request against the shared default-policy rule chain.
 
-        Args:
-            request: The capability request being evaluated.
-            capability: The target capability.
-            principal: The requesting principal.
-            justification: Free-text justification from the caller.
-
-        Returns:
-            :class:`PolicyDecision` with ``allowed=True`` and any imposed
-            constraints, or raises :class:`PolicyDenied`.
-
-        Raises:
-            PolicyDenied: When the request violates a policy rule.
+        Decision traversal short-circuits on the first denial and may update
+        transient policy state (currently the sliding-window rate limiter).
+        ``explain()`` traverses this exact same chain in read-only mode.
         """
-        roles = set(principal.roles)
-        constraints: dict[str, Any] = dict(request.constraints)
-
         pid = principal.principal_id
         cid = capability.capability_id
-
         trace = PolicyDecisionTrace(
             engine="DefaultPolicyEngine",
             capability_id=cid,
@@ -213,227 +203,37 @@ class DefaultPolicyEngine:
             intent=request.intent,
             scope_keys=sorted(request.scope.keys()),
         )
+        result = self._rule_chain.run(
+            request,
+            capability,
+            principal,
+            justification=justification,
+            collect_all=False,
+            read_only=False,
+        )
+        trace.steps.extend(result.trace_steps)
 
-        def _record_deny(detail: str, code: str) -> None:
+        if result.failures:
+            failure = result.failures[0]
             trace.steps.append(
                 PolicyTraceStep(
                     name="deny",
                     outcome="denied",
-                    detail=detail,
-                    reason_code=code,
+                    detail=failure.detail,
+                    reason_code=failure.reason_code,
                 )
             )
             trace.final_outcome = "denied"
-            trace.final_reason_code = code
-
-        # ── Safety class checks ───────────────────────────────────────────────
-
-        if capability.safety_class == SafetyClass.WRITE:
-            if not (roles & {"writer", "admin"}):
-                detail = (
-                    f"WRITE capabilities require the 'writer' or 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                _record_deny(detail, DenialReason.MISSING_ROLE)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.MISSING_ROLE,
-                )
-            stripped_len = len(justification.strip())
-            if stripped_len < _MIN_JUSTIFICATION:
-                detail = (
-                    f"WRITE capabilities require a justification of at least "
-                    f"{_MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace)."
-                )
-                _record_deny(detail, DenialReason.INSUFFICIENT_JUSTIFICATION)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.INSUFFICIENT_JUSTIFICATION,
-                )
-
-        elif capability.safety_class == SafetyClass.DESTRUCTIVE:
-            if "admin" not in roles:
-                detail = (
-                    f"DESTRUCTIVE capabilities require the 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                _record_deny(detail, DenialReason.MISSING_ROLE)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.MISSING_ROLE,
-                )
-            stripped_len = len(justification.strip())
-            if stripped_len < _MIN_JUSTIFICATION:
-                detail = (
-                    f"DESTRUCTIVE capabilities require a justification of at least "
-                    f"{_MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace)."
-                )
-                _record_deny(detail, DenialReason.INSUFFICIENT_JUSTIFICATION)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.INSUFFICIENT_JUSTIFICATION,
-                )
-
-        # ── Sensitivity checks ────────────────────────────────────────────────
-
-        if capability.sensitivity in (SensitivityTag.PII, SensitivityTag.PCI):
-            if "tenant" not in principal.attributes:
-                detail = (
-                    f"Capability '{cid}' has "
-                    f"{capability.sensitivity.value} sensitivity and requires "
-                    "the principal to have a 'tenant' attribute."
-                )
-                _record_deny(detail, DenialReason.MISSING_TENANT_ATTRIBUTE)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.MISSING_TENANT_ATTRIBUTE,
-                )
-            # Enforce allowed_fields unless the principal is a pii_reader.
-            if capability.allowed_fields and "pii_reader" not in roles:
-                constraints["allowed_fields"] = capability.allowed_fields
-                trace.steps.append(
-                    PolicyTraceStep(
-                        name="sensitivity:allowed_fields",
-                        outcome="constraint_applied",
-                        detail=f"applied allowed_fields={capability.allowed_fields}",
-                    )
-                )
-
-        if capability.sensitivity == SensitivityTag.SECRETS:
-            if not (roles & {"admin", "secrets_reader"}):
-                detail = (
-                    f"SECRETS capabilities require the 'admin' or 'secrets_reader' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                _record_deny(detail, DenialReason.MISSING_ROLE)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.MISSING_ROLE,
-                )
-            stripped_len = len(justification.strip())
-            if stripped_len < _MIN_JUSTIFICATION:
-                detail = (
-                    f"SECRETS capabilities require a justification of at least "
-                    f"{_MIN_JUSTIFICATION} characters. "
-                    f"Got {len(justification)} characters "
-                    f"({stripped_len} after trimming whitespace)."
-                )
-                _record_deny(detail, DenialReason.INSUFFICIENT_JUSTIFICATION)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.INSUFFICIENT_JUSTIFICATION,
-                )
-
-        # ── Memory action checks ─────────────────────────────────────────────
-        # Placed AFTER all other sensitivity checks (see invariants.md:
-        # "rule placement matters"). Memory reads at scope == "sensitive"
-        # require an explicit reader role; memory writes are treated as
-        # higher-risk than reads because they persist into future sessions
-        # and require the 'memory_writer' role (or 'admin').
-        if capability.sensitivity == SensitivityTag.MEMORY:
-            memory_scope = str(request.scope.get("memory_scope", "")) if request.scope else ""
-            is_write = capability.safety_class in (
-                SafetyClass.WRITE,
-                SafetyClass.DESTRUCTIVE,
+            trace.final_reason_code = failure.reason_code
+            denial = self._deny(
+                failure.detail,
+                principal_id=pid,
+                capability_id=cid,
+                reason_code=failure.reason_code,
             )
-            if is_write and not (roles & {"memory_writer", "admin"}):
-                detail = (
-                    f"MEMORY write capabilities require the 'memory_writer' or "
-                    f"'admin' role. Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                _record_deny(detail, DenialReason.MEMORY_WRITE_REQUIRES_WRITER)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.MEMORY_WRITE_REQUIRES_WRITER,
-                )
-            if (
-                not is_write
-                and memory_scope == "sensitive"
-                and not (roles & {"memory_reader_sensitive", "admin"})
-            ):
-                detail = (
-                    f"MEMORY read with scope='sensitive' requires the "
-                    f"'memory_reader_sensitive' or 'admin' role. "
-                    f"Principal '{pid}' has roles: {sorted(roles)}."
-                )
-                _record_deny(detail, DenialReason.MEMORY_SENSITIVE_READ_DENIED)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.MEMORY_SENSITIVE_READ_DENIED,
-                )
-
-        # ── Row cap ───────────────────────────────────────────────────────────
-
-        max_rows = _MAX_ROWS_SERVICE if "service" in roles else _MAX_ROWS_USER
-        # Respect any tighter constraint from the request itself.
-        if "max_rows" in constraints:
-            try:
-                requested = int(constraints["max_rows"])
-            except (TypeError, ValueError) as exc:
-                detail = (
-                    f"Invalid 'max_rows' constraint: {constraints['max_rows']!r} "
-                    "is not a valid integer."
-                )
-                _record_deny(detail, DenialReason.INVALID_CONSTRAINT)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.INVALID_CONSTRAINT,
-                ) from exc
-            constraints["max_rows"] = min(max(requested, 0), max_rows)
-        else:
-            constraints["max_rows"] = max_rows
-        trace.steps.append(
-            PolicyTraceStep(
-                name="row_cap",
-                outcome="constraint_applied",
-                detail="max_rows capped",
-            )
-        )
-
-        # ── Rate limiting ─────────────────────────────────────────────────
-
-        rate_key = f"{pid}:{cid}"
-        if capability.safety_class in self._rate_limits:
-            limit, window = self._rate_limits[capability.safety_class]
-            if "service" in roles:
-                limit *= _SERVICE_RATE_MULTIPLIER
-            if not self._limiter.check(rate_key, limit, window):
-                detail = (
-                    f"Rate limit exceeded: {limit} {capability.safety_class.value} "
-                    f"invocations per {window}s for principal '{pid}'"
-                )
-                _record_deny(detail, DenialReason.RATE_LIMITED)
-                raise self._deny(
-                    detail,
-                    principal_id=pid,
-                    capability_id=cid,
-                    reason_code=DenialReason.RATE_LIMITED,
-                )
-            self._limiter.record(rate_key)
+            if failure.cause is not None:
+                raise denial from failure.cause
+            raise denial
 
         reason = "Request approved by DefaultPolicyEngine."
         trace.steps.append(
@@ -458,7 +258,7 @@ class DefaultPolicyEngine:
         return PolicyDecision(
             allowed=True,
             reason=reason,
-            constraints=constraints,
+            constraints=result.constraints,
             reason_code=str(AllowReason.DEFAULT_POLICY_ALLOW),
             trace=trace,
         )
@@ -471,160 +271,25 @@ class DefaultPolicyEngine:
         *,
         justification: str,
     ) -> DenialExplanation:
-        """Explain which policy conditions would deny *principal*'s *request*.
+        """Explain all failures from the same chain used by :meth:`evaluate`.
 
-        Traverses the same rule chain as :meth:`evaluate` but collects ALL
-        failing conditions instead of short-circuiting on the first failure.
-        Rate-limit state is excluded — it is transient and not remediable
-        by changing the request.
-
-        Args:
-            request: The capability request to explain.
-            capability: The target capability.
-            principal: The requesting principal.
-            justification: Free-text justification from the caller.
-
-        Returns:
-            :class:`DenialExplanation` with ``denied=False`` if allowed.
+        Explanation is strictly read-only: it collects all failed conditions,
+        including the current rate-limit condition, without recording usage or
+        pruning/creating limiter windows.
         """
-        roles = set(principal.roles)
         pid = principal.principal_id
         cid = capability.capability_id
-        failed: list[FailedCondition] = []
-
-        # ── Safety class checks ───────────────────────────────────────────────
-
-        if capability.safety_class == SafetyClass.WRITE:
-            if not (roles & {"writer", "admin"}):
-                failed.append(
-                    FailedCondition(
-                        condition="roles",
-                        required=["writer", "admin"],
-                        actual=sorted(roles),
-                        suggestion=f"Add 'writer' or 'admin' role to principal '{pid}'",
-                        reason_code=str(DenialReason.MISSING_ROLE),
-                    )
-                )
-            stripped = len(justification.strip())
-            if stripped < _MIN_JUSTIFICATION:
-                failed.append(
-                    FailedCondition(
-                        condition="min_justification",
-                        required=_MIN_JUSTIFICATION,
-                        actual=stripped,
-                        suggestion=(
-                            f"Provide justification with at least {_MIN_JUSTIFICATION} "
-                            f"characters (currently {stripped})"
-                        ),
-                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                    )
-                )
-
-        elif capability.safety_class == SafetyClass.DESTRUCTIVE:
-            if "admin" not in roles:
-                failed.append(
-                    FailedCondition(
-                        condition="roles",
-                        required=["admin"],
-                        actual=sorted(roles),
-                        suggestion=f"Add 'admin' role to principal '{pid}'",
-                        reason_code=str(DenialReason.MISSING_ROLE),
-                    )
-                )
-            stripped = len(justification.strip())
-            if stripped < _MIN_JUSTIFICATION:
-                failed.append(
-                    FailedCondition(
-                        condition="min_justification",
-                        required=_MIN_JUSTIFICATION,
-                        actual=stripped,
-                        suggestion=(
-                            f"Provide justification with at least {_MIN_JUSTIFICATION} "
-                            f"characters (currently {stripped})"
-                        ),
-                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                    )
-                )
-
-        # ── Sensitivity checks ────────────────────────────────────────────────
-
-        if (
-            capability.sensitivity in (SensitivityTag.PII, SensitivityTag.PCI)
-            and "tenant" not in principal.attributes
-        ):
-            failed.append(
-                FailedCondition(
-                    condition="tenant_attribute",
-                    required="present",
-                    actual="absent",
-                    suggestion=f"Add 'tenant' attribute to principal '{pid}'",
-                    reason_code=str(DenialReason.MISSING_TENANT_ATTRIBUTE),
-                )
-            )
-
-        if capability.sensitivity == SensitivityTag.SECRETS:
-            if not (roles & {"admin", "secrets_reader"}):
-                failed.append(
-                    FailedCondition(
-                        condition="roles",
-                        required=["admin", "secrets_reader"],
-                        actual=sorted(roles),
-                        suggestion=f"Add 'admin' or 'secrets_reader' role to principal '{pid}'",
-                        reason_code=str(DenialReason.MISSING_ROLE),
-                    )
-                )
-            stripped = len(justification.strip())
-            if stripped < _MIN_JUSTIFICATION:
-                failed.append(
-                    FailedCondition(
-                        condition="min_justification",
-                        required=_MIN_JUSTIFICATION,
-                        actual=stripped,
-                        suggestion=(
-                            f"Provide justification with at least {_MIN_JUSTIFICATION} "
-                            f"characters (currently {stripped})"
-                        ),
-                        reason_code=str(DenialReason.INSUFFICIENT_JUSTIFICATION),
-                    )
-                )
-
-        if capability.sensitivity == SensitivityTag.MEMORY:
-            memory_scope = str(request.scope.get("memory_scope", "")) if request.scope else ""
-            is_write = capability.safety_class in (
-                SafetyClass.WRITE,
-                SafetyClass.DESTRUCTIVE,
-            )
-            if is_write and not (roles & {"memory_writer", "admin"}):
-                failed.append(
-                    FailedCondition(
-                        condition="roles",
-                        required=["memory_writer", "admin"],
-                        actual=sorted(roles),
-                        suggestion=(f"Add 'memory_writer' or 'admin' role to principal '{pid}'"),
-                        reason_code=str(DenialReason.MEMORY_WRITE_REQUIRES_WRITER),
-                    )
-                )
-            if (
-                not is_write
-                and memory_scope == "sensitive"
-                and not (roles & {"memory_reader_sensitive", "admin"})
-            ):
-                failed.append(
-                    FailedCondition(
-                        condition="roles",
-                        required=["memory_reader_sensitive", "admin"],
-                        actual=sorted(roles),
-                        suggestion=(
-                            f"Add 'memory_reader_sensitive' or 'admin' role to "
-                            f"principal '{pid}' (or narrow the request scope away "
-                            f"from 'sensitive')"
-                        ),
-                        reason_code=str(DenialReason.MEMORY_SENSITIVE_READ_DENIED),
-                    )
-                )
-
+        result = self._rule_chain.run(
+            request,
+            capability,
+            principal,
+            justification=justification,
+            collect_all=True,
+            read_only=True,
+        )
+        failed = [failure.condition for failure in result.failures]
         denied = bool(failed)
-        remediation = [fc.suggestion for fc in failed]
+        remediation = [condition.suggestion for condition in failed]
 
         if denied:
             first = failed[0]
@@ -633,7 +298,7 @@ class DefaultPolicyEngine:
             )
             narrative = (
                 f"Request for '{cid}' by '{pid}' would be denied: "
-                + "; ".join(fc.suggestion for fc in failed)
+                + "; ".join(condition.suggestion for condition in failed)
                 + "."
             )
             primary_code = first.reason_code

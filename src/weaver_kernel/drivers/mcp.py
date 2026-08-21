@@ -10,9 +10,9 @@ from ..enums import SafetyClass
 from ..errors import DriverError
 from ..models import Capability, ImplementationRef, RawResult
 from .base import ExecutionContext
+from .mcp_classification import UnannotatedSafety, classify_tool_specs
 from .mcp_support import (
     SessionFactory,
-    ToolSpec,
     build_http_session_factory,
     build_stdio_session_factory,
     call_tool,
@@ -49,19 +49,6 @@ def _load_mcp_error() -> type[BaseException] | None:
 # dependency is not installed (factory methods raise ImportError first, so this
 # is never None on a live driver instance).
 _McpError: type[BaseException] | None = _load_mcp_error()
-
-
-def _infer_safety_class(spec: ToolSpec) -> SafetyClass:
-    """Infer a SafetyClass from MCP ToolAnnotations hints.
-
-    Uses a conservative default of READ when annotations are absent.
-    The caller's safety_class_map takes precedence over the inferred value.
-    """
-    if spec.destructive_hint:
-        return SafetyClass.DESTRUCTIVE
-    if spec.read_only_hint:
-        return SafetyClass.READ
-    return SafetyClass.READ
 
 
 class MCPDriver:
@@ -136,22 +123,29 @@ class MCPDriver:
         *,
         namespace: str | None = None,
         safety_class_map: dict[str, SafetyClass] | None = None,
+        unannotated_safety: UnannotatedSafety = "reject",
     ) -> list[Capability]:
-        """Discover MCP tools across all pages and convert them to capabilities."""
+        """Discover MCP tools and convert them to deliberately classified capabilities.
+
+        Explicit ``safety_class_map`` entries take precedence over advisory MCP
+        annotations. Tools with neither an override nor a useful annotation are
+        rejected by default. Pass a ``SafetyClass`` via ``unannotated_safety``
+        only when an operator deliberately accepts one fallback classification.
+        """
         tools = await self._run_with_retry(
             operation_name="tools/list",
             action=self._fetch_all_tools,
         )
+        classified = classify_tool_specs(
+            extract_tool_specs(tools),
+            driver_id=self._driver_id,
+            safety_class_map=safety_class_map,
+            unannotated_safety=unannotated_safety,
+        )
 
         capabilities: list[Capability] = []
-        for spec in extract_tool_specs(tools):
+        for spec, safety_class in classified:
             capability_id = f"{namespace}.{spec.name}" if namespace else spec.name
-            inferred = _infer_safety_class(spec)
-            safety_class = (
-                safety_class_map.get(spec.name, inferred)
-                if safety_class_map is not None
-                else inferred
-            )
             capabilities.append(
                 Capability(
                     capability_id=capability_id,

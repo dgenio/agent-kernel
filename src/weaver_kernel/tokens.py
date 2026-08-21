@@ -1,22 +1,22 @@
-"""HMAC-SHA256 token provider for capability authorization."""
+"""Capability tokens: the :class:`CapabilityToken` dataclass and the
+:class:`TokenProvider` Protocol.
+
+The concrete :class:`HMACTokenProvider` lives in
+:mod:`weaver_kernel._hmac_provider` (extracted to honour the AGENTS.md
+300-line module budget). Import it from :mod:`weaver_kernel` (public) or
+:mod:`weaver_kernel._hmac_provider`. It is intentionally *not* re-exported here:
+``_hmac_provider`` imports this module, so re-exporting would create an import
+cycle (flagged by CodeQL).
+"""
 
 from __future__ import annotations
 
 import datetime
-import hashlib
-import hmac
 import json
-import logging
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ._secrets import _get_secret
-from .errors import TokenExpired, TokenInvalid, TokenRevoked, TokenScopeError
-from .stores import InMemoryRevocationStore, RevocationStoreProtocol
-
-logger = logging.getLogger(__name__)
-
+from ._token_signing import parse_token_fields
 
 # ── Token dataclass ───────────────────────────────────────────────────────────
 
@@ -38,11 +38,16 @@ class CapabilityToken:
     constraints: dict[str, Any] = field(default_factory=dict)
     audit_id: str = ""
     signature: str = ""
+    key_id: str = ""
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
     def _signable_payload(self) -> str:
-        """Return the canonical JSON string used as the HMAC message."""
+        """Return the canonical JSON string used as the HMAC message.
+
+        The signing ``key_id`` is included so a token cannot be re-labelled to
+        verify against a different rotation key (#185).
+        """
         payload = {
             "token_id": self.token_id,
             "capability_id": self.capability_id,
@@ -51,6 +56,7 @@ class CapabilityToken:
             "expires_at": self.expires_at.isoformat(),
             "constraints": self.constraints,
             "audit_id": self.audit_id,
+            "key_id": self.key_id,
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -65,21 +71,25 @@ class CapabilityToken:
             "constraints": self.constraints,
             "audit_id": self.audit_id,
             "signature": self.signature,
+            "key_id": self.key_id,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CapabilityToken:
-        """Reconstruct a token from a plain dict."""
-        return cls(
-            token_id=data["token_id"],
-            capability_id=data["capability_id"],
-            principal_id=data["principal_id"],
-            issued_at=datetime.datetime.fromisoformat(data["issued_at"]),
-            expires_at=datetime.datetime.fromisoformat(data["expires_at"]),
-            constraints=data.get("constraints", {}),
-            audit_id=data.get("audit_id", ""),
-            signature=data.get("signature", ""),
-        )
+        """Reconstruct a token from a plain dict.
+
+        Args:
+            data: A serialized token, e.g. from :meth:`to_dict` or an untrusted
+                transport source.
+
+        Returns:
+            The reconstructed :class:`CapabilityToken`.
+
+        Raises:
+            TokenInvalid: If *data* is missing a required field, has a field of
+                the wrong type, or carries a malformed timestamp (#200).
+        """
+        return cls(**parse_token_fields(data))
 
 
 # ── Protocol ──────────────────────────────────────────────────────────────────
@@ -154,183 +164,4 @@ class TokenProvider(Protocol):
         ...
 
 
-# ── Implementation ────────────────────────────────────────────────────────────
-
-
-class HMACTokenProvider:
-    """Issues and verifies HMAC-SHA256 capability tokens.
-
-    The signing secret is read from the ``WEAVER_KERNEL_SECRET`` environment
-    variable.  If the variable is absent a random development secret is
-    generated and a warning is logged.
-    """
-
-    def __init__(
-        self,
-        secret: str | None = None,
-        *,
-        revocation_store: RevocationStoreProtocol | None = None,
-    ) -> None:
-        self._secret = secret  # None → use env / dev fallback at call time
-        # Revocation state lives behind a protocol so it can be made durable
-        # (e.g. SQLiteRevocationStore) without weakening verify-before-invoke.
-        self._revocation: RevocationStoreProtocol = revocation_store or InMemoryRevocationStore()
-
-    @staticmethod
-    def _log_verify_failure(token_id: str, reason: str, **extra: Any) -> None:
-        """Log a token verification failure at WARNING."""
-        logger.warning(
-            "token_verify_failed",
-            extra={"token_id": token_id, "reason": reason, **extra},
-        )
-
-    def _secret_bytes(self) -> bytes:
-        return (self._secret or _get_secret()).encode()
-
-    def _sign(self, payload: str) -> str:
-        return hmac.new(self._secret_bytes(), payload.encode(), hashlib.sha256).hexdigest()
-
-    def issue(
-        self,
-        capability_id: str,
-        principal_id: str,
-        *,
-        constraints: dict[str, Any] | None = None,
-        ttl_seconds: int = 3600,
-        audit_id: str = "",
-    ) -> CapabilityToken:
-        """Issue a new signed token.
-
-        Args:
-            capability_id: The capability this token authorises.
-            principal_id: The principal this token is issued to.
-            constraints: Optional execution constraints.
-            ttl_seconds: How long the token is valid (default 1 hour).
-            audit_id: Audit trail ID to embed in the token.
-
-        Returns:
-            A freshly signed :class:`CapabilityToken`.
-        """
-        now = datetime.datetime.now(tz=datetime.timezone.utc)
-        token = CapabilityToken(
-            token_id=str(uuid.uuid4()),
-            capability_id=capability_id,
-            principal_id=principal_id,
-            issued_at=now,
-            expires_at=now + datetime.timedelta(seconds=ttl_seconds),
-            constraints=constraints or {},
-            audit_id=audit_id,
-        )
-        token.signature = self._sign(token._signable_payload())
-        self._revocation.track(principal_id, token.token_id, token.expires_at)
-        logger.debug(
-            "token_issued",
-            extra={
-                "token_id": token.token_id,
-                "capability_id": capability_id,
-                "principal_id": principal_id,
-                "audit_id": audit_id,
-                "expires_at": token.expires_at.isoformat(),
-            },
-        )
-        return token
-
-    def revoke(self, token_id: str) -> None:
-        """Revoke a single token by ID.
-
-        Idempotent — revoking an already-revoked or unknown token is a no-op.
-
-        Args:
-            token_id: The ID of the token to revoke.
-        """
-        self._revocation.revoke(token_id)
-
-    def revoke_all(self, principal_id: str) -> int:
-        """Revoke all tokens issued to a principal.
-
-        Args:
-            principal_id: The principal whose tokens should be revoked.
-
-        Returns:
-            The number of tokens newly revoked by this call (excluding tokens
-            that were already revoked).
-        """
-        return self._revocation.revoke_principal(principal_id)
-
-    def sweep_revocations(self, now: datetime.datetime | None = None) -> int:
-        """Drop revocation bookkeeping for tokens that have already expired.
-
-        Bounds revocation-state growth in long-lived processes (#182). Safe to
-        call at any time: an expired token fails the verifier's expiry check
-        regardless, so sweeping its entry never un-revokes a live token. The
-        in-memory store also sweeps itself lazily; durable backends expose this
-        for an operator to call on a schedule.
-
-        Args:
-            now: Reference time; defaults to the current UTC time.
-
-        Returns:
-            The number of tracked tokens whose state was removed.
-        """
-        when = now or datetime.datetime.now(tz=datetime.timezone.utc)
-        return self._revocation.sweep_expired(when)
-
-    def verify(
-        self,
-        token: CapabilityToken,
-        *,
-        expected_principal_id: str,
-        expected_capability_id: str,
-    ) -> None:
-        """Verify a token's signature, expiry, and scope bindings.
-
-        Args:
-            token: The token to verify.
-            expected_principal_id: The principal that should own this token.
-            expected_capability_id: The capability this token should authorize.
-
-        Raises:
-            TokenRevoked: If the token has been revoked.
-            TokenExpired: If ``token.expires_at`` is in the past.
-            TokenInvalid: If the HMAC signature does not verify.
-            TokenScopeError: If principal or capability do not match.
-        """
-        # 0. Revocation (fast lookup before any crypto)
-        if self._revocation.is_revoked(token.token_id):
-            self._log_verify_failure(token.token_id, "revoked")
-            raise TokenRevoked(f"Token '{token.token_id}' has been revoked.")
-
-        # 1. Expiry
-        now = datetime.datetime.now(tz=datetime.timezone.utc)
-        if token.expires_at <= now:
-            self._log_verify_failure(
-                token.token_id, "expired", expires_at=token.expires_at.isoformat()
-            )
-            raise TokenExpired(
-                f"Token '{token.token_id}' expired at {token.expires_at.isoformat()}."
-            )
-
-        # 2. Signature
-        expected_sig = self._sign(token._signable_payload())
-        if not hmac.compare_digest(expected_sig, token.signature):
-            self._log_verify_failure(token.token_id, "invalid_signature")
-            raise TokenInvalid(
-                f"Token '{token.token_id}' has an invalid signature. "
-                "The token may have been tampered with."
-            )
-
-        # 3. Principal binding (confused-deputy prevention)
-        if token.principal_id != expected_principal_id:
-            self._log_verify_failure(token.token_id, "principal_mismatch")
-            raise TokenScopeError(
-                f"Token '{token.token_id}' was issued for principal "
-                f"'{token.principal_id}', not '{expected_principal_id}'."
-            )
-
-        # 4. Capability binding
-        if token.capability_id != expected_capability_id:
-            self._log_verify_failure(token.token_id, "capability_mismatch")
-            raise TokenScopeError(
-                f"Token '{token.token_id}' was issued for capability "
-                f"'{token.capability_id}', not '{expected_capability_id}'."
-            )
+__all__ = ["CapabilityToken", "TokenProvider"]

@@ -86,6 +86,16 @@ tag is **silently ignored** — capabilities tagged with it pass policy without 
 
 **Rule:** When adding a `SensitivityTag`, always add a matching policy rule and test.
 
+### Invoke-time enforcement placement
+Argument-constraint enforcement (#183) and the optional per-invocation rate limit
+(#170) run in `Kernel.invoke`/`Kernel.invoke_stream` **after** `verify()` and
+**before** the driver runs or budget is reserved (`kernel/_constraints.py`). A
+violation on the real path records a failure `ActionTrace` before raising, so I-02
+holds for denied executions; `dry_run=True` evaluates the same checks for parity
+but records no rate-limit usage and writes no trace. Both single-shot and
+streaming entry points must call `run_pre_invoke_checks` — a new execution entry
+point must call it too, or it silently bypasses argument scoping and rate limits.
+
 ### Dry-run response-mode parity
 
 `Kernel.invoke(dry_run=True)` reports the response mode the caller would actually

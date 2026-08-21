@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import datetime
+from dataclasses import replace
 
 import pytest
 
 from weaver_kernel import (
+    AgentKernelError,
+    CapabilityToken,
     HMACTokenProvider,
     TokenExpired,
     TokenInvalid,
@@ -241,3 +244,210 @@ def test_track_and_sweep_accept_naive_datetimes() -> None:
     # Naive 'now' after expiry removes it.
     assert store.sweep_expired(datetime.datetime(2099, 1, 2)) == 1
     assert not store.is_revoked("t1")
+
+
+# ── Signing-key rotation (#185) ────────────────────────────────────────────────
+
+
+def test_single_secret_uses_default_key_id() -> None:
+    """Legacy single-secret config files the key under the 'default' key id."""
+    provider = HMACTokenProvider(secret="s1")
+    token = provider.issue("cap.x", "user-1")
+    assert token.key_id == "default"
+    provider.verify(token, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+def test_rotation_overlap_window_verifies_previous_key() -> None:
+    """A token signed under a retired key still verifies while both keys are present."""
+    old = HMACTokenProvider(secrets={"k1": "s1"}, active_key_id="k1")
+    token = old.issue("cap.x", "user-1")
+    assert token.key_id == "k1"
+    # Operator rotates: new active key k2, but k1 kept for the overlap window.
+    rotated = HMACTokenProvider(secrets={"k1": "s1", "k2": "s2"}, active_key_id="k2")
+    rotated.verify(token, expected_principal_id="user-1", expected_capability_id="cap.x")
+    # New tokens are signed under the active key.
+    assert rotated.issue("cap.x", "user-1").key_id == "k2"
+
+
+def test_unknown_key_id_fails_closed() -> None:
+    """A token whose key id is not in the verifier's keyring fails as TokenInvalid."""
+    issuer = HMACTokenProvider(secrets={"k1": "s1"}, active_key_id="k1")
+    token = issuer.issue("cap.x", "user-1")
+    # k1 was retired entirely — only k2 remains.
+    verifier = HMACTokenProvider(secrets={"k2": "s2"}, active_key_id="k2")
+    with pytest.raises(TokenInvalid, match="unknown key id"):
+        verifier.verify(token, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+def test_key_id_is_signed_tamper_evident() -> None:
+    """Re-labelling a token's key_id to a present key breaks the signature."""
+    provider = HMACTokenProvider(secrets={"k1": "s1", "k2": "s2"}, active_key_id="k1")
+    token = provider.issue("cap.x", "user-1")
+    relabelled = replace(token, key_id="k2")
+    with pytest.raises(TokenInvalid, match="invalid signature"):
+        provider.verify(relabelled, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+def test_non_active_key_verification_logs_key_id_not_secret(caplog) -> None:  # type: ignore[no-untyped-def]
+    """Verifying a non-active-key token logs the key id (never the secret)."""
+    provider = HMACTokenProvider(secrets={"k1": "s1", "k2": "s2"}, active_key_id="k2")
+    token = replace(
+        HMACTokenProvider(secrets={"k1": "s1"}, active_key_id="k1").issue("cap.x", "u1")
+    )
+    with caplog.at_level("INFO"):
+        provider.verify(token, expected_principal_id="u1", expected_capability_id="cap.x")
+    records = [r for r in caplog.records if r.message == "token_verified_non_active_key"]
+    assert records and getattr(records[0], "key_id", None) == "k1"
+    assert "s1" not in caplog.text and "s2" not in caplog.text
+
+
+def test_secret_and_secrets_together_is_rejected() -> None:
+    with pytest.raises(AgentKernelError, match="either 'secret' or 'secrets'"):
+        HMACTokenProvider(secret="s", secrets={"k1": "s1"})
+
+
+def test_empty_keyring_is_rejected() -> None:
+    with pytest.raises(AgentKernelError, match="empty"):
+        HMACTokenProvider(secrets={})
+
+
+def test_multi_key_without_active_key_id_is_rejected() -> None:
+    with pytest.raises(AgentKernelError, match="active key id must be specified"):
+        HMACTokenProvider(secrets={"k1": "s1", "k2": "s2"})
+
+
+def test_active_key_id_absent_from_keyring_is_rejected() -> None:
+    with pytest.raises(AgentKernelError, match="not present"):
+        HMACTokenProvider(secrets={"k1": "s1"}, active_key_id="k9")
+
+
+def test_env_secrets_json_used_when_no_explicit_config(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("WEAVER_KERNEL_SECRETS", '{"k1": "s1", "k2": "s2"}')
+    monkeypatch.setenv("WEAVER_KERNEL_ACTIVE_KEY", "k2")
+    provider = HMACTokenProvider()
+    token = provider.issue("cap.x", "user-1")
+    assert token.key_id == "k2"
+    provider.verify(token, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+def test_env_secrets_precedes_legacy_single_secret(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("WEAVER_KERNEL_SECRETS", '{"k1": "s1"}')
+    monkeypatch.setenv("WEAVER_KERNEL_SECRET", "legacy")
+    provider = HMACTokenProvider()
+    assert provider.issue("cap.x", "u1").key_id == "k1"
+
+
+def test_env_secrets_malformed_json_fails_closed(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("WEAVER_KERNEL_SECRETS", "{not json")
+    provider = HMACTokenProvider()
+    with pytest.raises(AgentKernelError, match="not valid JSON"):
+        provider.issue("cap.x", "u1")
+
+
+# ── Typed from_dict errors (#200) ──────────────────────────────────────────────
+
+
+def _valid_token_dict() -> dict:  # type: ignore[type-arg]
+    provider = HMACTokenProvider(secret="s1")
+    return provider.issue("cap.x", "user-1").to_dict()
+
+
+def test_from_dict_valid_roundtrip_unchanged() -> None:
+    provider = HMACTokenProvider(secret="s1")
+    token = provider.issue("cap.x", "user-1", constraints={"max_rows": 5})
+    restored = CapabilityToken.from_dict(token.to_dict())
+    assert restored == token
+    provider.verify(restored, expected_principal_id="user-1", expected_capability_id="cap.x")
+
+
+@pytest.mark.parametrize("field", ["token_id", "capability_id", "principal_id"])
+def test_from_dict_missing_required_field_raises_token_invalid(field: str) -> None:
+    data = _valid_token_dict()
+    del data[field]
+    with pytest.raises(TokenInvalid, match=f"missing field '{field}'"):
+        CapabilityToken.from_dict(data)
+
+
+@pytest.mark.parametrize("field", ["issued_at", "expires_at"])
+def test_from_dict_missing_timestamp_raises_token_invalid(field: str) -> None:
+    data = _valid_token_dict()
+    del data[field]
+    with pytest.raises(TokenInvalid, match=f"missing field '{field}'"):
+        CapabilityToken.from_dict(data)
+
+
+@pytest.mark.parametrize("field", ["issued_at", "expires_at"])
+def test_from_dict_bad_timestamp_raises_token_invalid(field: str) -> None:
+    data = _valid_token_dict()
+    data[field] = "not-a-timestamp"
+    with pytest.raises(TokenInvalid, match=f"invalid timestamp in field '{field}'"):
+        CapabilityToken.from_dict(data)
+
+
+def test_from_dict_wrong_type_field_raises_token_invalid() -> None:
+    data = _valid_token_dict()
+    data["token_id"] = 123
+    with pytest.raises(TokenInvalid, match="must be a string"):
+        CapabilityToken.from_dict(data)
+
+
+def test_from_dict_non_object_constraints_raises_token_invalid() -> None:
+    data = _valid_token_dict()
+    data["constraints"] = ["not", "a", "dict"]
+    with pytest.raises(TokenInvalid, match="'constraints' must be an object"):
+        CapabilityToken.from_dict(data)
+
+
+def test_from_dict_tolerates_unknown_extra_keys() -> None:
+    data = _valid_token_dict()
+    data["future_field"] = "ignored"
+    restored = CapabilityToken.from_dict(data)
+    assert restored.token_id == data["token_id"]
+
+
+# ── Additional fail-closed coverage (#185 / #200) ──────────────────────────────
+
+
+def test_keyring_non_string_values_rejected() -> None:
+    with pytest.raises(AgentKernelError, match="string key ids to string secrets"):
+        HMACTokenProvider(secrets={"k1": 123})  # type: ignore[dict-item]
+
+
+def test_env_secrets_non_object_json_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("WEAVER_KERNEL_SECRETS", '"just-a-string"')
+    provider = HMACTokenProvider()
+    with pytest.raises(AgentKernelError, match="JSON object"):
+        provider.issue("cap.x", "u1")
+
+
+def test_env_active_key_absent_from_map_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("WEAVER_KERNEL_SECRETS", '{"k1": "s1", "k2": "s2"}')
+    monkeypatch.setenv("WEAVER_KERNEL_ACTIVE_KEY", "k9")
+    provider = HMACTokenProvider()
+    with pytest.raises(AgentKernelError, match="not present"):
+        provider.issue("cap.x", "u1")
+
+
+@pytest.mark.parametrize("field", ["audit_id", "signature", "key_id"])
+def test_from_dict_non_string_optional_field_rejected(field: str) -> None:
+    data = _valid_token_dict()
+    data[field] = 123
+    with pytest.raises(TokenInvalid, match="must be a string"):
+        CapabilityToken.from_dict(data)
+
+
+def test_from_dict_non_string_timestamp_rejected() -> None:
+    data = _valid_token_dict()
+    data["issued_at"] = 123
+    with pytest.raises(TokenInvalid, match="must be an ISO-8601 string"):
+        CapabilityToken.from_dict(data)
+
+
+def test_from_dict_naive_timestamp_coerced_to_utc() -> None:
+    """A naive timestamp is treated as UTC so verify() never hits a naive/aware TypeError."""
+    data = _valid_token_dict()
+    data["issued_at"] = "2026-01-01T00:00:00"  # no timezone
+    data["expires_at"] = "2099-01-01T00:00:00"
+    token = CapabilityToken.from_dict(data)
+    assert token.issued_at.tzinfo is datetime.timezone.utc
+    assert token.expires_at.tzinfo is datetime.timezone.utc

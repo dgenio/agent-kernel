@@ -136,10 +136,11 @@ See [docs/integrations.md](docs/integrations.md) for MCP and HTTP examples.
 
 ## Adding a policy rule
 
-1. Add the rule to `DefaultPolicyEngine.evaluate()` in `policy.py`.
-2. **Placement matters:** rules are evaluated in order. A new rule placed before sensitivity checks silently bypasses them.
-3. If adding a new `SensitivityTag`, you must also add a corresponding policy rule — otherwise the tag is silently ignored.
-4. Cover it with a test in `tests/test_policy.py`.
+1. Implement the condition in the appropriate `default_policy_*_rules.py` helper.
+2. Register it exactly once in the ordered `_DEFAULT_RULES` tuple in `default_policy_rules.py`; both `evaluate()` and `explain()` consume that chain.
+3. **Placement matters:** rules are evaluated in order. A new rule placed before sensitivity checks can change which denial short-circuits first.
+4. If adding a new `SensitivityTag`, you must also add a corresponding policy rule — otherwise the tag is silently ignored.
+5. Cover decision/explanation agreement in `tests/test_policy_rule_chain.py` and behavior in `tests/test_policy.py`.
 
 ## Review checklist (beyond `make ci`)
 

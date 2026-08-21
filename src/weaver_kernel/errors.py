@@ -17,7 +17,17 @@ class TokenInvalid(AgentKernelError):
 
 
 class TokenScopeError(AgentKernelError):
-    """Raised when a token is used by the wrong principal or for the wrong capability."""
+    """Raised when a token is used outside its bound scope.
+
+    Covers a token presented by the wrong principal or for the wrong capability,
+    and invocation arguments that violate a signed ``constraints["args"]`` rule
+    (#183). Carries an optional stable ``reason_code`` (the same vocabulary as
+    :class:`PolicyDenied`) so metrics and UI mapping use one denial taxonomy.
+    """
+
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        super().__init__(message)
+        self.reason_code: str | None = reason_code
 
 
 class TokenRevoked(AgentKernelError):

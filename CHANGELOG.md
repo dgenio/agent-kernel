@@ -8,6 +8,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Capability-token lifecycle hardening.** A grouped pass over token issuance,
+  rotation, and invoke-time enforcement:
+  - **Signing-key rotation (#185).** `HMACTokenProvider(secrets={key_id: secret},
+    active_key_id=...)` signs new tokens under one key while verifying tokens
+    signed under others during an overlap window, so `WEAVER_KERNEL_SECRET` can
+    rotate without invalidating every outstanding token at once. The signing
+    `key_id` is inside the signed payload (tamper-evident); an unknown key id
+    fails closed as `TokenInvalid`. A new `WEAVER_KERNEL_SECRETS` (JSON
+    `{key_id: secret}`) / `WEAVER_KERNEL_ACTIVE_KEY` env pair configures it, and a
+    non-active-key verification logs `token_verified_non_active_key` (key id only,
+    never the secret) so operators can tell when a key is safe to retire.
+  - **Per-grant TTL (#203).** `Kernel.grant_capability(..., ttl_s=...)` sets a
+    token's lifetime per grant; `DefaultPolicyEngine(max_ttl_s=...)` (a single cap
+    or per-safety-class map) bounds it. A non-positive or over-maximum request is
+    **denied** with a stable reason code (`invalid_constraint` / `ttl_exceeded`),
+    never silently clamped. A non-`SafetyClass` key in the `max_ttl_s` map is
+    rejected at construction so a misconfigured cap can never be silently ignored.
+  - **Signed argument-level constraints (#183).** A token's `constraints["args"]`
+    (`allowed_keys`, `pinned`, `prefix`) is enforced by `invoke()` and
+    `invoke_stream()` **before** the driver runs and budget is reserved, raising
+    `TokenScopeError` (`arg_constraint_violation`) with an audited failure trace.
+    Dry-run predicts the identical outcome. A malformed rule spec (wrong container
+    type, non-string `allowed_keys` element, non-string `prefix` value) also fails
+    closed with the same reason code rather than raising an untyped `TypeError` or
+    being silently ignored. The declarative policy engine needed no changes —
+    `constraints` already flows into the issued token.
+  - **Opt-in per-invocation rate limiting (#170).** `Kernel(invoke_rate_limits=
+    {SafetyClass: (limit, window_s)})` adds an invoke-time sliding-window limit,
+    independent of and additional to the grant-time limit. **Default off.** The
+    check-then-record pair runs with no `await` between them, so concurrent
+    invokes cannot over-admit; dry-run never consumes it.
+  - **Typed `CapabilityToken.from_dict` errors (#200).** A malformed serialized
+    token (missing field, wrong type, invalid timestamp, non-object
+    `constraints`) now raises `TokenInvalid` with a descriptive message instead
+    of a bare `KeyError`/`ValueError`. A naive (timezone-less) timestamp is
+    treated as UTC, so an untrusted token can never trigger a naive-vs-aware
+    `TypeError` at verification time. Valid round-trips are unchanged.
+  - **Token-format evolution ADR (#224).** `docs/adr/0001-token-signing-evolution.md`
+    evaluates HMAC (status quo), macaroon-style caveat chaining, and Biscuit
+    against the kernel's invariants with measured numbers, and recommends staying
+    HMAC + re-issuance now (macaroon-chaining as the documented future path,
+    Biscuit deferred). No code or dependency change.
+
+### Changed
+- **Default policy decisions and explanations now share one ordered rule chain (#219).** `evaluate()` short-circuits the shared chain while `explain()` collects every failure through the same rules. Rate-limit explanation uses a read-only `peek()` so it can predict a denial without consuming, creating, or pruning limiter state. Agreement and no-mutation regressions cover the security-critical boundary.
+- **Capability-token signed payload now includes `key_id` (#185).** A token
+  issued by pre-upgrade code fails verification after this deploys — the signed
+  payload shape differs even under the same secret. Accepted as a break given the
+  pre-1.0 alpha status and the default 1-hour token TTL; legacy single-secret
+  *configuration* (`secret=` / `WEAVER_KERNEL_SECRET`) keeps working unchanged.
+  The `HMACTokenProvider` implementation moved to `weaver_kernel._hmac_provider`;
+  import it from `weaver_kernel` (the public export is unchanged). To keep the
+  token modules import-cycle-free (CodeQL), `weaver_kernel.tokens` no longer
+  re-exports `HMACTokenProvider`; the logger name is unchanged.
+
+## [0.12.0] - 2026-08-14
+
+### Changed
+- **Fail-closed MCP tool discovery (#181).** `MCPDriver.discover()` now rejects
+  tools that lack both an explicit operator `safety_class_map` and usable MCP
+  safety hints, rather than silently defaulting to `READ`. A new
+  `unannotated_safety` parameter provides an explicit opt-in fallback. See
+  [docs/mcp-safety-classification.md](docs/mcp-safety-classification.md) for
+  precedence rules and migration guidance.
+
+### Added
 - **Coding-agent least privilege (#253).** `CodingAgentPolicyEngine` introduces
   narrow repository-read/write, local-test, network, secret, PR-create, and
   PR-merge capabilities with role/task approval and signed path/command/task
